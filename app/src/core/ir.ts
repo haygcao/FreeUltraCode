@@ -72,7 +72,7 @@ export interface IRNode {
   /**
    * Id of the containing `branch`/`loop` node, or undefined for the top scope.
    * Children of a container are emitted inside its `if`/`while` block; the
-   * canvas renders them as React Flow sub-flow children.
+   * canvas renders them as independent nodes connected to the control node.
    */
   parent?: string;
   /** Display label. */
@@ -117,12 +117,32 @@ export interface IREdge {
 /** Optional per-node layout coordinates. */
 export type IRLayout = Record<string, { x: number; y: number }>;
 
+/** Persistable execution status for a workflow run or an individual node. */
+export type IRRunStatus =
+  | 'idle'
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'interrupted';
+
+/** Runtime snapshot persisted with the workflow so reopen/resume can recover. */
+export interface IRRunSnapshot {
+  status: IRRunStatus;
+  nodeStates?: Record<string, IRRunStatus>;
+  outputs?: Record<string, string>;
+  failedNodeId?: string | null;
+  error?: Record<string, unknown> | null;
+  updatedAt?: number;
+}
+
 /** Graph metadata. */
 export interface IRMeta {
   name?: string;
   description?: string;
   /** Target adapter id, e.g. "claude-code". */
   adapter?: string;
+  /** Last known runtime progress; ignored by emit/parse. */
+  run?: IRRunSnapshot;
   /**
    * Definitions for schema identifiers referenced by agent/branch/stage specs,
    * keyed by identifier name. Emitted as a `const <name> = <body> // @schema`

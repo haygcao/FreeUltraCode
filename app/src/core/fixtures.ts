@@ -121,6 +121,78 @@ export const nestedSample: IRGraph = {
   layout: grid(['n_start', 'n_b', 'n_l', 'n_inner', 'n_end']),
 };
 
+/** Layout-only fixtures that stress the layered auto-layout. */
+export const linearSample: IRGraph = {
+  version: 1,
+  meta: { name: 'linear-sample', adapter: 'claude-code' },
+  nodes: [
+    start,
+    { id: 'n_a', type: 'agent', label: 'A', params: { prompt: 'A' } },
+    { id: 'n_b', type: 'agent', label: 'B', params: { prompt: 'B' } },
+    end,
+  ],
+  edges: [exec('n_start', 'n_a'), exec('n_a', 'n_b'), exec('n_b', 'n_end')],
+  layout: grid(['n_start', 'n_a', 'n_b', 'n_end']),
+};
+
+export const dataHeavySample: IRGraph = {
+  version: 1,
+  meta: { name: 'data-heavy-sample', adapter: 'claude-code' },
+  nodes: [
+    start,
+    { id: 'n_seed', type: 'variable', label: 'seed', params: { name: 'seed', value: '42', raw: true } },
+    { id: 'n_ctx', type: 'variable', label: 'ctx', params: { name: 'ctx', value: 'input', raw: true } },
+    { id: 'n_join', type: 'agent', label: 'Join', params: { prompt: 'Join inputs' } },
+    { id: 'n_tail', type: 'agent', label: 'Tail', params: { prompt: 'Tail step' } },
+    end,
+  ],
+  edges: [
+    exec('n_start', 'n_join'),
+    exec('n_join', 'n_tail'),
+    exec('n_tail', 'n_end'),
+    data('n_seed', 'n_join'),
+    data('n_ctx', 'n_join'),
+    data('n_join', 'n_tail'),
+  ],
+  layout: grid(['n_start', 'n_seed', 'n_ctx', 'n_join', 'n_tail', 'n_end']),
+};
+
+export const multiTerminalSample: IRGraph = {
+  version: 1,
+  meta: { name: 'multi-terminal-sample', adapter: 'claude-code' },
+  nodes: [
+    start,
+    { id: 'n_start2', type: 'start', label: 'Start 2', params: {} },
+    { id: 'n_a', type: 'agent', label: 'A', params: { prompt: 'A' } },
+    { id: 'n_b', type: 'branch', label: 'Branch', params: { condition: 'true' } },
+    { id: 'n_child', type: 'agent', parent: 'n_b', label: 'Child', params: { prompt: 'child' } },
+    { id: 'n_end2', type: 'end', label: 'End 2', params: {} },
+    end,
+  ],
+  edges: [
+    exec('n_start', 'n_a'),
+    exec('n_start2', 'n_b'),
+    exec('n_a', 'n_b'),
+    exec('n_b', 'n_end2'),
+    exec('n_b', 'n_child'),
+    exec('n_child', 'n_end'),
+  ],
+  layout: grid(['n_start', 'n_start2', 'n_a', 'n_b', 'n_child', 'n_end2', 'n_end']),
+};
+
+export const isolatedSample: IRGraph = {
+  version: 1,
+  meta: { name: 'isolated-sample', adapter: 'claude-code' },
+  nodes: [
+    start,
+    { id: 'n_island', type: 'log', label: 'Island', params: { message: 'isolated node' } },
+    { id: 'n_data', type: 'variable', label: 'Data', params: { name: 'data', value: '[]', raw: true } },
+    end,
+  ],
+  edges: [exec('n_start', 'n_end')],
+  layout: grid(['n_start', 'n_island', 'n_data', 'n_end']),
+};
+
 /** Named fixtures for the round-trip suite (F1 = sample, F6 = default blueprint). */
 export const roundtripFixtures: { name: string; ir: IRGraph }[] = [
   { name: 'F1 review-changes (parallel + data + schema)', ir: sampleWorkflow },
@@ -129,4 +201,11 @@ export const roundtripFixtures: { name: string; ir: IRGraph }[] = [
   { name: 'F4 loop (data edge into body)', ir: loopSample },
   { name: 'F5 nested branch>loop>agent', ir: nestedSample },
   { name: 'F6 default blueprint', ir: defaultBlueprint() },
+];
+
+export const layoutFixtures: { name: string; ir: IRGraph }[] = [
+  { name: 'L1 linear', ir: linearSample },
+  { name: 'L2 data-heavy', ir: dataHeavySample },
+  { name: 'L3 multi-terminal', ir: multiTerminalSample },
+  { name: 'L4 isolated', ir: isolatedSample },
 ];

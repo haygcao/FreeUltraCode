@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { openWorkflow } from '@/lib/persist';
 import { useResizableWidth } from '@/lib/useResizableWidth';
+import { t } from '@/lib/i18n';
+import SettingsModal from './SettingsModal';
 
 /**
  * CONTRACT: default export, no props. Left session rail.
  *
- * Top  : primary actions — "+ New Workflow" / "+ New Session".
+ * Top  : primary actions — "+ New Workflow" / open workflow.
  * Bottom: session history list, sourced from the store; clicking switches the
  *         active session context.
  *
@@ -27,12 +30,17 @@ function formatTime(ts: number): string {
 }
 
 export default function Sidebar() {
+  const locale = useStore((s) => s.locale);
   const sessions = useStore((s) => s.sessions);
+  const workspaces = useStore((s) => s.workspaces);
+  const sessionTree = useStore((s) => s.sessionTree);
+  const activeWorkspaceId = useStore((s) => s.activeWorkspaceId);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const newWorkflow = useStore((s) => s.newWorkflow);
-  const newSession = useStore((s) => s.newSession);
+  const selectSession = useStore((s) => s.selectSession);
   const setWorkflow = useStore((s) => s.setWorkflow);
   const markSaved = useStore((s) => s.markSaved);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { width, onResizeStart } = useResizableWidth({
     storageKey: 'openworkflow.sidebarWidth.v1',
@@ -47,7 +55,7 @@ export default function Sidebar() {
   // toolbar reads "已保存" immediately after load.
   const handleOpen = async () => {
     try {
-      const loaded = await openWorkflow();
+      const loaded = await openWorkflow(t(locale, 'dialog.openWorkflow'));
       if (!loaded) return; // user cancelled or nothing to load
       setWorkflow(loaded.ir);
       markSaved(loaded.path ?? undefined);
@@ -64,7 +72,7 @@ export default function Sidebar() {
       {/* Resize handle — right edge, drag horizontally. */}
       <div
         onMouseDown={onResizeStart}
-        title="拖动调整宽度"
+        title={t(locale, 'common.resizeWidth')}
         className="group absolute -right-1 top-0 bottom-0 z-20 flex w-2 cursor-col-resize items-center justify-center"
       >
         <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/40" />
@@ -79,14 +87,14 @@ export default function Sidebar() {
       </div>
 
       {/* Primary actions */}
-      <div className="flex flex-col gap-2 p-3">
+      <div className="flex flex-col gap-2 px-3 pt-3 pb-2">
         <button
           type="button"
           onClick={newWorkflow}
           className="flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-bg transition-opacity hover:opacity-90"
         >
           <span className="text-base leading-none">＋</span>
-          新建 Workflow
+          {t(locale, 'sidebar.newWorkflow')}
         </button>
         <button
           type="button"
@@ -94,26 +102,97 @@ export default function Sidebar() {
           className="flex items-center gap-2 rounded-md border border-border bg-panel-2 px-3 py-2 text-sm text-fg transition-colors hover:border-accent hover:bg-border-soft"
         >
           <span className="text-base leading-none">⤓</span>
-          打开
-        </button>
-        <button
-          type="button"
-          onClick={newSession}
-          className="flex items-center gap-2 rounded-md border border-border bg-panel-2 px-3 py-2 text-sm text-fg transition-colors hover:border-accent hover:bg-border-soft"
-        >
-          <span className="text-base leading-none">＋</span>
-          新建会话
+          {t(locale, 'sidebar.open')}
         </button>
       </div>
 
       {/* Session history */}
       <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
-        <div className="px-2 pb-1.5 pt-1 text-[11px] font-medium uppercase tracking-wider text-fg-faint">
-          历史记录
+        <div className="px-2 pb-1.5 pt-0 text-[11px] font-medium uppercase tracking-wider text-fg-faint">
+          {t(locale, 'sidebar.history')}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {sessions.length === 0 ? (
-            <div className="px-2 py-3 text-xs text-fg-faint">暂无会话</div>
+          {workspaces.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {workspaces.map((workspace) => {
+                const list = sessionTree[workspace.id] ?? [];
+                return (
+                  <li key={workspace.id} className="flex flex-col gap-1">
+                    <div className="px-2 py-1">
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-fg">
+                        <span className="text-accent-2">▾</span>
+                        <span className="min-w-0 flex-1 truncate" title={workspace.path}>
+                          {workspace.name}
+                        </span>
+                        <span className="font-mono text-[10px] text-fg-faint">
+                          {workspace.sessionCount}
+                        </span>
+                      </div>
+                      {workspace.path && (
+                        <div className="truncate pl-4 font-mono text-[9px] text-fg-faint">
+                          {workspace.path}
+                        </div>
+                      )}
+                    </div>
+                    {list.length === 0 ? (
+                      <div className="px-6 py-1 text-xs text-fg-faint">
+                        {t(locale, 'sidebar.emptySessions')}
+                      </div>
+                    ) : (
+                      <ul className="flex flex-col gap-0.5">
+                        {list.map((session) => {
+                          const active =
+                            session.id === activeSessionId &&
+                            workspace.id === activeWorkspaceId;
+                          return (
+                            <li key={session.id}>
+                              <button
+                                type="button"
+                                onClick={() => selectSession(session.id, workspace.id)}
+                                className={
+                                  'group flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors ' +
+                                  (active
+                                    ? 'bg-panel-2 text-fg'
+                                    : 'text-fg-dim hover:bg-border-soft hover:text-fg')
+                                }
+                              >
+                                <span className="flex w-full items-center gap-1.5">
+                                  <span
+                                    className={
+                                      'rounded border px-1 font-mono text-[9px] leading-4 ' +
+                                      (session.isWorkflow
+                                        ? 'border-accent-2/50 text-accent-2'
+                                        : 'border-border text-fg-faint')
+                                    }
+                                  >
+                                    {session.isWorkflow ? 'WF' : 'CHAT'}
+                                  </span>
+                                  <span className="min-w-0 flex-1 truncate text-sm">
+                                    {session.title}
+                                  </span>
+                                </span>
+                                <span className="flex w-full items-center gap-1 pl-10 font-mono text-[10px] text-fg-faint">
+                                  <span>{formatTime(session.updatedAt ?? session.createdAt)}</span>
+                                  {session.preview && (
+                                    <span className="min-w-0 flex-1 truncate">
+                                      {session.preview}
+                                    </span>
+                                  )}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : sessions.length === 0 ? (
+            <div className="px-2 py-3 text-xs text-fg-faint">
+              {t(locale, 'sidebar.emptySessions')}
+            </div>
           ) : (
             <ul className="flex flex-col gap-0.5">
               {sessions.map((session) => {
@@ -122,6 +201,7 @@ export default function Sidebar() {
                   <li key={session.id}>
                     <button
                       type="button"
+                      onClick={() => selectSession(session.id)}
                       className={
                         'group flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors ' +
                         (active
@@ -153,6 +233,22 @@ export default function Sidebar() {
           )}
         </div>
       </div>
+
+      <div className="border-t border-border-soft p-3">
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          title={t(locale, 'settings.openHint')}
+          className="flex w-full items-center gap-2 rounded-md border border-border bg-panel-2 px-3 py-2 text-sm text-fg-dim transition-colors hover:border-accent hover:bg-border-soft hover:text-fg"
+        >
+          <span className="text-base leading-none text-accent">⚙</span>
+          <span>{t(locale, 'settings.open')}</span>
+        </button>
+      </div>
+
+      {settingsOpen && (
+        <SettingsModal onClose={() => setSettingsOpen(false)} />
+      )}
     </aside>
   );
 }

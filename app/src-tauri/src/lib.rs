@@ -1,6 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
+
+mod history;
 
 /// Windows CreateProcess flag: don't allocate a console window for the child.
 /// Without this, spawning the `claude` console binary pops up a black terminal
@@ -18,6 +22,85 @@ fn hide_console(cmd: &mut Command) {
     #[cfg(not(windows))]
     {
         let _ = cmd;
+    }
+}
+
+fn terminate_process_tree(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("taskkill");
+        hide_console(&mut cmd);
+        return cmd
+            .arg("/PID")
+            .arg(pid.to_string())
+            .arg("/T")
+            .arg("/F")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+    }
+    #[cfg(not(windows))]
+    {
+        return Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+    }
+}
+
+/// Terminate a spawned CLI and, on Windows, its wrapper descendants too.
+fn terminate_child_tree(child: &mut Child) {
+    if !terminate_process_tree(child.id()) {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+fn active_ai_cli_pids() -> &'static Mutex<HashMap<String, u32>> {
+    static ACTIVE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cancelled_ai_cli_ids() -> &'static Mutex<HashSet<String>> {
+    static CANCELLED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CANCELLED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn register_ai_cli(run_id: &str, pid: u32) {
+    if let Ok(mut active) = active_ai_cli_pids().lock() {
+        active.insert(run_id.to_string(), pid);
+    }
+}
+
+fn mark_ai_cli_cancelled(run_id: &str) -> Option<u32> {
+    let pid = active_ai_cli_pids()
+        .lock()
+        .ok()
+        .and_then(|active| active.get(run_id).copied());
+    if pid.is_some() {
+        if let Ok(mut cancelled) = cancelled_ai_cli_ids().lock() {
+            cancelled.insert(run_id.to_string());
+        }
+    }
+    pid
+}
+
+fn take_ai_cli_cancelled(run_id: &str) -> bool {
+    cancelled_ai_cli_ids()
+        .lock()
+        .map(|mut cancelled| cancelled.remove(run_id))
+        .unwrap_or(false)
+}
+
+fn unregister_ai_cli(run_id: &str) {
+    if let Ok(mut active) = active_ai_cli_pids().lock() {
+        active.remove(run_id);
     }
 }
 
@@ -97,11 +180,21 @@ fn write_temp_script(script: &str) -> Result<std::path::PathBuf, String> {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     path.push(format!("openworkflow-{stamp}.sh"));
-    let mut file = std::fs::File::create(&path)
-        .map_err(|e| format!("无法创建临时脚本: {e}"))?;
+    let mut file = std::fs::File::create(&path).map_err(|e| format!("无法创建临时脚本: {e}"))?;
     file.write_all(script.as_bytes())
         .map_err(|e| format!("写入临时脚本失败: {e}"))?;
     Ok(path)
+}
+
+/// Return a unique temp path for CLI side-channel output.
+fn temp_output_path(prefix: &str, ext: &str) -> std::path::PathBuf {
+    let mut path = std::env::temp_dir();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    path.push(format!("{prefix}-{stamp}.{ext}"));
+    path
 }
 
 /// Run an emitted workflow script through the mapped local CLI.
@@ -119,12 +212,9 @@ async fn run_workflow(script: String, adapter: String) -> Result<String, String>
 
         let mut cmd = Command::new(binary);
         hide_console(&mut cmd); // no popup terminal window on Windows
-        let output = cmd
-            .arg(&script_path)
-            .output()
-            .map_err(|e| {
-                format!("启动 CLI \"{binary}\" 失败: {e}（请确认它已安装并在 PATH 中）")
-            })?;
+        let output = cmd.arg(&script_path).output().map_err(|e| {
+            format!("启动 CLI \"{binary}\" 失败: {e}（请确认它已安装并在 PATH 中）")
+        })?;
 
         // Best-effort cleanup; ignore failures.
         let _ = std::fs::remove_file(&script_path);
@@ -255,8 +345,75 @@ fn extract_json(text: &str) -> String {
     t.to_string()
 }
 
-/// How long a single CLI invocation may run before it is killed.
-const AI_CLI_TIMEOUT_SECS: u64 = 600;
+/// Default hard timeout for a single CLI invocation before it is killed.
+const DEFAULT_AI_CLI_TIMEOUT_SECS: u64 = 1800;
+/// Default "no observable progress" timeout for a single CLI invocation.
+const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 300;
+const CLI_ERROR_CONTEXT_LIMIT: usize = 1200;
+
+/// Read the CLI timeout override from the environment, falling back to a
+/// longer default so legitimate long-running workflows are less likely to be
+/// killed too early.
+fn ai_cli_timeout_secs() -> u64 {
+    std::env::var("OPENWORKFLOW_AI_CLI_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|secs| *secs >= 60)
+        .unwrap_or(DEFAULT_AI_CLI_TIMEOUT_SECS)
+}
+
+/// Read the no-progress timeout override. Set to 0 to disable idle detection.
+fn ai_cli_idle_timeout_secs() -> u64 {
+    std::env::var("OPENWORKFLOW_AI_CLI_IDLE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|secs| *secs == 0 || *secs >= 30)
+        .unwrap_or(DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS)
+}
+
+fn touch_activity(last_activity: &Arc<Mutex<std::time::Instant>>) {
+    if let Ok(mut current) = last_activity.lock() {
+        *current = std::time::Instant::now();
+    }
+}
+
+fn activity_elapsed(last_activity: &Arc<Mutex<std::time::Instant>>) -> std::time::Duration {
+    last_activity
+        .lock()
+        .map(|current| current.elapsed())
+        .unwrap_or_default()
+}
+
+fn trim_cli_error_context(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= CLI_ERROR_CONTEXT_LIMIT {
+        return trimmed.to_string();
+    }
+    let mut tail = trimmed
+        .chars()
+        .rev()
+        .take(CLI_ERROR_CONTEXT_LIMIT)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    tail.insert_str(0, "...\n");
+    tail
+}
+
+fn append_cli_error_context(err: String, output: &str, stderr: &str) -> String {
+    let context = if !stderr.trim().is_empty() {
+        stderr
+    } else {
+        output
+    };
+    let context = trim_cli_error_context(context);
+    if context.is_empty() {
+        err
+    } else {
+        format!("{err}\n最近输出:\n{context}")
+    }
+}
 
 /// Emit a live progress chunk for a given run to the frontend.
 fn emit_progress(app: &tauri::AppHandle, run_id: &str, text: &str) {
@@ -294,7 +451,11 @@ fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     })
     .unwrap_or_else(|| {
         let s = input.to_string();
-        if s == "null" { String::new() } else { s }
+        if s == "null" {
+            String::new()
+        } else {
+            s
+        }
     });
 
     let detail: String = detail.replace(['\n', '\r'], " ");
@@ -304,6 +465,125 @@ fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     } else {
         format!("🔧 {name}: {detail}")
     }
+}
+
+/// Codex CLI JSONL uses `item.completed` events rather than Claude's
+/// `assistant` / `result` events. Emit readable agent text and a compact tool
+/// breadcrumb when a tool-like item appears.
+fn codex_progress_line(item: &serde_json::Value) -> Option<String> {
+    let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if item_type == "agent_message" {
+        return item
+            .get("text")
+            .and_then(|t| t.as_str())
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_string());
+    }
+
+    if item_type.is_empty() {
+        return None;
+    }
+
+    let detail = [
+        "command",
+        "name",
+        "path",
+        "file_path",
+        "query",
+        "text",
+        "status",
+    ]
+    .iter()
+    .find_map(|k| {
+        item.get(*k)
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.replace(['\n', '\r'], " "))
+    })
+    .unwrap_or_default();
+
+    let detail: String = detail.chars().take(200).collect();
+    if detail.is_empty() {
+        Some(format!("\n🔧 {item_type}\n"))
+    } else {
+        Some(format!("\n🔧 {item_type}: {detail}\n"))
+    }
+}
+
+fn codex_event_kind(event: &serde_json::Value) -> Option<&str> {
+    event
+        .get("method")
+        .and_then(|m| m.as_str())
+        .or_else(|| event.get("type").and_then(|t| t.as_str()))
+}
+
+fn codex_completed_item(event: &serde_json::Value) -> Option<&serde_json::Value> {
+    match codex_event_kind(event) {
+        Some("item.completed") | Some("item/completed") => {
+            event.get("item").or_else(|| event.pointer("/params/item"))
+        }
+        _ => None,
+    }
+}
+
+fn codex_turn_completion_status(event: &serde_json::Value) -> Option<String> {
+    match codex_event_kind(event) {
+        Some("turn.completed") | Some("turn/completed") | Some("turn_complete") => {
+            let status = event
+                .pointer("/params/turn/status")
+                .or_else(|| event.pointer("/turn/status"))
+                .or_else(|| event.get("status"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("completed");
+            Some(status.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn codex_status_success(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "completed" | "success" | "succeeded" | "ok"
+    )
+}
+
+fn codex_last_message_ready(path: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() == 0 {
+        return false;
+    }
+    meta.modified()
+        .and_then(|modified| modified.elapsed().map_err(std::io::Error::other))
+        .map(|elapsed| elapsed >= std::time::Duration::from_secs(1))
+        .unwrap_or(false)
+}
+
+/// The UI currently exposes Claude model tiers (`haiku` / `sonnet` / `opus`).
+/// Passing those through to Codex would fail, so only forward explicit non-
+/// Claude model ids to adapters that can reasonably understand them.
+fn should_pass_model(binary: &str, model: &str) -> bool {
+    let m = model.trim();
+    if m.is_empty() {
+        return false;
+    }
+    if binary == "codex" || binary == "gemini" {
+        let lower = m.to_ascii_lowercase();
+        return !matches!(lower.as_str(), "haiku" | "sonnet" | "opus")
+            && !lower.starts_with("claude-");
+    }
+    true
+}
+
+#[tauri::command]
+fn cancel_ai_cli(run_id: String) -> Result<(), String> {
+    if let Some(pid) = mark_ai_cli_cancelled(&run_id) {
+        let _ = terminate_process_tree(pid);
+    }
+    Ok(())
 }
 
 /// Run a prompt through the locally-installed agent CLI (e.g. `claude`) using the
@@ -329,6 +609,12 @@ async fn ai_cli(
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let binary = adapter_binary(&adapter);
+        let is_codex = binary == "codex";
+        let codex_last_message_path = if is_codex {
+            Some(temp_output_path("openworkflow-codex-last", "txt"))
+        } else {
+            None
+        };
 
         // Self-heal a claude binary that an interrupted auto-update corrupted.
         if binary == "claude" {
@@ -337,44 +623,93 @@ async fn ai_cli(
 
         let mut cmd = Command::new(binary);
         hide_console(&mut cmd); // no popup terminal window on Windows
-        // The prompt is fed via stdin (not a positional arg) so large aggregation
-        // prompts can't hit the OS command-line length limit (~32KB on Windows),
-        // which would stall the final "summary" node.
-        cmd.arg("-p")
-            .arg("--output-format")
-            .arg("stream-json")
-            .arg("--verbose")
-            // Don't let the CLI auto-update mid-run: an interrupted update can
-            // leave the binary corrupted ("bin executable does not exist").
-            .env("DISABLE_AUTOUPDATER", "1");
-        if let Some(m) = model.as_deref().filter(|m| !m.trim().is_empty()) {
-            cmd.arg("--model").arg(m);
+
+        if is_codex {
+            // Codex's non-interactive surface is `codex exec`, and its JSON
+            // stream is enabled with `--json`. It has no Claude-style
+            // `--output-format`, which was the source of the reported failure.
+            match permission.as_deref().unwrap_or("full") {
+                "readonly" => {
+                    cmd.arg("-a").arg("never");
+                }
+                "ask" => {
+                    cmd.arg("-a").arg("on-request");
+                }
+                _ => {}
+            }
+
+            cmd.arg("exec").arg("--json").arg("--skip-git-repo-check");
+
+            match permission.as_deref().unwrap_or("full") {
+                "readonly" => {
+                    cmd.arg("--sandbox").arg("read-only");
+                }
+                "ask" => {
+                    cmd.arg("--sandbox").arg("workspace-write");
+                }
+                _ => {
+                    cmd.arg("--dangerously-bypass-approvals-and-sandbox");
+                }
+            }
+
+            if let Some(m) = model.as_deref().filter(|m| should_pass_model(binary, m)) {
+                cmd.arg("--model").arg(m);
+            }
+
+            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                let p = std::path::Path::new(dir);
+                if p.is_dir() {
+                    cmd.current_dir(p);
+                    cmd.arg("-C").arg(dir);
+                }
+            }
+
+            if let Some(path) = codex_last_message_path.as_ref() {
+                cmd.arg("-o").arg(path);
+            }
+            cmd.arg("-");
+        } else {
+            // The prompt is fed via stdin (not a positional arg) so large
+            // aggregation prompts can't hit the OS command-line length limit
+            // (~32KB on Windows), which would stall the final "summary" node.
+            cmd.arg("-p")
+                .arg("--output-format")
+                .arg("stream-json")
+                .arg("--verbose")
+                // Don't let the CLI auto-update mid-run: an interrupted update
+                // can leave the binary corrupted ("bin executable does not
+                // exist").
+                .env("DISABLE_AUTOUPDATER", "1");
+            if let Some(m) = model.as_deref().filter(|m| should_pass_model(binary, m)) {
+                cmd.arg("--model").arg(m);
+            }
+
+            // Permission mode (from the AIDock dropdown) so a headless run can
+            // act without stalling on permission prompts:
+            //   full      -> skip all prompts (read/write/bash autonomously)
+            //   readonly  -> plan mode (explore + report, no mutations)
+            //   ask       -> default (may print a permission question)
+            match permission.as_deref().unwrap_or("full") {
+                "readonly" => {
+                    cmd.arg("--permission-mode").arg("plan");
+                }
+                "ask" => {}
+                _ => {
+                    cmd.arg("--dangerously-skip-permissions");
+                }
+            }
+
+            // Working directory: run in the user's chosen workspace so the
+            // agent explores the right project (and add it as an allowed dir).
+            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                let p = std::path::Path::new(dir);
+                if p.is_dir() {
+                    cmd.current_dir(p);
+                    cmd.arg("--add-dir").arg(dir);
+                }
+            }
         }
 
-        // Permission mode (from the AIDock dropdown) so a headless run can act
-        // without stalling on permission prompts:
-        //   full (默认) → skip all prompts (read/write/bash autonomously)
-        //   readonly    → plan mode (explore + report, no mutations)
-        //   ask         → default (may print a permission question; rarely useful headless)
-        match permission.as_deref().unwrap_or("full") {
-            "readonly" => {
-                cmd.arg("--permission-mode").arg("plan");
-            }
-            "ask" => {}
-            _ => {
-                cmd.arg("--dangerously-skip-permissions");
-            }
-        }
-
-        // Working directory: run in the user's chosen workspace so the agent
-        // explores the right project (and add it as an allowed dir).
-        if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
-            let p = std::path::Path::new(dir);
-            if p.is_dir() {
-                cmd.current_dir(p);
-                cmd.arg("--add-dir").arg(dir);
-            }
-        }
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -383,6 +718,8 @@ async fn ai_cli(
             .map_err(|e| {
                 format!("启动 CLI \"{binary}\" 失败: {e}（请确认它已安装并在 PATH 中）")
             })?;
+        register_ai_cli(&run_id, child.id());
+        let last_activity = Arc::new(Mutex::new(std::time::Instant::now()));
 
         // Write the prompt to stdin on its own thread (so a large prompt can't
         // deadlock against a full pipe), then close stdin to signal EOF.
@@ -398,6 +735,10 @@ async fn ai_cli(
         let stdout = child.stdout.take();
         let app2 = app.clone();
         let run2 = run_id.clone();
+        let parse_codex = is_codex;
+        let codex_turn_status = Arc::new(Mutex::new(None::<String>));
+        let codex_turn_status_reader = Arc::clone(&codex_turn_status);
+        let stdout_activity = Arc::clone(&last_activity);
         let out_handle = std::thread::spawn(move || -> String {
             let mut result = String::new();
             let mut acc = String::new();
@@ -408,6 +749,7 @@ async fn ai_cli(
                         Ok(l) => l,
                         Err(_) => break,
                     };
+                    touch_activity(&stdout_activity);
                     if line.trim().is_empty() {
                         continue;
                     }
@@ -415,6 +757,21 @@ async fn ai_cli(
                         Ok(v) => v,
                         Err(_) => continue,
                     };
+                    if parse_codex {
+                        if let Some(status) = codex_turn_completion_status(&v) {
+                            if let Ok(mut current) = codex_turn_status_reader.lock() {
+                                *current = Some(status);
+                            }
+                            continue;
+                        }
+                        if let Some(item) = codex_completed_item(&v) {
+                            if let Some(line) = codex_progress_line(item) {
+                                acc.push_str(&line);
+                                emit_progress(&app2, &run2, &line);
+                            }
+                        }
+                        continue;
+                    }
                     match v.get("type").and_then(|t| t.as_str()) {
                         Some("assistant") => {
                             if let Some(content) =
@@ -442,7 +799,10 @@ async fn ai_cli(
                                             emit_progress(
                                                 &app2,
                                                 &run2,
-                                                &format!("\n{}\n", summarize_tool_use(name, &input)),
+                                                &format!(
+                                                    "\n{}\n",
+                                                    summarize_tool_use(name, &input)
+                                                ),
                                             );
                                         }
                                         _ => {}
@@ -467,53 +827,206 @@ async fn ai_cli(
         });
 
         let mut err_pipe = child.stderr.take();
+        let stderr_activity = Arc::clone(&last_activity);
         let err_handle = std::thread::spawn(move || {
             let mut buf = Vec::new();
             if let Some(p) = err_pipe.as_mut() {
-                let _ = p.read_to_end(&mut buf);
+                let mut chunk = [0_u8; 4096];
+                loop {
+                    match p.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            touch_activity(&stderr_activity);
+                            buf.extend_from_slice(&chunk[..n]);
+                        }
+                        Err(_) => break,
+                    }
+                }
             }
             buf
         });
 
-        // Poll for exit until the deadline; kill on timeout.
-        let deadline =
-            std::time::Instant::now() + std::time::Duration::from_secs(AI_CLI_TIMEOUT_SECS);
-        let status = loop {
+        // Poll for exit until the deadline; kill on timeout. Even timeout and
+        // wait-error paths fall through to the common cleanup below so reader
+        // threads finish and Codex side-channel files do not linger in temp.
+        enum WaitOutcome {
+            Exited(std::process::ExitStatus),
+            CodexTurnCompleted(String),
+            CodexLastMessageReady,
+        }
+
+        let timeout_secs = ai_cli_timeout_secs();
+        let idle_timeout_secs = ai_cli_idle_timeout_secs();
+        let idle_timeout = (idle_timeout_secs > 0)
+            .then(|| std::time::Duration::from_secs(idle_timeout_secs));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut last_sidecar_len = 0_u64;
+        let mut last_sidecar_modified: Option<std::time::SystemTime> = None;
+        let wait_result = loop {
+            if is_codex {
+                let status = codex_turn_status
+                    .lock()
+                    .ok()
+                    .and_then(|current| current.clone());
+                if let Some(status) = status {
+                    terminate_child_tree(&mut child);
+                    break Ok(WaitOutcome::CodexTurnCompleted(status));
+                }
+                if let Some(path) = codex_last_message_path.as_deref() {
+                    if let Ok(meta) = std::fs::metadata(path) {
+                        let modified = meta.modified().ok();
+                        if meta.len() != last_sidecar_len || modified != last_sidecar_modified {
+                            last_sidecar_len = meta.len();
+                            last_sidecar_modified = modified;
+                            touch_activity(&last_activity);
+                        }
+                    }
+                }
+                if codex_last_message_path
+                    .as_deref()
+                    .is_some_and(codex_last_message_ready)
+                {
+                    terminate_child_tree(&mut child);
+                    break Ok(WaitOutcome::CodexLastMessageReady);
+                }
+            }
             match child.try_wait() {
-                Ok(Some(status)) => break status,
+                Ok(Some(status)) => break Ok(WaitOutcome::Exited(status)),
                 Ok(None) => {
                     if std::time::Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(format!(
-                            "CLI \"{binary}\" 超时（{AI_CLI_TIMEOUT_SECS}s）已终止。"
-                        ));
+                        terminate_child_tree(&mut child);
+                        break Err(format!("CLI \"{binary}\" 超时（{timeout_secs}s）已终止。"));
+                    }
+                    if let Some(idle) = idle_timeout {
+                        if activity_elapsed(&last_activity) >= idle {
+                            terminate_child_tree(&mut child);
+                            break Err(format!(
+                                "CLI \"{binary}\" 空转超过 {idle_timeout_secs}s 未产生输出，已终止。"
+                            ));
+                        }
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
-                Err(e) => return Err(format!("等待 CLI \"{binary}\" 失败: {e}")),
+                Err(e) => {
+                    terminate_child_tree(&mut child);
+                    break Err(format!("等待 CLI \"{binary}\" 失败: {e}"));
+                }
             }
         };
 
         let _ = stdin_handle.join();
-        let output = out_handle.join().unwrap_or_default();
+        let streamed_output = out_handle.join().unwrap_or_default();
+        let output = if let Some(path) = codex_last_message_path.as_ref() {
+            let final_message = std::fs::read_to_string(path).unwrap_or_default();
+            let _ = std::fs::remove_file(path);
+            if final_message.trim().is_empty() {
+                streamed_output
+            } else {
+                final_message
+            }
+        } else {
+            streamed_output
+        };
         let stderr_bytes = err_handle.join().unwrap_or_default();
         let stderr = String::from_utf8_lossy(&stderr_bytes);
+        let cancelled = take_ai_cli_cancelled(&run_id);
+        unregister_ai_cli(&run_id);
 
-        if status.success() {
-            Ok(output)
-        } else {
-            let code = status.code().unwrap_or(-1);
-            let detail = if stderr.trim().is_empty() {
-                output.trim()
-            } else {
-                stderr.trim()
-            };
-            Err(format!("CLI \"{binary}\" 退出码 {code}: {detail}"))
+        if cancelled {
+            return Err(append_cli_error_context(
+                format!("CLI \"{binary}\" 已由用户中断。"),
+                &output,
+                &stderr,
+            ));
+        }
+
+        match wait_result {
+            Err(err) => Err(append_cli_error_context(err, &output, &stderr)),
+            Ok(WaitOutcome::Exited(status)) if status.success() => Ok(output),
+            Ok(WaitOutcome::Exited(status)) => {
+                let code = status.code().unwrap_or(-1);
+                let detail = if stderr.trim().is_empty() {
+                    output.trim()
+                } else {
+                    stderr.trim()
+                };
+                Err(format!("CLI \"{binary}\" 退出码 {code}: {detail}"))
+            }
+            Ok(WaitOutcome::CodexTurnCompleted(status)) if codex_status_success(&status) => {
+                Ok(output)
+            }
+            Ok(WaitOutcome::CodexTurnCompleted(status)) => {
+                let detail = if stderr.trim().is_empty() {
+                    output.trim()
+                } else {
+                    stderr.trim()
+                };
+                Err(format!("CLI \"{binary}\" turn status {status}: {detail}"))
+            }
+            Ok(WaitOutcome::CodexLastMessageReady) => Ok(output),
         }
     })
     .await
     .map_err(|e| format!("CLI 任务调度失败: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_codex_type_events() {
+        let item = serde_json::json!({
+            "type": "item.completed",
+            "item": { "type": "agent_message", "text": "done" }
+        });
+        assert_eq!(
+            codex_completed_item(&item)
+                .and_then(|v| v.get("text"))
+                .and_then(|v| v.as_str()),
+            Some("done")
+        );
+
+        let turn = serde_json::json!({
+            "type": "turn.completed",
+            "status": "completed"
+        });
+        assert_eq!(
+            codex_turn_completion_status(&turn).as_deref(),
+            Some("completed")
+        );
+    }
+
+    #[test]
+    fn parses_codex_method_events() {
+        let item = serde_json::json!({
+            "method": "item/completed",
+            "params": { "item": { "type": "command_execution", "command": "npm test" } }
+        });
+        assert_eq!(
+            codex_completed_item(&item)
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("npm test")
+        );
+
+        let turn = serde_json::json!({
+            "method": "turn/completed",
+            "params": { "turn": { "status": "completed" } }
+        });
+        assert_eq!(
+            codex_turn_completion_status(&turn).as_deref(),
+            Some("completed")
+        );
+    }
+
+    #[test]
+    fn trims_cli_error_context_from_tail() {
+        let text = "x".repeat(CLI_ERROR_CONTEXT_LIMIT + 32);
+        let trimmed = trim_cli_error_context(&text);
+        assert!(trimmed.starts_with("...\n"));
+        assert!(trimmed.len() < text.len());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -531,7 +1044,17 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![ai_edit_graph, run_workflow, ai_cli])
+        .invoke_handler(tauri::generate_handler![
+            ai_edit_graph,
+            run_workflow,
+            ai_cli,
+            cancel_ai_cli,
+            history::history_root,
+            history::history_read_json,
+            history::history_write_json,
+            history::history_remove,
+            history::history_list_dir
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

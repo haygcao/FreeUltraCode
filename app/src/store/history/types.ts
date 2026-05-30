@@ -1,22 +1,207 @@
 /**
  * CONTRACT: historical-record data shapes.
  *
- * Mirrors §3 of `.omc/plans/history-store-spec.md`. The fields are the on-disk
- * schema for `.worktree/**` and the input/output payloads of every HistoryStore
- * call. Do not rename or delete declared fields without bumping
- * HISTORY_SCHEMA_VERSION and providing a migration in HistoryStore.ready().
+ * Canonical `History*` types model the target `.worktree/**` schema. The
+ * unprefixed types at the bottom preserve the current runtime-store contract
+ * until persistence code migrates from the legacy field names.
  */
 
-import type { IRGraph } from '@/core/ir';
+import type { IRGraph, IRRunStatus } from '@/core/ir';
 import type { Message } from '@/store/types';
+import { HISTORY_ERROR_CODES } from './constants';
 
-/** Top-level schema version. Bump on a breaking on-disk change + migration. */
-export const HISTORY_SCHEMA_VERSION = 1;
+export {
+  BACKUPS_DIR_NAME,
+  DEFAULT_WORKSPACE_ID,
+  DEFAULT_WORKSPACE_NAME,
+  DELETED_DIR_NAME,
+  HISTORY_ERROR_CODES,
+  HISTORY_ROOT_DIR,
+  HISTORY_SCHEMA_VERSION,
+  HISTORY_TIMESTAMP_FORMAT,
+  LEGACY_SESSION_ID_PATTERN,
+  LEGACY_SESSIONS_INDEX_FILE,
+  LEGACY_TMP_DIR_NAME,
+  LEGACY_WORKSPACE_ID_PATTERN,
+  LEGACY_WORKSPACES_INDEX_FILE,
+  MIGRATIONS_DIR_NAME,
+  MIGRATION_BACKUPS_DIR_NAME,
+  MIGRATION_SESSION_ID_PREFIX,
+  QUARANTINE_DIR_NAME,
+  ROOT_BACKUPS_DIR_NAME,
+  ROOT_CONFIG_FILE,
+  ROOT_INDEX_FILE,
+  SESSION_ID_MAX_LENGTH,
+  SESSION_ID_PATTERN,
+  SESSION_ID_PREFIX,
+  SESSIONS_DIR_NAME,
+  SESSIONS_INDEX_FILE,
+  TMP_DIR_NAME,
+  TRASH_DIR_NAME,
+  UNASSIGNED_WORKSPACE_ID,
+  UNASSIGNED_WORKSPACE_NAME,
+  WORKSPACE_DIR_PREFIX,
+  WORKSPACE_FILE,
+  WORKSPACE_ID_MAX_LENGTH,
+  WORKSPACE_ID_PATTERN,
+  WORKSPACES_INDEX_FILE,
+  WORKTREE_ROOT_DIR,
+} from './constants';
 
-/** Reserved id for the "no workspace selected" bucket. */
-export const UNASSIGNED_WORKSPACE_ID = '__unassigned__';
+// ---------- Canonical history schema ----------
 
-// ---------- Workspace ----------
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
+
+export interface JsonObject {
+  [key: string]: JsonValue | undefined;
+}
+
+export type HistoryTimestamp = string;
+export type WorkspaceId = string;
+export type SessionId = string;
+
+/**
+ * Extension slot for persisted history records.
+ *
+ * Canonical writers should only store JSON-safe values here. The type remains
+ * intentionally broad so legacy runtime metadata such as run-error objects can
+ * pass through unchanged until repository-level normalization exists.
+ */
+export interface HistoryMetadata {
+  [key: string]: unknown;
+}
+
+export interface HistoryMigrationRecord extends JsonObject {
+  migrationVersion: number;
+  sourceFingerprint: string;
+  completedAt?: HistoryTimestamp;
+  migrationId?: string;
+  sourceKey?: string;
+  backupId?: string;
+  status?: 'in_progress' | 'applied' | 'rolled_back' | 'conflict' | 'failed';
+  createdAt?: HistoryTimestamp;
+  appliedAt?: HistoryTimestamp;
+}
+
+export interface MessageSummary extends JsonObject {
+  count: number;
+  lastRole?: Message['role'];
+  lastPreview?: string;
+  lastAt?: HistoryTimestamp;
+  /** Legacy summary alias. */
+  preview?: string;
+  /** Legacy summary alias. */
+  lastMessageAt?: HistoryTimestamp | number;
+}
+
+export interface HistoryWorkspaceSummary {
+  workspaceId: WorkspaceId;
+  displayName: string;
+  createdAt: HistoryTimestamp;
+  updatedAt: HistoryTimestamp;
+  sessionCount: number;
+  lastActiveSessionId?: SessionId;
+  metadata?: HistoryMetadata;
+
+  /** Legacy read alias for workspaceId. */
+  id?: WorkspaceId;
+  /** Legacy read alias for displayName. */
+  name?: string;
+  /** Legacy path field; canonical records use canonicalPath/pathAliases. */
+  path?: string;
+  /** Legacy display-oriented directory name. */
+  directoryName?: string;
+}
+
+export interface HistoryWorkspaceRecord extends HistoryWorkspaceSummary {
+  schemaVersion: number;
+  canonicalPath: string;
+  pathAliases: string[];
+  status: 'active' | 'deleted' | 'quarantined';
+}
+
+export interface HistorySessionSummary {
+  workspaceId: WorkspaceId;
+  sessionId: SessionId;
+  title: string;
+  messageSummary: MessageSummary;
+  createdAt: HistoryTimestamp;
+  updatedAt: HistoryTimestamp;
+  isWorkflow: boolean;
+  metadata?: HistoryMetadata;
+
+  /** Legacy read alias for sessionId. */
+  id?: SessionId;
+  /** Legacy sidebar preview alias. */
+  preview?: string;
+  /** Legacy sidebar count alias. */
+  messageCount?: number;
+  /** Legacy extension slot. Canonical writers should emit metadata. */
+  meta?: SessionMeta;
+}
+
+/** Sidebar-ready workspace bucket. Session entries are summaries only. */
+export interface WorkspaceHistoryGroup {
+  workspaceId: WorkspaceId;
+  workspace: HistoryWorkspaceSummary;
+  sessions: HistorySessionSummary[];
+  metadata?: HistoryMetadata;
+}
+
+/** Full payload stored in `<workspaceId>/sessions/<sessionId>.json`. */
+export interface HistoryRecord extends HistorySessionSummary {
+  schemaVersion: number;
+  messages: Message[];
+  workflow?: IRGraph;
+  sourceFingerprint?: string;
+  deletedAt?: HistoryTimestamp;
+}
+
+export type HistoryErrorCode = (typeof HISTORY_ERROR_CODES)[number];
+
+export interface HistoryErrorOptions {
+  code: HistoryErrorCode;
+  message: string;
+  recoverable: boolean;
+  path?: string;
+  entityId?: string;
+  details?: HistoryMetadata;
+  cause?: unknown;
+}
+
+export class HistoryError extends Error {
+  readonly code: HistoryErrorCode;
+  readonly recoverable: boolean;
+  readonly path?: string;
+  readonly entityId?: string;
+  readonly details?: HistoryMetadata;
+  readonly cause?: unknown;
+
+  constructor(options: HistoryErrorOptions) {
+    super(options.message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'HistoryError';
+    this.code = options.code;
+    this.recoverable = options.recoverable;
+    this.path = options.path;
+    this.entityId = options.entityId;
+    this.details = options.details;
+    this.cause = options.cause;
+  }
+}
+
+export type HistoryResult<T> =
+  | { ok: true; data: T; warnings?: HistoryError[] }
+  | { ok: false; error: HistoryError };
+
+export function isHistoryError(value: unknown): value is HistoryError {
+  return value instanceof HistoryError;
+}
+
+// ---------- Legacy runtime-store compatibility ----------
+
+export type LegacyHistoryTimestamp = number;
 
 export interface WorkspaceRecord {
   /** `sha1(normalizePath(absPath)).slice(0,16)` or `'__unassigned__'`. */
@@ -25,64 +210,82 @@ export interface WorkspaceRecord {
   path: string;
   /** Display name (path basename, falls back to '未指定工作区'). User-editable. */
   name: string;
-  createdAt: number;
-  updatedAt: number;
+  createdAt: LegacyHistoryTimestamp;
+  updatedAt: LegacyHistoryTimestamp;
   /** Last active session id (auto-restored next launch). */
   lastActiveSessionId?: string;
   /** Maintained by writes; read path does not depend on it. */
   sessionCount: number;
+
+  // Forward-compatible canonical fields.
+  workspaceId?: WorkspaceId;
+  displayName?: string;
+  canonicalPath?: string;
+  pathAliases?: string[];
+  status?: HistoryWorkspaceRecord['status'];
+  schemaVersion?: number;
+  metadata?: HistoryMetadata;
 }
 
-/** Light shape stored in `workspaces/index.json` and read by the Sidebar. */
+/** Light shape stored in the legacy workspace index and read by the Sidebar. */
 export type WorkspaceSummary = Pick<
   WorkspaceRecord,
   'id' | 'path' | 'name' | 'updatedAt' | 'sessionCount' | 'lastActiveSessionId'
->;
-
-// ---------- Session ----------
+> & {
+  workspaceId?: WorkspaceId;
+  displayName?: string;
+  metadata?: HistoryMetadata;
+};
 
 export interface SessionRecord {
   id: string;
   workspaceId: string;
-  /** Display title — default = first user message[0..24], else '新会话'. */
+  /** Display title - default = first user message[0..36], else '新会话'. */
   title: string;
-  /** ⭐ true = workflow session (carries an IRGraph snapshot); false = chat-only. */
+  /** True = workflow session (carries an IRGraph snapshot); false = chat-only. */
   isWorkflow: boolean;
-  createdAt: number;
-  updatedAt: number;
-
-  /** Full message stream; append-only writes; flushed on every push. */
+  createdAt: LegacyHistoryTimestamp;
+  updatedAt: LegacyHistoryTimestamp;
   messages: Message[];
-
-  /**
-   * Only present when isWorkflow is true. Snapshot of the IRGraph at session
-   * completion — historical archive, NOT a live mirror of `store.workflow`.
-   */
   workflow?: IRGraph;
-
-  /** Extension slot — must stay optional. */
+  /** Legacy extension slot. Canonical writers use `metadata`. */
   meta?: SessionMeta;
+
+  // Forward-compatible canonical fields.
+  sessionId?: SessionId;
+  messageSummary?: MessageSummary;
+  sourceFingerprint?: string;
+  deletedAt?: HistoryTimestamp;
+  schemaVersion?: number;
+  metadata?: HistoryMetadata;
 }
 
-export interface SessionMeta {
+export interface SessionMeta extends HistoryMetadata {
   adapter?: 'claude-code' | 'codex' | 'gemini';
   permission?: string;
   model?: string;
-  runStatus?: 'idle' | 'running' | 'success' | 'error';
-  [k: string]: unknown;
+  runStatus?: 'idle' | 'running' | 'success' | 'error' | 'interrupted';
+  runState?: Record<string, IRRunStatus>;
+  runOutputs?: Record<string, string>;
+  failedNodeId?: string | null;
+  runError?: Record<string, unknown> | null;
+  migration?: HistoryMigrationRecord;
 }
 
-/** Light shape stored in `sessions/index.json`; no `messages` / `workflow`. */
+/** Light shape stored in the legacy session index; no `messages` / `workflow`. */
 export type SessionSummary = Pick<
   SessionRecord,
   'id' | 'workspaceId' | 'title' | 'isWorkflow' | 'createdAt' | 'updatedAt'
 > & {
-  /** First 80 chars of the last message — sidebar two-line preview. */
+  /** First 80 chars of the last message - sidebar two-line preview. */
   preview?: string;
   messageCount: number;
-};
 
-// ---------- Global config ----------
+  // Forward-compatible canonical fields.
+  sessionId?: SessionId;
+  messageSummary?: MessageSummary;
+  metadata?: HistoryMetadata;
+};
 
 export interface HistoryConfig {
   schemaVersion: number;
@@ -90,9 +293,10 @@ export interface HistoryConfig {
   lastActiveSessionId?: string;
   /** Set true once the first-run localStorage migration has run. */
   migratedFromLocalStorage?: boolean;
+  migrationVersion?: number;
+  migrations?: HistoryMigrationRecord[];
+  metadata?: HistoryMetadata;
 }
-
-// ---------- Write payloads ----------
 
 export interface SessionCreateInput {
   workspaceId: string;
@@ -102,6 +306,7 @@ export interface SessionCreateInput {
   /** Required when isWorkflow=true; stored as the initial workflow snapshot. */
   workflow?: IRGraph;
   meta?: SessionMeta;
+  metadata?: HistoryMetadata;
 }
 
 export interface SessionPatch {
@@ -109,13 +314,15 @@ export interface SessionPatch {
   isWorkflow?: boolean;
   workflow?: IRGraph;
   meta?: Partial<SessionMeta>;
-  /** Whole-replace messages (rare — prefer appendMessage). */
+  metadata?: HistoryMetadata;
+  /** Whole-replace messages (rare - prefer appendMessage). */
   messages?: Message[];
 }
 
 export interface WorkspaceUpsertInput {
-  /** Absolute path; '' resolves to the '__unassigned__' bucket. */
+  /** Absolute path; '' resolves to the default workspace bucket. */
   path: string;
   /** Optional display-name override. */
   name?: string;
+  metadata?: HistoryMetadata;
 }

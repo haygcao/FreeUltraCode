@@ -20,6 +20,7 @@ import type {
   SelectOption,
   Session,
 } from './types';
+import { DEFAULT_LOCALE, type Locale } from '@/lib/i18n';
 
 /**
  * Sample session history. The first entry is treated as the active session.
@@ -97,8 +98,8 @@ export const sampleMessages: Message[] = [
  *
  * Categories: 清晰度 / 完整性 / 成本 / 结构 / 可靠性 / 性能与并行 /
  * 验证与测试 / 可观测性 / 安全与权限 / 界面与体验. Every item is phrased as a concrete,
- * imperative instruction to MODIFY the blueprint — clicking it dispatches
- * `sendPrompt(item.text)`, which the AI uses to rewrite the IRGraph.
+ * imperative instruction to MODIFY the blueprint — clicking it appends
+ * `item.text` to the AI input box for review before sending.
  *
  * Each item carries a ready-to-send prompt (`text`) and a short display label.
  * Users can edit / add / remove items and groups in the PromptPanel's edit
@@ -109,11 +110,31 @@ export const sampleMessages: Message[] = [
  * On load, the store merges any default group whose `id` is missing from the
  * user's persisted library (one-time per version bump), so newly-shipped
  * default groups appear automatically without discarding the user's edits.
- * Bump history: v1 = 9 groups (clarity…security); v2 = +界面与体验 (ui-ux).
+ * Bump history: v1 = 9 groups (clarity…security); v2 = +界面与体验 (ui-ux);
+ * v4 = +互动澄清 (interactive: grill-me + clarify).
  */
-export const PROMPT_DEFAULTS_VERSION = 2;
+export const PROMPT_DEFAULTS_VERSION = 4;
 
-export const samplePromptGroups: PromptGroup[] = [
+const basePromptGroups: PromptGroup[] = [
+  {
+    id: 'interactive',
+    label: '互动澄清 / Interactive',
+    items: [
+      {
+        id: 'interactive-grill',
+        label: '拷问我 (grill-me)',
+        // The exact keyword `grill-me` flips sendPrompt into interrogation mode:
+        // the AI asks, one at a time, about gaps in the blueprint via the
+        // interaction protocol (rendered as widgets in the AI-return panel).
+        text: 'grill-me',
+      },
+      {
+        id: 'interactive-clarify',
+        label: '澄清需求',
+        text: '在动手改图前，先用交互（select / input）逐个向我确认蓝图中含糊或缺失的关键决策，问清后再给出优化方案。',
+      },
+    ],
+  },
   {
     id: 'clarity',
     label: '清晰度 / Clarity',
@@ -391,6 +412,274 @@ export const samplePromptGroups: PromptGroup[] = [
   },
 ];
 
+const EN_LOCALE: Locale = 'en-US';
+
+type EnglishPromptGroup = {
+  label: string;
+  items: Record<string, { label: string; text: string }>;
+};
+
+const englishPromptTranslations: Record<string, EnglishPromptGroup> = {
+  interactive: {
+    label: 'Interactive',
+    items: {
+      'interactive-grill': { label: 'Grill me (grill-me)', text: 'grill-me' },
+      'interactive-clarify': {
+        label: 'Clarify needs',
+        text: 'Before editing the blueprint, use interactions (select / input) to confirm ambiguous or missing key decisions with me one at a time, then propose the optimization.',
+      },
+    },
+  },
+  clarity: {
+    label: 'Clarity',
+    items: {
+      'clarity-goal': {
+        label: 'Clarify goal',
+        text: 'Clarify the workflow goal and success criteria, then summarize each node responsibility in one sentence.',
+      },
+      'clarity-naming': {
+        label: 'Normalize names',
+        text: 'Check whether node labels and parameter names are consistent and clear. Rename vague nodes.',
+      },
+      'clarity-simplify': {
+        label: 'Simplify structure',
+        text: 'Identify redundant steps that can be merged or removed so the main execution chain is easier to read.',
+      },
+    },
+  },
+  completeness: {
+    label: 'Completeness',
+    items: {
+      'completeness-edges': {
+        label: 'Cover edge cases',
+        text: 'List unhandled edge cases and add branch nodes for missing paths.',
+      },
+      'completeness-errors': {
+        label: 'Error handling',
+        text: 'Add failure-handling paths for each agent node so exceptions do not interrupt the whole workflow.',
+      },
+      'completeness-data': {
+        label: 'Data wiring',
+        text: 'Check whether all three parallel review results flow into verify, and add any missing data edges.',
+      },
+    },
+  },
+  cost: {
+    label: 'Cost',
+    items: {
+      'cost-model': {
+        label: 'Downgrade models',
+        text: 'Move low-complexity nodes to cheaper models such as haiku, and estimate the cost savings.',
+      },
+      'cost-parallel': {
+        label: 'Parallelize work',
+        text: 'Identify steps that can run in parallel and restructure them into a parallel node to reduce total duration.',
+      },
+      'cost-cache': {
+        label: 'Reuse and cache',
+        text: 'Find intermediate outputs that can be cached or reused to avoid repeated agent calls.',
+      },
+    },
+  },
+  structure: {
+    label: 'Structure',
+    items: {
+      'structure-split': {
+        label: 'Split responsibilities',
+        text: 'Review each agent node responsibility. Split overloaded agents into single-purpose agent nodes and reconnect them with exec edges in dependency order to reduce single points of failure.',
+      },
+      'structure-parallelize': {
+        label: 'Parallel refactor',
+        text: 'Find serial agent nodes on the exec spine that have no data dependency on each other. Move them into a parallel block, while keeping dependent nodes in a pipeline to shorten the critical path.',
+      },
+      'structure-phase': {
+        label: 'Group by phase',
+        text: 'Use phase nodes to divide the workflow into logical stages such as collect, analyze, execute, and summarize. Move related agents into the right phase so hierarchy and flow are obvious.',
+      },
+      'structure-converge': {
+        label: 'Converge results',
+        text: 'Add an aggregation agent after each parallel block. Connect every parallel branch output into it with data edges so downstream nodes receive one clear convergence point.',
+      },
+      'structure-explicit-data': {
+        label: 'Explicit data edges',
+        text: 'Review implicit context passing between nodes. Add explicit data edges for real dependencies and remove redundant or duplicate wiring so data flow is traceable.',
+      },
+    },
+  },
+  reliability: {
+    label: 'Reliability',
+    items: {
+      'reliability-retry': {
+        label: 'Retry backoff',
+        text: 'Add retry settings to agent nodes that call external tools or may fail transiently, about 3 attempts with exponential backoff and jitter. Note that retries must be idempotent.',
+      },
+      'reliability-fallback': {
+        label: 'Fallback path',
+        text: 'Add branch-based fallback layers for critical agents: on failure, fall back to a simpler rule node, then a cheaper model, then a human queue so the workflow can continue.',
+      },
+      'reliability-boundary': {
+        label: 'Error boundary',
+        text: 'Use branch nodes to create error boundaries for high-risk agents. Route failure paths to handling or alerting branches to prevent cascading failure on the exec spine.',
+      },
+      'reliability-idempotent': {
+        label: 'Idempotency and timeout',
+        text: 'Review agents with side effects. Add idempotency keys to avoid duplicate actions during retries, and set timeouts for LLM calls that trigger fallback paths.',
+      },
+      'reliability-loop-fuse': {
+        label: 'Loop fuse',
+        text: 'Check that loop nodes have a clear maximum iteration count and exit condition. Add circuit-breaker logic to prevent infinite loops or repeated retries of the same failed action.',
+      },
+    },
+  },
+  performance: {
+    label: 'Performance',
+    items: {
+      'performance-critical-path': {
+        label: 'Critical path',
+        text: 'Analyze the longest dependency chain on the exec spine. Move or parallelize unnecessary serial agents to compress end-to-end latency.',
+      },
+      'performance-model-tier': {
+        label: 'Model tiers',
+        text: 'Review model settings. Use lighter models such as haiku for simple classification or extraction, and reserve stronger models for complex reasoning to improve throughput without losing quality.',
+      },
+      'performance-dedupe': {
+        label: 'Deduplicate work',
+        text: 'Find agents that repeat similar work. Merge them into one reusable node and distribute its output with data edges to reduce token waste and latency.',
+      },
+      'performance-fanout': {
+        label: 'Fan-out control',
+        text: 'Check parallel block fan-out width. Add sensible concurrency limits or batching when too many branches would cause rate limits or resource contention.',
+      },
+    },
+  },
+  verification: {
+    label: 'Verification',
+    items: {
+      'verification-verifier': {
+        label: 'Verifier node',
+        text: 'Insert a verifier agent after critical output agents. Feed upstream output through data edges and validate it against explicit success criteria and a scoring rubric, looping back for correction when it fails.',
+      },
+      'verification-adversarial': {
+        label: 'Adversarial check',
+        text: 'Add an adversarial or red-team agent for user-input or high-risk decision steps. Simulate privilege escalation and injection scenarios before results proceed downstream.',
+      },
+      'verification-selfcheck': {
+        label: 'Self-check loop',
+        text: 'Add a self-check loop to output-producing agents. Use a loop or branch so the node verifies format and constraints, fixes issues once, then releases the result.',
+      },
+      'verification-criteria': {
+        label: 'Success criteria',
+        text: 'Add testable success criteria and output contracts to each agent node, including format, length, and required fields. Replace vague done states with clear acceptance criteria.',
+      },
+    },
+  },
+  observability: {
+    label: 'Observability',
+    items: {
+      'observability-logs': {
+        label: 'Key logs',
+        text: 'Insert log nodes at every phase boundary and critical agent output. Record step id, input summary, and result status so the exec spine is traceable and diagnosable.',
+      },
+      'observability-branch': {
+        label: 'Visible branches',
+        text: 'Add log nodes to failure paths in each fallback or error branch. Capture input, step, and status so interruptions become diagnosable.',
+      },
+      'observability-parallel': {
+        label: 'Parallel tracing',
+        text: 'Add log nodes with a shared correlation id inside each parallel branch. Record each agent duration and output to locate slow or failing branches.',
+      },
+      'observability-audit': {
+        label: 'Audit trail',
+        text: 'Add log nodes around high-permission or externally visible side-effect agents. Record decision evidence and key metadata to create an auditable execution trail.',
+      },
+    },
+  },
+  security: {
+    label: 'Security & Permissions',
+    items: {
+      'security-approval': {
+        label: 'Human approval',
+        text: 'Insert a human-approval branch before irreversible or high-impact agent actions such as deletion, payment, or external sending. Block the exec spine until approval is granted.',
+      },
+      'security-scope': {
+        label: 'Permission boundary',
+        text: 'Review agents that access external systems or sensitive data. Use branch or log nodes before and after them to narrow permission scope and minimize capability exposure.',
+      },
+      'security-redact': {
+        label: 'Sensitive redaction',
+        text: 'Add redaction or data-minimization nodes where sensitive fields pass through logs or across agents. Send only the necessary context to avoid leaking private data on data edges.',
+      },
+      'security-escalate': {
+        label: 'Escalate exceptions',
+        text: 'Add a human fallback branch at the end of the reliability fallback chain. When retries and downgrades fail, route the task to a human handling queue as the final safety layer.',
+      },
+    },
+  },
+  'ui-ux': {
+    label: 'UI & UX',
+    items: {
+      'ui-visual-review': {
+        label: 'Visual review',
+        text: 'Insert a UI design review agent after agents that generate interface or frontend output. Check layout alignment, spacing, color contrast, type hierarchy, and visual consistency, then output actionable polish tasks through data edges.',
+      },
+      'ui-theme-switch': {
+        label: 'Style variants',
+        text: 'Add support for multiple themes or style variants. Extract colors, font sizes, and radius values into variable nodes, add an agent to generate light, dark, and brand variants, and add a verifier to check contrast and readability.',
+      },
+      'ui-responsive': {
+        label: 'Responsive checks',
+        text: 'Add a parallel block that checks desktop, tablet, and mobile breakpoints in parallel. Identify layout shifts, overflow, and cramped areas, then have a downstream agent propose responsive adjustments for each size.',
+      },
+      'ui-accessibility': {
+        label: 'Accessibility',
+        text: 'Add an accessibility review agent. Check WCAG color contrast, keyboard access, focus order, ARIA labels, and screen-reader compatibility, then loop remediation items back for fixes.',
+      },
+      'ui-states': {
+        label: 'Interaction states',
+        text: 'Add nodes to cover loading, empty, error, and success states for interface flows. Ensure every key interaction has clear feedback and use branches to cover exceptional states.',
+      },
+      'ui-design-system': {
+        label: 'Design system',
+        text: 'Add a design-system alignment agent to normalize component styles, spacing, radius, shadows, and color tokens. Identify and remove one-off inline styles so the interface remains visually and behaviorally consistent.',
+      },
+      'ui-motion': {
+        label: 'Motion',
+        text: 'Add a microinteraction and transition design step. Add appropriate animation for state changes, loading, and feedback while constraining motion so it does not hurt performance or usability.',
+      },
+      'ui-usability': {
+        label: 'Usability walk-through',
+        text: 'Add a usability walk-through agent that simulates a real user on key paths. Find blockers such as too many steps, missing hints, or risky actions, then output prioritized improvements.',
+      },
+    },
+  },
+};
+
+function withDefaultTranslations(groups: PromptGroup[]): PromptGroup[] {
+  return groups.map((group) => {
+    const english = englishPromptTranslations[group.id];
+    return {
+      ...group,
+      translations: {
+        [DEFAULT_LOCALE]: { label: group.label },
+        ...(english ? { [EN_LOCALE]: { label: english.label } } : {}),
+      },
+      items: group.items.map((item) => {
+        const itemEnglish = english?.items[item.id];
+        return {
+          ...item,
+          translations: {
+            [DEFAULT_LOCALE]: { label: item.label, text: item.text },
+            ...(itemEnglish ? { [EN_LOCALE]: itemEnglish } : {}),
+          },
+        };
+      }),
+    };
+  });
+}
+
+export const samplePromptGroups: PromptGroup[] =
+  withDefaultTranslations(basePromptGroups);
+
 /**
  * Composer dropdown options (workspace / permission / model).
  *
@@ -400,9 +689,33 @@ export const samplePromptGroups: PromptGroup[] = [
  * default (see `defaultComposer`).
  */
 export const permissionOptions: SelectOption[] = [
-  { id: 'full', label: '完全访问权限', hint: '读写' },
-  { id: 'readonly', label: '只读', hint: '不修改' },
-  { id: 'ask', label: '每次询问', hint: '逐步确认' },
+  {
+    id: 'full',
+    label: '完全访问权限',
+    hint: '读写',
+    translations: {
+      'zh-CN': { label: '完全访问权限', hint: '读写' },
+      'en-US': { label: 'Full access', hint: 'Read/write' },
+    },
+  },
+  {
+    id: 'readonly',
+    label: '只读',
+    hint: '不修改',
+    translations: {
+      'zh-CN': { label: '只读', hint: '不修改' },
+      'en-US': { label: 'Read only', hint: 'No changes' },
+    },
+  },
+  {
+    id: 'ask',
+    label: '每次询问',
+    hint: '逐步确认',
+    translations: {
+      'zh-CN': { label: '每次询问', hint: '逐步确认' },
+      'en-US': { label: 'Ask each time', hint: 'Confirm step by step' },
+    },
+  },
 ];
 
 /**
@@ -411,9 +724,33 @@ export const permissionOptions: SelectOption[] = [
  * is wrong/retired the API returns an HTTP error that surfaces in "AI 返回".
  */
 export const modelOptions: SelectOption[] = [
-  { id: 'claude-sonnet-4-20250514', label: 'claude-sonnet-4', hint: '标准' },
-  { id: 'claude-opus-4-20250514', label: 'claude-opus-4', hint: '深度' },
-  { id: 'claude-3-5-haiku-latest', label: 'claude-haiku-3.5', hint: '轻量' },
+  {
+    id: 'claude-sonnet-4-20250514',
+    label: 'claude-sonnet-4',
+    hint: '标准',
+    translations: {
+      'zh-CN': { label: 'claude-sonnet-4', hint: '标准' },
+      'en-US': { label: 'claude-sonnet-4', hint: 'Standard' },
+    },
+  },
+  {
+    id: 'claude-opus-4-20250514',
+    label: 'claude-opus-4',
+    hint: '深度',
+    translations: {
+      'zh-CN': { label: 'claude-opus-4', hint: '深度' },
+      'en-US': { label: 'claude-opus-4', hint: 'Deep' },
+    },
+  },
+  {
+    id: 'claude-3-5-haiku-latest',
+    label: 'claude-haiku-3.5',
+    hint: '轻量',
+    translations: {
+      'zh-CN': { label: 'claude-haiku-3.5', hint: '轻量' },
+      'en-US': { label: 'claude-haiku-3.5', hint: 'Lightweight' },
+    },
+  },
 ];
 
 /**

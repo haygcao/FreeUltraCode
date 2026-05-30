@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Select from '@/components/Select';
 import WorkspaceSelect from '@/components/WorkspaceSelect';
+import { summarizeAnswer, type InteractionAnswer } from '@/core/interaction';
+import { localizeSelectOption, t, type Locale } from '@/lib/i18n';
+import type { Message } from '@/store/types';
 import {
   loadDockHeight,
   loadPaneWidth,
@@ -49,12 +52,213 @@ function clampHeight(h: number): number {
   return Math.min(Math.max(h, MIN_DOCK_HEIGHT), max);
 }
 
+function formatMessageTime(ts: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date(ts));
+}
+
+/**
+ * Renders a node's interaction request (select / input / confirm) inside the
+ * AI-return stream. States:
+ *   - pending + active : interactive controls; submitting resolves the waiting
+ *                        run node via onAnswer → store.answerInteraction.
+ *   - answered         : compact "你的回答: …" summary.
+ *   - cancelled / stale: read-only note (the run ended before it was answered).
+ * See core/interaction.ts for the protocol and the run-loop side.
+ */
+function InteractionWidget({
+  message,
+  locale,
+  active,
+  onAnswer,
+  onDismiss,
+}: {
+  message: Message;
+  locale: Locale;
+  active: boolean;
+  onAnswer: (answer: InteractionAnswer) => void;
+  onDismiss: () => void;
+}) {
+  const req = message.interaction;
+  const status = message.interactionStatus ?? 'pending';
+  const [selected, setSelected] = useState<string[]>([]);
+  const [text, setText] = useState('');
+
+  if (!req) return null;
+
+  if (status === 'answered' && message.interactionAnswer) {
+    return (
+      <div className="rounded-md border border-accent-2/40 bg-accent-2/5 px-2.5 py-1.5 text-xs text-fg-dim">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-accent-2">
+          ✓ {t(locale, 'interaction.youAnswered')}
+        </span>{' '}
+        {summarizeAnswer(req, message.interactionAnswer)}
+      </div>
+    );
+  }
+  if (status === 'cancelled') {
+    return (
+      <div className="rounded-md border border-border bg-panel-2 px-2.5 py-1.5 text-xs text-fg-faint">
+        ✖ {t(locale, 'interaction.cancelled')}
+      </div>
+    );
+  }
+
+  const disabled = !active;
+  const toggle = (opt: string) =>
+    setSelected((cur) =>
+      cur.includes(opt) ? cur.filter((o) => o !== opt) : [...cur, opt],
+    );
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent/5 px-2.5 py-2">
+      <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-dim">
+        {req.prompt}
+      </div>
+
+      {req.type === 'select' && !req.multi && (
+        <div className="flex flex-wrap gap-1.5">
+          {req.options?.map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              disabled={disabled}
+              onClick={() => onAnswer({ kind: 'select', values: [opt] })}
+              className="rounded border border-border bg-bg px-2 py-1 text-xs text-fg transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {req.type === 'select' && req.multi && (
+        <div className="flex flex-col gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+            {t(locale, 'interaction.multiHint')}
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {req.options?.map((opt) => {
+              const on = selected.includes(opt);
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => toggle(opt)}
+                  className={
+                    'rounded border px-2 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ' +
+                    (on
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border bg-bg text-fg hover:border-accent/50')
+                  }
+                >
+                  {on ? '☑' : '☐'} {opt}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            disabled={disabled || selected.length === 0}
+            onClick={() => onAnswer({ kind: 'select', values: selected })}
+            className="self-start rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {t(locale, 'interaction.submit')}
+          </button>
+        </div>
+      )}
+
+      {req.type === 'input' && (
+        <div className="flex flex-col gap-2">
+          {req.multiline ? (
+            <textarea
+              value={text}
+              disabled={disabled}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={
+                req.placeholder ?? t(locale, 'interaction.inputPlaceholder')
+              }
+              rows={3}
+              className="resize-none rounded border border-border bg-bg p-2 text-sm text-fg outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          ) : (
+            <input
+              value={text}
+              disabled={disabled}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && text.trim()) {
+                  e.preventDefault();
+                  onAnswer({ kind: 'input', text: text.trim() });
+                }
+              }}
+              placeholder={
+                req.placeholder ?? t(locale, 'interaction.inputPlaceholder')
+              }
+              className="rounded border border-border bg-bg px-2 py-1.5 text-sm text-fg outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          )}
+          <button
+            type="button"
+            disabled={disabled || !text.trim()}
+            onClick={() => onAnswer({ kind: 'input', text: text.trim() })}
+            className="self-start rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {t(locale, 'interaction.submit')}
+          </button>
+        </div>
+      )}
+
+      {req.type === 'confirm' && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onAnswer({ kind: 'confirm', confirmed: true })}
+            className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {req.confirmLabel ?? t(locale, 'interaction.confirm')}
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onAnswer({ kind: 'confirm', confirmed: false })}
+            className="rounded-md border border-border px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent-3/60 hover:text-accent-3 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {req.cancelLabel ?? t(locale, 'common.cancel')}
+          </button>
+        </div>
+      )}
+
+      {disabled ? (
+        <span className="font-mono text-[10px] text-fg-faint">
+          {t(locale, 'interaction.ended')}
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="self-start font-mono text-[10px] text-fg-faint underline-offset-2 transition-colors hover:text-accent-3 hover:underline"
+          title={t(locale, 'interaction.skipTitle')}
+        >
+          {t(locale, 'interaction.skip')}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /**
  * CONTRACT: default export, no props. Bottom-center AI interaction dock.
  *
  * Left : AI return stream (messages from the store).
- * Right: AI input box. Plain Enter calls store.sendPrompt; Shift+Enter inserts
- *        a newline.
+ * Right: AI input box. Enter inserts a newline; Ctrl+Enter calls
+ *        store.sendPrompt.
  *
  * The whole dock is vertically resizable: drag the handle on its top edge
  * (cursor becomes row-resize) to change its height; the value is persisted.
@@ -70,15 +274,22 @@ export default function AIDock() {
   const messages = useStore((s) => s.messages);
   const sendPrompt = useStore((s) => s.sendPrompt);
   const composer = useStore((s) => s.composer);
+  const draft = useStore((s) => s.composerDraft);
+  const composerFocusVersion = useStore((s) => s.composerFocusVersion);
+  const locale = useStore((s) => s.locale);
   const setComposer = useStore((s) => s.setComposer);
+  const setComposerDraft = useStore((s) => s.setComposerDraft);
   const setWorkspace = useStore((s) => s.setWorkspace);
   const permissionOptions = useStore((s) => s.permissionOptions);
   const modelOptions = useStore((s) => s.modelOptions);
   const workspaceHistory = useStore((s) => s.workspaceHistory);
   const mode = useStore((s) => s.mode);
   const aiStreaming = useStore((s) => s.aiStreaming);
-  const [draft, setDraft] = useState('');
+  const answerInteraction = useStore((s) => s.answerInteraction);
+  const dismissInteraction = useStore((s) => s.dismissInteraction);
   const streamRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const lastComposerFocusVersion = useRef(composerFocusVersion);
 
   // API-key settings popover state.
   const [showKeySettings, setShowKeySettings] = useState(false);
@@ -112,6 +323,18 @@ export default function AIDock() {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // PromptPanel can append text into this composer. When it does, move focus to
+  // the AI input and place the caret at the end so the user can continue typing.
+  useEffect(() => {
+    if (composerFocusVersion === lastComposerFocusVersion.current) return;
+    lastComposerFocusVersion.current = composerFocusVersion;
+    const el = inputRef.current;
+    if (!el || isReadOnly) return;
+    el.focus();
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+  }, [composerFocusVersion, isReadOnly]);
 
   // Re-clamp the input width when the window (and thus the dock) resizes so
   // neither pane collapses below its minimum.
@@ -188,7 +411,7 @@ export default function AIDock() {
     const text = draft.trim();
     if (!text) return;
     sendPrompt(text);
-    setDraft('');
+    setComposerDraft('');
   };
 
   const saveApiKey = () => {
@@ -206,7 +429,7 @@ export default function AIDock() {
       {/* Resize handle — sits on the top edge, cursor becomes row-resize. */}
       <div
         onMouseDown={onResizeStart}
-        title="拖动调整高度"
+        title={t(locale, 'common.resizeHeight')}
         className="group absolute -top-1 left-0 right-0 z-20 flex h-2 cursor-row-resize items-center justify-center"
       >
         <div className="h-0.5 w-full bg-transparent transition-colors group-hover:bg-accent/40" />
@@ -215,37 +438,68 @@ export default function AIDock() {
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b border-border-soft px-3 py-2">
           <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
-            AI 返回
+            {t(locale, 'dock.aiReturn')}
           </span>
           {aiStreaming && (
             <span className="flex items-center gap-1 font-mono text-[10px] text-accent-2">
               <span className="omc-pulse-dot" />
-              生成中…
+              {t(locale, 'dock.generating')}
             </span>
           )}
         </header>
         <div ref={streamRef} className="min-h-0 flex-1 overflow-y-auto p-3">
           {messages.length === 0 ? (
             <div className="text-xs text-fg-faint">
-              在右侧描述你的意图，AI 将据此操作画布并在此回显。
+              {t(locale, 'dock.empty')}
             </div>
           ) : (
             <ul className="flex flex-col gap-3">
               {messages.map((m) => {
                 const isUser = m.role === 'user';
+                const isSystem = m.role === 'system';
+                const roleLabel = isUser
+                  ? '› you'
+                  : isSystem
+                    ? '• system'
+                    : '⟳ assistant';
+                const roleClass = isUser
+                  ? 'text-accent'
+                  : isSystem
+                    ? 'text-accent-3'
+                    : 'text-accent-2';
                 return (
                   <li key={m.id} className="flex flex-col gap-1">
-                    <span
-                      className={
-                        'font-mono text-[10px] uppercase tracking-wider ' +
-                        (isUser ? 'text-accent' : 'text-accent-2')
-                      }
-                    >
-                      {isUser ? '› you' : '⟳ assistant'}
-                    </span>
-                    <span className="whitespace-pre-wrap text-sm leading-relaxed text-fg-dim">
-                      {m.text}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={
+                          'font-mono text-[10px] uppercase tracking-wider ' + roleClass
+                        }
+                      >
+                        {roleLabel}
+                      </span>
+                      <span
+                        className="font-mono text-[10px] text-fg-faint"
+                        title={new Date(m.createdAt).toLocaleString()}
+                      >
+                        {formatMessageTime(m.createdAt)}
+                      </span>
+                    </div>
+                    {m.interaction ? (
+                      <InteractionWidget
+                        message={m}
+                        locale={locale}
+                        active={
+                          (m.interactionStatus ?? 'pending') === 'pending' &&
+                          (mode === 'running' || aiStreaming)
+                        }
+                        onAnswer={(answer) => answerInteraction(m.id, answer)}
+                        onDismiss={() => dismissInteraction(m.id)}
+                      />
+                    ) : (
+                      <span className="whitespace-pre-wrap text-sm leading-relaxed text-fg-dim">
+                        {m.text}
+                      </span>
+                    )}
                   </li>
                 );
               })}
@@ -257,7 +511,7 @@ export default function AIDock() {
       {/* Vertical divider — drag to re-split AI 返回 / AI 输入. */}
       <div
         onMouseDown={onSplitStart}
-        title="拖动调整左右宽度"
+        title={t(locale, 'common.resizeSplit')}
         className="group relative z-20 flex w-1.5 shrink-0 cursor-col-resize items-stretch justify-center border-l border-border-soft"
       >
         <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/40" />
@@ -270,7 +524,8 @@ export default function AIDock() {
       >
         <header className="flex items-center justify-between gap-2 border-b border-border-soft px-3 py-2">
           <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
-            AI 输入{isReadOnly ? ' · 只读 (运行中)' : ''}
+            {t(locale, 'dock.aiInput')}
+            {isReadOnly ? t(locale, 'dock.readonlySuffix') : ''}
           </span>
           <button
             type="button"
@@ -280,8 +535,8 @@ export default function AIDock() {
             }}
             title={
               hasApiKey
-                ? 'Anthropic API key 已配置 · 点击修改'
-                : '未配置 API key · 将回退到本地意图引擎'
+                ? t(locale, 'dock.apiKeyConfigured')
+                : t(locale, 'dock.apiKeyMissing')
             }
             className={
               'rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors ' +
@@ -306,7 +561,7 @@ export default function AIDock() {
                 type="button"
                 onClick={() => setShowKeySettings(false)}
                 className="text-fg-faint hover:text-fg"
-                title="关闭"
+                title={t(locale, 'common.close')}
               >
                 ×
               </button>
@@ -321,8 +576,7 @@ export default function AIDock() {
               className="w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-fg outline-none focus:border-accent"
             />
             <p className="mt-2 text-[10px] leading-relaxed text-fg-faint">
-              仅保存在本机 localStorage (键 <code>{API_KEY_STORAGE}</code>)。
-              未配置时将回退到本地意图引擎。
+              {t(locale, 'dock.apiKeyHelp')} <code>{API_KEY_STORAGE}</code>
             </p>
             <div className="mt-2 flex items-center justify-end gap-2">
               <button
@@ -335,14 +589,14 @@ export default function AIDock() {
                 }}
                 className="rounded border border-border px-2 py-1 text-[11px] text-fg-faint hover:border-accent-3/60 hover:text-accent-3"
               >
-                清除
+                {t(locale, 'common.clear')}
               </button>
               <button
                 type="button"
                 onClick={saveApiKey}
                 className="rounded bg-accent px-2.5 py-1 text-[11px] font-medium text-bg hover:opacity-90"
               >
-                保存
+                {t(locale, 'common.save')}
               </button>
             </div>
           </div>
@@ -350,10 +604,11 @@ export default function AIDock() {
 
         <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
           <textarea
+            ref={inputRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => setComposerDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && e.ctrlKey) {
                 e.preventDefault();
                 submit();
               }
@@ -362,8 +617,8 @@ export default function AIDock() {
             disabled={isReadOnly}
             placeholder={
               isReadOnly
-                ? '运行中 · 输入框已锁定，停止后可再编辑蓝图'
-                : '描述意图，例如：在 Verify 后加一个汇总节点…'
+                ? t(locale, 'dock.runningPlaceholder')
+                : t(locale, 'dock.placeholder')
             }
             className={
               'min-h-0 flex-1 resize-none rounded-md border border-border bg-bg p-2.5 text-sm leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent ' +
@@ -374,16 +629,16 @@ export default function AIDock() {
           {/* Tool row: permission · (spacer) · model · send */}
           <div className="flex items-center gap-2">
             <Select
-              title="权限设定"
-              options={permissionOptions}
+              title={t(locale, 'dock.permissionTitle')}
+              options={permissionOptions.map((opt) => localizeSelectOption(opt, locale))}
               value={composer.permission}
               onChange={(id) => setComposer({ permission: id })}
               icon="⚠"
             />
             <div className="min-w-0 flex-1" />
             <Select
-              title="模型选择"
-              options={modelOptions}
+              title={t(locale, 'dock.modelTitle')}
+              options={modelOptions.map((opt) => localizeSelectOption(opt, locale))}
               value={composer.model}
               onChange={(id) => setComposer({ model: id })}
             />
@@ -393,10 +648,10 @@ export default function AIDock() {
               disabled={!draft.trim() || isReadOnly || aiStreaming}
               title={
                 isReadOnly
-                  ? '运行中 · 输入框已锁定'
+                  ? t(locale, 'dock.inputLockedTitle')
                   : aiStreaming
-                    ? 'AI 生成中…'
-                    : 'Enter 发送 · Shift+Enter 换行'
+                    ? t(locale, 'dock.aiGeneratingTitle')
+                    : t(locale, 'dock.sendShortcut')
               }
               className="rounded-md bg-accent px-2.5 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -413,8 +668,8 @@ export default function AIDock() {
             />
             <span className="font-mono text-[10px] text-fg-faint">
               {isReadOnly
-                ? '运行中 · 只读'
-                : 'Enter 发送 · Shift+Enter 换行'}
+                ? t(locale, 'dock.runningReadonly')
+                : t(locale, 'dock.sendShortcut')}
             </span>
           </div>
         </div>

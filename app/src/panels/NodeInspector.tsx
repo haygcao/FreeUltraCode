@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useStore } from '@/store/useStore';
 import AutoTextarea from '@/components/AutoTextarea';
 import type { IRAgentSpec, IRNode, NodeType } from '@/core/ir';
+import { t, type Locale } from '@/lib/i18n';
 
 /**
  * CONTRACT: default export, no props. Node-properties editor surfaced by
@@ -81,10 +82,17 @@ interface SpecListFieldProps {
   specs: IRAgentSpec[];
   onChange: (specs: IRAgentSpec[]) => void;
   addLabel: string;
+  locale: Locale;
 }
 
 /** Editor for a list of agent specs (parallel branches / pipeline stages). */
-function SpecListField({ label, specs, onChange, addLabel }: SpecListFieldProps) {
+function SpecListField({
+  label,
+  specs,
+  onChange,
+  addLabel,
+  locale,
+}: SpecListFieldProps) {
   const update = (i: number, patch: Partial<IRAgentSpec>) => {
     const next = specs.map((s, idx) => (idx === i ? { ...s, ...patch } : s));
     onChange(next);
@@ -106,7 +114,7 @@ function SpecListField({ label, specs, onChange, addLabel }: SpecListFieldProps)
                 type="button"
                 onClick={() => remove(i)}
                 className="text-[11px] text-fg-faint hover:text-accent-4"
-                title="删除"
+                title={t(locale, 'inspector.removeSpec')}
               >
                 ×
               </button>
@@ -115,7 +123,7 @@ function SpecListField({ label, specs, onChange, addLabel }: SpecListFieldProps)
               className={autoTextareaClass}
               value={asString(s.prompt)}
               onChange={(v) => update(i, { prompt: v })}
-              placeholder="子任务 prompt"
+              placeholder={t(locale, 'inspector.subtaskPrompt')}
               minHeight={56}
             />
             <div className="flex gap-1">
@@ -163,10 +171,11 @@ function Field({ label, children }: FieldProps) {
 interface ParamFieldsProps {
   node: IRNode;
   onParam: (patch: Record<string, unknown>) => void;
+  locale: Locale;
 }
 
 /** Render the type-specific params editor for a single node. */
-function ParamFields({ node, onParam }: ParamFieldsProps) {
+function ParamFields({ node, onParam, locale }: ParamFieldsProps) {
   const p = node.params ?? {};
 
   switch (node.type) {
@@ -178,7 +187,7 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
               className={autoTextareaClass}
               value={asString(p.prompt)}
               onChange={(v) => onParam({ prompt: v })}
-              placeholder="描述要让 agent 做什么…"
+              placeholder={t(locale, 'inspector.agentPromptPlaceholder')}
             />
           </Field>
           <Field label="Agent Type">
@@ -186,7 +195,7 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
               className={textInputClass}
               value={asString(p.agentType ?? p.agent)}
               onChange={(e) => onParam({ agentType: e.target.value })}
-              placeholder="如 explore / verifier / oh-my-claudecode:executor"
+              placeholder={t(locale, 'inspector.agentTypePlaceholder')}
             />
           </Field>
           <Field label="Model">
@@ -202,12 +211,12 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
               ))}
             </select>
           </Field>
-          <Field label="Schema (标识符)">
+          <Field label={t(locale, 'inspector.schemaLabel')}>
             <input
               className={textInputClass}
               value={asString(p.schema)}
               onChange={(e) => onParam({ schema: e.target.value })}
-              placeholder="schema 标识符名，如 REVIEW"
+              placeholder={t(locale, 'inspector.schemaPlaceholder')}
             />
           </Field>
         </>
@@ -216,29 +225,31 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
     case 'parallel':
       return (
         <SpecListField
-          label="Branches (并行分支)"
+          label={t(locale, 'inspector.branchesLabel')}
           specs={readSpecs(p.branches)}
           onChange={(branches) => onParam({ branches })}
-          addLabel="+ 分支"
+          addLabel={t(locale, 'inspector.addBranch')}
+          locale={locale}
         />
       );
 
     case 'pipeline':
       return (
         <>
-          <Field label="Items (输入表达式)">
+          <Field label={t(locale, 'inspector.itemsLabel')}>
             <input
               className={textInputClass}
               value={asString(p.items) || 'args'}
               onChange={(e) => onParam({ items: e.target.value })}
-              placeholder="输入数组表达式，如 files 或 args"
+              placeholder={t(locale, 'inspector.itemsPlaceholder')}
             />
           </Field>
           <SpecListField
-            label="Stages (流水线阶段)"
+            label={t(locale, 'inspector.stagesLabel')}
             specs={readSpecs(p.stages)}
             onChange={(stages) => onParam({ stages })}
-            addLabel="+ 阶段"
+            addLabel={t(locale, 'inspector.addStage')}
+            locale={locale}
           />
         </>
       );
@@ -250,7 +261,7 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
             className={textInputClass}
             value={asString(p.title)}
             onChange={(e) => onParam({ title: e.target.value })}
-            placeholder="阶段名称"
+            placeholder={t(locale, 'inspector.phaseName')}
           />
         </Field>
       );
@@ -258,16 +269,16 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
     case 'branch':
       return (
         <>
-          <Field label="Condition (if 条件)">
+          <Field label={t(locale, 'inspector.ifCondition')}>
             <input
               className={textInputClass}
               value={asString(p.condition)}
               onChange={(e) => onParam({ condition: e.target.value })}
-              placeholder="布尔表达式，如 scan.ok"
+              placeholder={t(locale, 'inspector.conditionPlaceholder')}
             />
           </Field>
           <div className="text-[11px] text-fg-faint">
-            将节点拖入此分支框内即成为其子节点 (emit 为 if 块体)。
+            {t(locale, 'inspector.branchHelp')}
           </div>
         </>
       );
@@ -275,16 +286,16 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
     case 'loop':
       return (
         <>
-          <Field label="Condition (while 条件)">
+          <Field label={t(locale, 'inspector.whileCondition')}>
             <input
               className={textInputClass}
               value={asString(p.condition ?? p.until)}
               onChange={(e) => onParam({ condition: e.target.value })}
-              placeholder="继续循环的条件，如 budget.remaining() > 0"
+              placeholder={t(locale, 'inspector.loopPlaceholder')}
             />
           </Field>
           <div className="text-[11px] text-fg-faint">
-            框内子节点会成为 while 循环体。
+            {t(locale, 'inspector.loopHelp')}
           </div>
         </>
       );
@@ -296,7 +307,7 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
             className={textInputClass}
             value={asString(p.name)}
             onChange={(e) => onParam({ name: e.target.value })}
-            placeholder="子工作流名"
+            placeholder={t(locale, 'inspector.workflowName')}
           />
         </Field>
       );
@@ -310,7 +321,7 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
             className={textInputClass}
             value={asString(p[key])}
             onChange={(e) => onParam({ [key]: e.target.value })}
-            placeholder="日志内容"
+            placeholder={t(locale, 'inspector.logMessage')}
           />
         </Field>
       );
@@ -353,13 +364,16 @@ function ParamFields({ node, onParam }: ParamFieldsProps) {
     case 'end':
     default:
       return (
-        <div className="text-[11px] text-fg-faint">该节点没有可编辑参数。</div>
+        <div className="text-[11px] text-fg-faint">
+          {t(locale, 'inspector.noParams')}
+        </div>
       );
   }
 }
 
 export default function NodeInspector() {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
+  const locale = useStore((s) => s.locale);
   const nodes = useStore((s) => s.workflow.nodes);
   const updateNodeLabel = useStore((s) => s.updateNodeLabel);
   const updateNodeParams = useStore((s) => s.updateNodeParams);
@@ -375,9 +389,11 @@ export default function NodeInspector() {
   if (!node) {
     return (
       <div className="text-xs text-fg-dim">
-        选中节点：
+        {t(locale, 'inspector.selectedNode')}
         <span className="font-mono text-fg">{selectedNodeId}</span>
-        <div className="mt-1 text-fg-faint">（节点已被删除）</div>
+        <div className="mt-1 text-fg-faint">
+          {t(locale, 'inspector.nodeDeleted')}
+        </div>
       </div>
     );
   }
@@ -408,7 +424,7 @@ export default function NodeInspector() {
           className={textInputClass}
           value={node.label ?? ''}
           onChange={(e) => updateNodeLabel(node.id, e.target.value)}
-          placeholder="节点显示名"
+          placeholder={t(locale, 'inspector.nodeLabel')}
         />
       </Field>
 
@@ -431,6 +447,7 @@ export default function NodeInspector() {
       <div className="flex flex-col gap-3">
         <ParamFields
           node={node}
+          locale={locale}
           onParam={(patch) => updateNodeParams(node.id, patch)}
         />
       </div>
@@ -441,7 +458,7 @@ export default function NodeInspector() {
           onClick={() => removeNode(node.id)}
           className="w-full rounded-md border border-border bg-panel-2 px-2 py-1.5 text-xs text-accent-4 transition-colors hover:border-accent-4 hover:bg-border-soft"
         >
-          删除节点
+          {t(locale, 'inspector.deleteNode')}
         </button>
       </div>
     </div>

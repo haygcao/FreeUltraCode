@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
 import BlueprintCanvas from '@/canvas/BlueprintCanvas';
 import Sidebar from '@/panels/Sidebar';
 import PromptPanel from '@/panels/PromptPanel';
 import AIDock from '@/panels/AIDock';
+import { useStore } from '@/store/useStore';
 
 /**
  * Top-level three-zone layout:
@@ -12,6 +14,12 @@ import AIDock from '@/panels/AIDock';
  * App.tsx is the consumer of all import contracts.
  */
 export default function App() {
+  const initHistory = useStore((s) => s.initHistory);
+
+  useEffect(() => {
+    initHistory();
+  }, [initHistory]);
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg">
       <Sidebar />

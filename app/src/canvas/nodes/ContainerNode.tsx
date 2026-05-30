@@ -2,16 +2,14 @@ import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '@/canvas/irToFlow';
 import { ExecIn, ExecOut } from './handles';
-import { runStateVisual } from './runStateStyles';
+import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
 
 /**
- * Container node — a `branch` (`if`) or `loop` (`while`) that wraps child nodes.
+ * Branch/loop control node.
  *
- * Rendered as a titled frame sized by {@link irToFlow}; child nodes are
- * separate React Flow nodes parented into this box, so the body is intentionally
- * transparent. Exec in/out pins sit on the header row.
- *
- * Accent token: `--accent-3` (control flow).
+ * The node represents the control-flow gate only. Body nodes are independent
+ * React Flow nodes connected by exec edges, while `IRNode.parent` still carries
+ * the semantic nesting used by the emitter.
  */
 function ContainerNodeImpl({ data, selected }: NodeProps) {
   const d = data as FlowNodeData;
@@ -28,24 +26,37 @@ function ContainerNodeImpl({ data, selected }: NodeProps) {
 
   return (
     <div
-      className="relative h-full w-full rounded-md border bg-panel/40 font-sans"
-      style={{ borderColor, boxShadow, borderStyle: 'dashed' }}
+      className="relative flex h-full w-full flex-col rounded-md border bg-panel font-sans shadow-md"
+      style={{ borderColor, boxShadow }}
     >
-      {/* Header */}
       <div
         className="flex items-center gap-2 rounded-t-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide"
         style={{ background: 'var(--panel-2)', color: 'var(--accent-3)' }}
       >
         <span aria-hidden>{isLoop ? '↻' : '⋔'}</span>
-        <span>{d.label || (isLoop ? 'Loop' : 'Branch')}</span>
-        <span className="ml-auto truncate font-mono text-[10px] normal-case text-fg-faint">
-          {keyword} ({condition})
-        </span>
+        <span>{isLoop ? 'Loop' : 'Branch'}</span>
       </div>
 
-      {/* Pins on the header row. */}
-      <ExecIn id="exec_in" top={18} />
-      <ExecOut id="exec_out" top={18} />
+      <div className="min-h-0 flex-1 px-3 py-2">
+        <div className="truncate text-sm font-medium text-fg">
+          {d.label || (isLoop ? 'Loop' : 'Branch')}
+        </div>
+        <div className="mt-1 truncate font-mono text-[10px] text-fg-faint">
+          {keyword} ({condition})
+        </div>
+      </div>
+
+      <ExecIn id="exec_in" top={26} />
+      <ExecOut id="exec_out" top={26} />
+
+      {run && (
+        <div
+          aria-label={`run-state-${d.runState}`}
+          style={{ ...BADGE_BASE_STYLE, ...run.badgeStyle }}
+        >
+          {run.badge}
+        </div>
+      )}
     </div>
   );
 }

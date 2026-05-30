@@ -76,6 +76,7 @@ async function getFs(): Promise<{
 export async function saveWorkflow(
   ir: IRGraph,
   path?: string,
+  title = '保存 Workflow',
 ): Promise<string | null> {
   const json = JSON.stringify(ir, null, 2);
 
@@ -88,7 +89,7 @@ export async function saveWorkflow(
   if (!target) {
     const save = await getSaveDialog();
     const picked = await save({
-      title: '保存 Workflow',
+      title,
       defaultPath: defaultFileName(ir),
       filters: [
         { name: 'OpenWorkflow', extensions: ['owf.json', 'json'] },
@@ -115,7 +116,7 @@ export async function saveWorkflow(
  * Open a workflow IR from disk (Tauri) or localStorage (browser fallback).
  * Returns null if the user cancelled the picker or there is nothing to load.
  */
-export async function openWorkflow(): Promise<{
+export async function openWorkflow(title = '打开 Workflow'): Promise<{
   ir: IRGraph;
   path: string | null;
 } | null> {
@@ -132,7 +133,7 @@ export async function openWorkflow(): Promise<{
 
   const open = await getOpenDialog();
   const picked = await open({
-    title: '打开 Workflow',
+    title,
     multiple: false,
     directory: false,
     filters: [{ name: 'OpenWorkflow', extensions: ['owf.json', 'json'] }],

@@ -2,10 +2,24 @@
  * Store-domain types: session and UI state, decoupled from the IR.
  */
 
+import type { IRRunStatus } from '@/core/ir';
+import type {
+  InteractionAnswer,
+  InteractionRequest,
+} from '@/core/interaction';
+import type {
+  Locale,
+  PromptGroupLocaleValue,
+  PromptItemLocaleValue,
+} from '@/lib/i18n';
+
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** Per-node execution status while a workflow is running. */
-export type NodeRunState = 'idle' | 'running' | 'success' | 'error';
+export type NodeRunState = IRRunStatus;
+
+/** Lifecycle of an interactive message (a node asking the user to choose/type). */
+export type InteractionStatus = 'pending' | 'answered' | 'cancelled';
 
 export interface Message {
   id: string;
@@ -13,12 +27,26 @@ export interface Message {
   text: string;
   /** Epoch milliseconds. */
   createdAt: number;
+  /**
+   * Present when this message is a node's request for user input (rendered in
+   * the AI-return dock as a select/input/confirm widget rather than plain text).
+   * See {@link InteractionRequest}. Plain log/chat messages omit these.
+   */
+  interaction?: InteractionRequest;
+  /** The user's reply, set once they submit the widget. */
+  interactionAnswer?: InteractionAnswer;
+  /** Widget lifecycle; gates rendering (pending = active, else read-only). */
+  interactionStatus?: InteractionStatus;
 }
 
 export interface Session {
   id: string;
+  /** Workspace bucket that owns this session once history persistence is active. */
+  workspaceId?: string;
   title: string;
   createdAt: number;
+  /** Last message / workflow update time; falls back to createdAt for old seeds. */
+  updatedAt?: number;
   /**
    * True once this session has touched the workflow blueprint — runs, AI graph
    * edits, or direct node/edge mutations all flip it on. Pure chat sessions
@@ -26,18 +54,26 @@ export interface Session {
    * SessionRecord contract in history-store-spec.md §4.3).
    */
   isWorkflow: boolean;
+  /** Sidebar preview from the last persisted message. */
+  preview?: string;
+  /** Persisted message count for lightweight history rendering. */
+  messageCount?: number;
 }
 
 export interface PromptItem {
   id: string;
   label: string;
-  /** The prompt text sent via sendPrompt. */
+  /** Prompt text appended to the AI input box from the prompt library. */
   text: string;
+  /** Per-language prompt variants. Legacy label/text remain the fallback. */
+  translations?: Partial<Record<Locale, PromptItemLocaleValue>>;
 }
 
 export interface PromptGroup {
   id: string;
   label: string;
+  /** Per-language group labels. Legacy label remains the fallback. */
+  translations?: Partial<Record<Locale, PromptGroupLocaleValue>>;
   items: PromptItem[];
 }
 
@@ -50,6 +86,7 @@ export interface SelectOption {
   id: string;
   label: string;
   hint?: string;
+  translations?: Partial<Record<Locale, { label: string; hint?: string }>>;
 }
 
 /**

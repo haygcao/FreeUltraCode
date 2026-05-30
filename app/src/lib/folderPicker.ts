@@ -10,7 +10,7 @@ import { isTauri } from '@tauri-apps/api/core';
  *   (`window.showDirectoryPicker`) which only exposes the folder *name*, not a
  *   full path. If unavailable, returns null without throwing.
  */
-export async function pickFolder(): Promise<string | null> {
+export async function pickFolder(title = '选择工作区文件夹'): Promise<string | null> {
   if (isTauri()) {
     // Dynamic import so the browser build never tries to resolve the plugin's
     // IPC at load time.
@@ -18,7 +18,7 @@ export async function pickFolder(): Promise<string | null> {
     const result = await open({
       directory: true,
       multiple: false,
-      title: '选择工作区文件夹',
+      title,
     });
     return typeof result === 'string' ? result : null;
   }

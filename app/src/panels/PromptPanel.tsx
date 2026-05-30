@@ -3,13 +3,19 @@ import { useStore } from '@/store/useStore';
 import AutoTextarea from '@/components/AutoTextarea';
 import NodeInspector from './NodeInspector';
 import { useResizableWidth } from '@/lib/useResizableWidth';
+import {
+  localizePromptGroup,
+  localizePromptItem,
+  t,
+  type Locale,
+} from '@/lib/i18n';
 import type { PromptItem } from '@/store/types';
 
 /**
  * CONTRACT: default export, no props. Right-hand prompt panel.
  *
  * Renders the store's grouped prompt library. Each item carries a clickable
- * ▷ triangle; clicking dispatches store.sendPrompt with the item's text.
+ * ▷ triangle; clicking appends the item's text to the AI input box.
  * Groups are collapsible. When a node is selected, the panel flips to the
  * NodeInspector view (label / type / per-type params + 删除节点).
  *
@@ -31,13 +37,19 @@ const miniBtnClass =
 
 export default function PromptPanel() {
   const promptGroups = useStore((s) => s.promptGroups);
+  const locale = useStore((s) => s.locale);
+  const autoTranslate = useStore((s) => s.promptAutoTranslate);
   const selectedNodeId = useStore((s) => s.selectedNodeId);
-  const sendPrompt = useStore((s) => s.sendPrompt);
+  const appendComposerDraft = useStore((s) => s.appendComposerDraft);
   const addPromptItem = useStore((s) => s.addPromptItem);
-  const updatePromptItem = useStore((s) => s.updatePromptItem);
+  const updatePromptItemLocalized = useStore(
+    (s) => s.updatePromptItemLocalized,
+  );
   const removePromptItem = useStore((s) => s.removePromptItem);
   const addPromptGroup = useStore((s) => s.addPromptGroup);
-  const updatePromptGroup = useStore((s) => s.updatePromptGroup);
+  const updatePromptGroupLocalized = useStore(
+    (s) => s.updatePromptGroupLocalized,
+  );
   const removePromptGroup = useStore((s) => s.removePromptGroup);
   const resetPromptGroups = useStore((s) => s.resetPromptGroups);
 
@@ -47,6 +59,8 @@ export default function PromptPanel() {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   // Id of the group whose label is being renamed inline.
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [translatingItemId, setTranslatingItemId] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState<string | null>(null);
 
   const toggle = (id: string) =>
     setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -61,7 +75,7 @@ export default function PromptPanel() {
 
   const handleAddItem = (groupId: string) => {
     if (collapsed[groupId]) toggle(groupId);
-    addPromptItem(groupId, '新提示词', '');
+    addPromptItem(groupId, t(locale, 'prompt.newPrompt'), '', locale);
     // The new item is appended; open its editor on the next render. We locate it
     // by reading the freshly-updated store state.
     const grp = useStore.getState().promptGroups.find((g) => g.id === groupId);
@@ -70,16 +84,70 @@ export default function PromptPanel() {
   };
 
   const handleAddGroup = () => {
-    const id = addPromptGroup('新分组');
+    const id = addPromptGroup(t(locale, 'prompt.newGroup'), locale);
     setRenamingGroupId(id);
   };
 
   const handleReset = () => {
-    if (window.confirm('确定恢复默认提示词库？你的所有自定义改动将被覆盖。')) {
+    if (window.confirm(t(locale, 'prompt.resetConfirm'))) {
       resetPromptGroups();
       setEditingItemId(null);
       setRenamingGroupId(null);
+      setStatusText(null);
     }
+  };
+
+  const saveItem = async (
+    groupId: string,
+    itemId: string,
+    patch: Partial<PromptItem>,
+  ) => {
+    const translating = autoTranslate;
+    if (translating) setTranslatingItemId(itemId);
+    setStatusText(
+      translating ? t(locale, 'prompt.translating') : null,
+    );
+    const translated = await updatePromptItemLocalized(
+      groupId,
+      itemId,
+      patch,
+      locale,
+    );
+    if (translating) setTranslatingItemId(null);
+    setEditingItemId(null);
+    setStatusText(
+      translated
+        ? t(locale, 'prompt.translateDone')
+        : t(
+            locale,
+            autoTranslate
+              ? 'prompt.translateSkipped'
+              : 'prompt.translateDisabled',
+          ),
+    );
+  };
+
+  const saveGroup = async (groupId: string, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) {
+      setRenamingGroupId(null);
+      return;
+    }
+    setStatusText(
+      autoTranslate ? t(locale, 'prompt.translating') : null,
+    );
+    const translated = await updatePromptGroupLocalized(groupId, trimmed, locale);
+    setRenamingGroupId(null);
+    setStatusText(
+      translated
+        ? t(locale, 'prompt.translateDone')
+        : t(
+            locale,
+            autoTranslate
+              ? 'prompt.translateSkipped'
+              : 'prompt.translateDisabled',
+          ),
+    );
   };
 
   return (
@@ -90,7 +158,7 @@ export default function PromptPanel() {
       {/* Resize handle — left edge, drag horizontally. */}
       <div
         onMouseDown={onResizeStart}
-        title="拖动调整宽度"
+        title={t(locale, 'common.resizeWidth')}
         className="group absolute -left-1 top-0 bottom-0 z-20 flex w-2 cursor-col-resize items-center justify-center"
       >
         <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/40" />
@@ -99,21 +167,25 @@ export default function PromptPanel() {
       <div className="flex items-center gap-2 border-b border-border-soft px-4 py-3.5">
         <span className="text-accent-3">◨</span>
         <span className="text-sm font-semibold tracking-tight text-fg">
-          {selectedNodeId ? '节点属性' : '常用提示词'}
+          {selectedNodeId
+            ? t(locale, 'prompt.nodeProperties')
+            : t(locale, 'prompt.commonPrompts')}
         </span>
-        {!selectedNodeId && (
-          <button
-            type="button"
-            onClick={() => {
-              setEditMode((v) => !v);
-              setEditingItemId(null);
-              setRenamingGroupId(null);
-            }}
-            className="ml-auto rounded px-2 py-0.5 text-[11px] text-fg-faint transition-colors hover:bg-border-soft hover:text-fg"
-          >
-            {editMode ? '完成' : '编辑'}
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {!selectedNodeId && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditMode((v) => !v);
+                setEditingItemId(null);
+                setRenamingGroupId(null);
+              }}
+              className="rounded px-2 py-0.5 text-[11px] text-fg-faint transition-colors hover:bg-border-soft hover:text-fg"
+            >
+              {editMode ? t(locale, 'common.done') : t(locale, 'common.edit')}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -124,17 +196,16 @@ export default function PromptPanel() {
             {promptGroups.map((group) => {
               const isCollapsed = collapsed[group.id];
               const isRenaming = renamingGroupId === group.id;
+              const localizedGroup = localizePromptGroup(group, locale);
               return (
                 <div key={group.id}>
                   {isRenaming ? (
                     <div className="mb-1.5 flex items-center gap-1">
                       <input
                         autoFocus
-                        defaultValue={group.label}
+                        defaultValue={localizedGroup.label}
                         onBlur={(e) => {
-                          const v = e.target.value.trim();
-                          if (v) updatePromptGroup(group.id, v);
-                          setRenamingGroupId(null);
+                          void saveGroup(group.id, e.target.value);
                         }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') e.currentTarget.blur();
@@ -158,13 +229,13 @@ export default function PromptPanel() {
                         >
                           ▶
                         </span>
-                        <span className="truncate">{group.label}</span>
+                        <span className="truncate">{localizedGroup.label}</span>
                       </button>
                       {editMode && (
                         <>
                           <button
                             type="button"
-                            title="重命名分组"
+                            title={t(locale, 'prompt.renameGroup')}
                             onClick={() => setRenamingGroupId(group.id)}
                             className={miniBtnClass}
                           >
@@ -172,10 +243,12 @@ export default function PromptPanel() {
                           </button>
                           <button
                             type="button"
-                            title="删除分组"
+                            title={t(locale, 'prompt.deleteGroup')}
                             onClick={() => {
                               if (
-                                window.confirm(`删除分组「${group.label}」及其全部提示词？`)
+                                window.confirm(
+                                  `${t(locale, 'prompt.deleteGroupConfirmPrefix')}「${localizedGroup.label}」${t(locale, 'prompt.deleteGroupConfirmSuffix')}`,
+                                )
                               )
                                 removePromptGroup(group.id);
                             }}
@@ -190,16 +263,16 @@ export default function PromptPanel() {
 
                   {!isCollapsed && (
                     <ul className="flex flex-col gap-0.5">
-                      {group.items.map((item) =>
-                        editMode && editingItemId === item.id ? (
+                      {group.items.map((item) => {
+                        const localizedItem = localizePromptItem(item, locale);
+                        return editMode && editingItemId === item.id ? (
                           <li key={item.id}>
                             <ItemEditor
                               item={item}
-                              onSave={(patch) => {
-                                updatePromptItem(group.id, item.id, patch);
-                                setEditingItemId(null);
-                              }}
+                              onSave={(patch) => saveItem(group.id, item.id, patch)}
                               onCancel={() => setEditingItemId(null)}
+                              locale={locale}
+                              busy={translatingItemId === item.id}
                             />
                           </li>
                         ) : (
@@ -210,20 +283,22 @@ export default function PromptPanel() {
                                 onClick={() =>
                                   editMode
                                     ? setEditingItemId(item.id)
-                                    : sendPrompt(item.text)
+                                    : appendComposerDraft(localizedItem.text)
                                 }
-                                title={item.text}
+                                title={localizedItem.text}
                                 className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-fg-dim transition-colors hover:bg-border-soft hover:text-fg"
                               >
                                 <span className="mt-0.5 text-accent transition-colors group-hover:text-accent-2">
                                   {editMode ? '✎' : '▷'}
                                 </span>
-                                <span className="min-w-0 flex-1">{item.label}</span>
+                                <span className="min-w-0 flex-1">
+                                  {localizedItem.label}
+                                </span>
                               </button>
                               {editMode && (
                                 <button
                                   type="button"
-                                  title="删除提示词"
+                                  title={t(locale, 'prompt.deletePrompt')}
                                   onClick={() => removePromptItem(group.id, item.id)}
                                   className={
                                     miniBtnClass + ' mt-1 hover:text-accent-2'
@@ -234,8 +309,8 @@ export default function PromptPanel() {
                               )}
                             </div>
                           </li>
-                        ),
-                      )}
+                        );
+                      })}
                       {editMode && (
                         <li>
                           <button
@@ -243,7 +318,7 @@ export default function PromptPanel() {
                             onClick={() => handleAddItem(group.id)}
                             className="mt-0.5 w-full rounded-md border border-dashed border-border-soft px-2 py-1 text-left text-[11px] text-fg-faint transition-colors hover:border-accent hover:text-fg-dim"
                           >
-                            + 新增提示词
+                            {t(locale, 'prompt.addPrompt')}
                           </button>
                         </li>
                       )}
@@ -260,14 +335,14 @@ export default function PromptPanel() {
                   onClick={handleAddGroup}
                   className="w-full rounded-md border border-dashed border-border-soft px-2 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
                 >
-                  + 新增分组
+                  {t(locale, 'prompt.addGroup')}
                 </button>
                 <button
                   type="button"
                   onClick={handleReset}
                   className="w-full rounded-md px-2 py-1.5 text-[11px] text-fg-faint transition-colors hover:bg-border-soft hover:text-accent-2"
                 >
-                  恢复默认
+                  {t(locale, 'prompt.resetDefaults')}
                 </button>
               </div>
             )}
@@ -277,9 +352,15 @@ export default function PromptPanel() {
 
       {!selectedNodeId && (
         <div className="border-t border-border-soft px-4 py-2.5 text-[10px] leading-relaxed text-fg-faint">
-          {editMode
-            ? '编辑模式：增删改提示词与分组，改动自动保存。'
-            : '点击 ▷ 将该提示词作为消息发给 AI。'}
+          {statusText ??
+            (editMode
+              ? t(
+                  locale,
+                  autoTranslate
+                    ? 'prompt.editHelpOn'
+                    : 'prompt.editHelpOff',
+                )
+              : t(locale, 'prompt.clickHelp'))}
         </div>
       )}
     </aside>
@@ -291,40 +372,51 @@ function ItemEditor({
   item,
   onSave,
   onCancel,
+  locale,
+  busy,
 }: {
   item: PromptItem;
-  onSave: (patch: Partial<PromptItem>) => void;
+  onSave: (patch: Partial<PromptItem>) => void | Promise<void>;
   onCancel: () => void;
+  locale: Locale;
+  busy: boolean;
 }) {
-  const [label, setLabel] = useState(item.label);
-  const [text, setText] = useState(item.text);
+  const localized = localizePromptItem(item, locale);
+  const [label, setLabel] = useState(localized.label);
+  const [text, setText] = useState(localized.text);
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border bg-panel-2 p-2">
       <input
         autoFocus
         value={label}
         onChange={(e) => setLabel(e.target.value)}
-        placeholder="标签"
+        placeholder={t(locale, 'prompt.labelPlaceholder')}
         className={inputClass}
       />
       <AutoTextarea
         value={text}
         onChange={setText}
-        placeholder="提示词内容（发送给 AI 的指令）"
+        placeholder={t(locale, 'prompt.textPlaceholder')}
         minHeight={56}
         maxHeight={220}
         className={textareaClass}
       />
       <div className="flex items-center justify-end gap-1.5">
         <button type="button" onClick={onCancel} className={miniBtnClass}>
-          取消
+          {t(locale, 'common.cancel')}
         </button>
         <button
           type="button"
-          onClick={() => onSave({ label: label.trim() || '未命名', text })}
-          className="rounded bg-accent/15 px-2 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/25"
+          disabled={busy}
+          onClick={() =>
+            void onSave({
+              label: label.trim() || t(locale, 'prompt.fallbackName'),
+              text,
+            })
+          }
+          className="rounded bg-accent/15 px-2 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/25 disabled:cursor-wait disabled:opacity-60"
         >
-          保存
+          {busy ? t(locale, 'prompt.translating') : t(locale, 'common.save')}
         </button>
       </div>
     </div>

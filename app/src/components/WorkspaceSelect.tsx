@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { basename, pickFolder } from '@/lib/folderPicker';
+import { t } from '@/lib/i18n';
+import { useStore } from '@/store/useStore';
 
 /**
  * Workspace selector for the AI-input composer.
@@ -29,6 +31,7 @@ export default function WorkspaceSelect({
 }: WorkspaceSelectProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const locale = useStore((s) => s.locale);
 
   useEffect(() => {
     if (!open) return;
@@ -42,18 +45,18 @@ export default function WorkspaceSelect({
   }, [open]);
 
   const browse = async () => {
-    const path = await pickFolder();
+    const path = await pickFolder(t(locale, 'workspace.chooseFolder'));
     setOpen(false);
     if (path) onSelect(path);
   };
 
-  const label = value ? basename(value) : '选择工作区';
+  const label = value ? basename(value) : t(locale, 'workspace.choose');
 
   return (
     <div ref={rootRef} className={cn('relative', className)}>
       <button
         type="button"
-        title={value || '选择工作区文件夹'}
+        title={value || t(locale, 'workspace.chooseFolder')}
         onClick={() => setOpen((v) => !v)}
         className={cn(
           'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors',
@@ -75,16 +78,18 @@ export default function WorkspaceSelect({
             className="flex w-full items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left text-xs text-fg transition-colors hover:bg-border-soft"
           >
             <span className="text-[11px]">📁</span>
-            <span>选择文件夹…</span>
+            <span>{t(locale, 'workspace.pickFolder')}</span>
           </button>
 
           <div className="my-1 border-t border-border-soft" />
 
           <div className="px-3 pb-0.5 text-[10px] uppercase tracking-wider text-fg-faint">
-            历史记录
+            {t(locale, 'sidebar.history')}
           </div>
           {history.length === 0 ? (
-            <div className="px-3 py-1.5 text-xs text-fg-faint">暂无历史记录</div>
+            <div className="px-3 py-1.5 text-xs text-fg-faint">
+              {t(locale, 'workspace.noHistory')}
+            </div>
           ) : (
             <ul role="listbox">
               {history.map((path) => {

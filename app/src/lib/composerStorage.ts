@@ -1,4 +1,5 @@
 import type { ComposerSettings, PromptGroup } from '@/store/types';
+import { isLocale, systemLocale, type Locale } from '@/lib/i18n';
 
 /**
  * localStorage persistence for AI-input composer state, the AIDock height, and
@@ -9,6 +10,8 @@ import type { ComposerSettings, PromptGroup } from '@/store/types';
 const COMPOSER_KEY = 'openworkflow.composer.v1';
 const DOCK_HEIGHT_KEY = 'openworkflow.dockHeight.v1';
 const PROMPT_GROUPS_KEY = 'openworkflow.promptGroups.v1';
+const LOCALE_KEY = 'openworkflow.locale.v1';
+const PROMPT_AUTO_TRANSLATE_KEY = 'openworkflow.promptAutoTranslate.v1';
 /** Tracks which PROMPT_DEFAULTS_VERSION the persisted library was migrated to. */
 const PROMPT_GROUPS_VERSION_KEY = 'openworkflow.promptGroups.version.v1';
 
@@ -64,6 +67,45 @@ export function saveDockHeight(height: number): void {
   if (!hasStorage()) return;
   try {
     window.localStorage.setItem(DOCK_HEIGHT_KEY, String(Math.round(height)));
+  } catch {
+    // non-fatal
+  }
+}
+
+export function loadLocale(): Locale {
+  if (!hasStorage()) return systemLocale();
+  try {
+    const raw = window.localStorage.getItem(LOCALE_KEY);
+    return isLocale(raw) ? raw : systemLocale();
+  } catch {
+    return systemLocale();
+  }
+}
+
+export function saveLocale(locale: Locale): void {
+  if (!hasStorage()) return;
+  try {
+    window.localStorage.setItem(LOCALE_KEY, locale);
+  } catch {
+    // non-fatal
+  }
+}
+
+export function loadPromptAutoTranslate(): boolean {
+  if (!hasStorage()) return true;
+  try {
+    const raw = window.localStorage.getItem(PROMPT_AUTO_TRANSLATE_KEY);
+    if (raw == null) return true;
+    return raw === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export function savePromptAutoTranslate(enabled: boolean): void {
+  if (!hasStorage()) return;
+  try {
+    window.localStorage.setItem(PROMPT_AUTO_TRANSLATE_KEY, String(enabled));
   } catch {
     // non-fatal
   }

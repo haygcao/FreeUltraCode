@@ -1,24 +1,36 @@
 // History persistence backend.
 //
-// Implements the storage layer specified in `.omc/plans/history-store-spec.md`:
-// all conversation / workflow history lives under `%USERPROFILE%\.worktree\`,
-// laid out as `workspaces/<wsId>/sessions/<sid>.json` with `index.json` summary
-// files at each level. The frontend talks to this module via the five
-// `history_*` Tauri commands; the Rust side is responsible for path-traversal
-// safety, atomic writes (tmp → rename), and soft deletes (move into `trash/`).
-//
-// Every command is `async` and wraps its blocking I/O in `spawn_blocking` so it
-// never stalls the webview's main thread — see project memory
-// `tauri-blocking-commands.md` for the precedent.
+// This module owns the filesystem primitives behind the history store:
+// root initialization, JSON reads/writes, atomic replacement, backup copies,
+// and quarantine of corrupt payloads. The frontend still talks to these
+// helpers through the existing `history_*` Tauri commands.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+};
+
+const ROOT_DIRS: &[&str] = &[
+    "workspaces",
+    "trash",
+    "backups",
+    "quarantine",
+    "tmp",
+    "deleted",
+    "migrations",
+];
+
+const INTERNAL_TOP_LEVEL_DIRS: &[&str] = &["backups", "quarantine", "tmp", "deleted", "migrations"];
+
 /// Locate the user's home directory in a platform-neutral way.
-///
-/// On Windows the `USERPROFILE` env var is authoritative; `HOME` is the
-/// fallback used by everything else (and works on macOS/Linux too).
 fn home_dir() -> Option<PathBuf> {
     if let Ok(h) = std::env::var("USERPROFILE") {
         if !h.is_empty() {
@@ -33,10 +45,144 @@ fn home_dir() -> Option<PathBuf> {
     None
 }
 
-/// Resolve the `.worktree` root, creating it (and the canonical `workspaces/`
-/// + `trash/` subdirectories) on first call. Resolution order:
-///   1. `OWF_HOME` env var (escape hatch for tests / portable installs)
-///   2. `<home>/.worktree`
+fn ensure_dir(path: &Path, label: &str) -> Result<(), String> {
+    fs::create_dir_all(path).map_err(|e| format!("创建 {label} 失败: {e}"))
+}
+
+fn timestamp_token() -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{stamp}-{}", std::process::id())
+}
+
+fn normalized_rel_segments(rel: &str) -> Result<Vec<String>, String> {
+    let trimmed = rel.trim();
+    if trimmed.is_empty() {
+        return Err("relPath 为空".into());
+    }
+    if trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return Err("relPath 不能以分隔符开头".into());
+    }
+
+    let mut segments = Vec::new();
+    for raw in trimmed.split(['/', '\\']) {
+        let seg = raw.trim();
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
+        if seg == ".." {
+            return Err("relPath 不能包含 ..".into());
+        }
+        if seg.contains(':') {
+            return Err("relPath 不能含驱动器分隔符".into());
+        }
+        segments.push(seg.to_string());
+    }
+
+    if segments.is_empty() {
+        return Err("relPath 为空".into());
+    }
+
+    Ok(segments)
+}
+
+/// Validate `rel_path` and join it onto `root`. Rejects empty input, absolute
+/// paths, parent traversal (`..`), and drive-letter prefixes.
+fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let mut path = root.to_path_buf();
+    for segment in normalized_rel_segments(rel)? {
+        path.push(segment);
+    }
+    Ok(path)
+}
+
+fn rel_parent_and_name(rel: &str) -> Result<(Vec<String>, String), String> {
+    let segments = normalized_rel_segments(rel)?;
+    let file_name = segments
+        .last()
+        .ok_or_else(|| "relPath 为空".to_string())?
+        .clone();
+    let parent = segments[..segments.len().saturating_sub(1)].to_vec();
+    Ok((parent, file_name))
+}
+
+fn is_internal_path(rel_path: &str) -> bool {
+    normalized_rel_segments(rel_path)
+        .ok()
+        .and_then(|segments| segments.first().cloned())
+        .is_some_and(|first| INTERNAL_TOP_LEVEL_DIRS.contains(&first.as_str()))
+}
+
+fn artifact_relative_path(
+    rel_path: &str,
+    bucket: &str,
+    kind: &str,
+    stamp: &str,
+) -> Result<PathBuf, String> {
+    let (parent_segments, file_name) = rel_parent_and_name(rel_path)?;
+    let mut rel = PathBuf::from(bucket);
+    for segment in parent_segments {
+        rel.push(segment);
+    }
+    let mut name = OsString::from(file_name);
+    name.push(format!(".{kind}-{stamp}"));
+    rel.push(name);
+    Ok(rel)
+}
+
+fn unique_artifact_paths(
+    root: &Path,
+    rel_path: &str,
+    bucket: &str,
+    kind: &str,
+) -> Result<(PathBuf, String), String> {
+    let base = timestamp_token();
+    for attempt in 0..1000 {
+        let stamp = if attempt == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{attempt}")
+        };
+        let rel = artifact_relative_path(rel_path, bucket, kind, &stamp)?;
+        let abs = root.join(&rel);
+        if !abs.exists() {
+            return Ok((abs, rel.to_string_lossy().into_owned()));
+        }
+    }
+    Err(format!("无法为 {rel_path} 生成唯一 {kind} 路径"))
+}
+
+#[cfg(windows)]
+fn replace_file(src: &Path, dest: &Path) -> Result<(), String> {
+    let src_wide: Vec<u16> = src.as_os_str().encode_wide().chain(Some(0)).collect();
+    let dest_wide: Vec<u16> = dest.as_os_str().encode_wide().chain(Some(0)).collect();
+    let ok = unsafe {
+        MoveFileExW(
+            src_wide.as_ptr(),
+            dest_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        Err(format!(
+            "替换文件失败 {} -> {}: {}",
+            src.display(),
+            dest.display(),
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file(src: &Path, dest: &Path) -> Result<(), String> {
+    fs::rename(src, dest)
+        .map_err(|e| format!("替换文件失败 {} -> {}: {e}", src.display(), dest.display()))
+}
+
 fn worktree_root() -> Result<PathBuf, String> {
     let root = if let Ok(env) = std::env::var("OWF_HOME") {
         if !env.trim().is_empty() {
@@ -47,31 +193,58 @@ fn worktree_root() -> Result<PathBuf, String> {
     } else {
         home_dir().ok_or("无法定位用户目录")?.join(".worktree")
     };
-    fs::create_dir_all(&root).map_err(|e| format!("创建 .worktree 根目录失败: {e}"))?;
-    let _ = fs::create_dir_all(root.join("workspaces"));
-    let _ = fs::create_dir_all(root.join("trash"));
+
+    ensure_dir(&root, ".worktree 根目录")?;
+    for dir in ROOT_DIRS {
+        ensure_dir(&root.join(dir), &format!(".worktree/{dir}"))?;
+    }
     Ok(root)
 }
 
-/// Validate `rel_path` and join it onto `root`. Rejects empty input, absolute
-/// paths, parent traversal (`..`), and drive-letter prefixes — anything that
-/// could escape `.worktree`.
-fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, String> {
-    if rel.is_empty() {
-        return Err("relPath 为空".into());
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent, &format!("父目录 {}", parent.display()))?;
     }
-    if rel.starts_with('/') || rel.starts_with('\\') {
-        return Err("relPath 不能以分隔符开头".into());
-    }
-    if rel.contains(':') {
-        return Err("relPath 不能含驱动器分隔符".into());
-    }
-    for seg in rel.split(['/', '\\']) {
-        if seg == ".." {
-            return Err("relPath 不能包含 ..".into());
+    Ok(())
+}
+
+fn backup_existing_file(root: &Path, rel_path: &str, source: &Path) -> Result<(), String> {
+    let (dest, _) = unique_artifact_paths(root, rel_path, "backups", "backup")?;
+    ensure_parent_dir(&dest)?;
+    fs::copy(source, &dest).map_err(|e| {
+        format!(
+            "备份文件失败 {} -> {}: {e}",
+            source.display(),
+            dest.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn quarantine_corrupt_file(root: &Path, rel_path: &str, source: &Path) -> Result<(), String> {
+    let (dest, _) = unique_artifact_paths(root, rel_path, "quarantine", "corrupt")?;
+    ensure_parent_dir(&dest)?;
+
+    match replace_file(source, &dest) {
+        Ok(()) => Ok(()),
+        Err(primary_err) => {
+            fs::copy(source, &dest).map_err(|copy_err| {
+                format!(
+                    "隔离损坏文件失败 {} -> {}: {copy_err} (原始错误: {primary_err})",
+                    source.display(),
+                    dest.display()
+                )
+            })?;
+            let _ = fs::remove_file(source);
+            Ok(())
         }
     }
-    Ok(root.join(rel))
+}
+
+fn validate_json(json: &str) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(json)
+        .map(|_| ())
+        .map_err(|e| format!("JSON 无效: {e}"))
 }
 
 /// Return the absolute path of the `.worktree` root, creating it on first
@@ -88,9 +261,8 @@ pub async fn history_root() -> Result<String, String> {
 }
 
 /// Read a JSON file under `.worktree`, returning `None` if it does not exist.
-/// Corrupt JSON is renamed to `<file>.corrupt-<unix-secs>` so a parse failure
-/// never re-crashes the UI on every load — the caller gets `None` and treats
-/// the slot as empty.
+/// Corrupt JSON is moved into `quarantine/` so a parse failure never keeps
+/// re-crashing the UI on every load.
 #[tauri::command]
 pub async fn history_read_json(rel_path: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
@@ -102,18 +274,9 @@ pub async fn history_read_json(rel_path: String) -> Result<Option<String>, Strin
         match fs::read_to_string(&path) {
             Ok(s) => {
                 if serde_json::from_str::<serde_json::Value>(&s).is_err() {
-                    let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let mut corrupt = path.clone();
-                    let mut name = path
-                        .file_name()
-                        .map(|n| n.to_os_string())
-                        .unwrap_or_default();
-                    name.push(format!(".corrupt-{ts}"));
-                    corrupt.set_file_name(name);
-                    let _ = fs::rename(&path, &corrupt);
+                    if !is_internal_path(&rel_path) {
+                        let _ = quarantine_corrupt_file(&root, &rel_path, &path);
+                    }
                     return Ok(None);
                 }
                 Ok(Some(s))
@@ -127,38 +290,46 @@ pub async fn history_read_json(rel_path: String) -> Result<Option<String>, Strin
 }
 
 /// Atomically write JSON to a path under `.worktree`. The data is staged into
-/// `<path>.tmp` first and then `rename`d over the target — POSIX guarantees the
-/// rename is atomic, and NTFS does too for same-volume targets, so readers
-/// never observe a half-written file.
+/// a temp file in the same directory and then renamed over the target. If the
+/// target already exists, a copy is saved under `backups/` first.
 #[tauri::command]
 pub async fn history_write_json(rel_path: String, json: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         if !rel_path.ends_with(".json") {
             return Err("history_write_json 只允许写 .json".into());
         }
+        validate_json(&json)?;
+
         let root = worktree_root()?;
         let path = safe_join(&root, &rel_path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("创建父目录失败: {e}"))?;
+        if path.exists() && path.is_dir() {
+            return Err(format!("目标是目录，不能写入 JSON: {}", path.display()));
         }
+
+        if path.exists() && !is_internal_path(&rel_path) {
+            backup_existing_file(&root, &rel_path, &path)?;
+        }
+
+        ensure_parent_dir(&path)?;
+
         let tmp = {
             let mut t = path.clone();
-            let mut name = t
-                .file_name()
-                .map(|n| n.to_os_string())
-                .unwrap_or_default();
-            name.push(".tmp");
+            let mut name = t.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+            name.push(format!(".{}.tmp", timestamp_token()));
             t.set_file_name(name);
             t
         };
+
         {
             let mut f = fs::File::create(&tmp)
                 .map_err(|e| format!("创建临时文件失败 {}: {e}", tmp.display()))?;
             f.write_all(json.as_bytes())
                 .map_err(|e| format!("写入失败 {}: {e}", tmp.display()))?;
-            let _ = f.sync_all();
+            f.sync_all()
+                .map_err(|e| format!("同步临时文件失败 {}: {e}", tmp.display()))?;
         }
-        fs::rename(&tmp, &path).map_err(|e| format!("rename 覆盖失败: {e}"))?;
+
+        replace_file(&tmp, &path)?;
         Ok(())
     })
     .await
@@ -179,14 +350,16 @@ pub async fn history_remove(rel_path: String, soft: bool) -> Result<(), String> 
         }
         if soft {
             let trash = root.join("trash");
-            fs::create_dir_all(&trash).ok();
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
+            ensure_dir(&trash, "trash 目录")?;
             let safe_name = rel_path.replace(['/', '\\'], "_");
-            let dest = trash.join(format!("{ts}-{safe_name}"));
-            fs::rename(&path, &dest).map_err(|e| format!("移入 trash 失败: {e}"))?;
+            let dest = trash.join(format!("{}-{safe_name}", timestamp_token()));
+            replace_file(&path, &dest).map_err(|e| {
+                format!(
+                    "移入 trash 失败 {} -> {}: {e}",
+                    path.display(),
+                    dest.display()
+                )
+            })?;
         } else if path.is_dir() {
             fs::remove_dir_all(&path).map_err(|e| format!("删除目录失败: {e}"))?;
         } else {
@@ -199,9 +372,8 @@ pub async fn history_remove(rel_path: String, soft: bool) -> Result<(), String> 
 }
 
 /// List the files (not subdirectories) directly inside `rel_path` under
-/// `.worktree`. Empty `rel_path` lists the root itself. `.tmp` staging files
-/// and `.corrupt-*` quarantines are filtered out so the caller sees only
-/// well-formed entries.
+/// `.worktree`. Empty `rel_path` lists the root itself. Temp and corrupt files
+/// are filtered out so the caller sees only well-formed entries.
 #[tauri::command]
 pub async fn history_list_dir(rel_path: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<String>, String> {

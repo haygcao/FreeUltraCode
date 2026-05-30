@@ -14,6 +14,7 @@ import type { IRGraph } from '@/core/ir';
  *       throws Error('NO_BACKEND')  when not in Tauri
  *       throws Error('NO_API_KEY')  when in Tauri but no key was supplied
  *   runWorkflow(script, adapter) -> Promise<string>   (stdout/stderr summary)
+ *   cancelAiCli(runId) -> Promise<void>               best-effort process kill
  *   onWorkflowLog(cb)  -> Promise<UnlistenFn>          ('workflow-log' lines)
  *   onWorkflowNode(cb) -> Promise<UnlistenFn>          ('workflow-node' updates)
  */
@@ -102,6 +103,8 @@ export interface CliOpts {
   cwd?: string;
   /** Permission mode: 'full' | 'readonly' | 'ask' (from the AIDock dropdown). */
   permission?: string;
+  /** Stable id used to stream progress and cancel the process from the UI. */
+  runId?: string;
   /** Live progress callback — receives streamed text/tool-use chunks. */
   onProgress?: (text: string) => void;
 }
@@ -117,7 +120,7 @@ export async function aiEditViaCli(
     throw new Error('NO_BACKEND');
   }
   __cliSeq += 1;
-  const runId = `cli_${Date.now()}_${__cliSeq}`;
+  const runId = opts.runId ?? `cli_${Date.now()}_${__cliSeq}`;
 
   // Subscribe to per-run progress events (best-effort; the final result is
   // returned regardless of whether any progress chunks arrive).
@@ -145,6 +148,13 @@ export async function aiEditViaCli(
   } finally {
     unlisten?.();
   }
+}
+
+/** Best-effort cancellation for an in-flight local agent CLI invocation. */
+export async function cancelAiCli(runId: string): Promise<void> {
+  if (!tauriAvailable()) return;
+  const invoke = await getInvoke();
+  await invoke('cancel_ai_cli', { runId });
 }
 
 /**

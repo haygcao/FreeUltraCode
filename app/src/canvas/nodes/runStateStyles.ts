@@ -9,6 +9,7 @@ import type { NodeRunState } from '@/store/types';
  *   - running: amber border with a soft pulse + ◐ badge.
  *   - success: green border + ✓ badge.
  *   - error:   red border + ✕ badge.
+ *   - interrupted: muted red border + ! badge.
  *
  * Returning `null` for idle lets callers skip badge rendering entirely while
  * keeping their own selection/type-accent border intact.
@@ -32,6 +33,7 @@ const COLORS = {
   running: '#e3a008', // accent-3
   success: '#37c2a8', // accent-2
   error: '#f778ba', // accent-4
+  interrupted: '#d995a6',
 } as const;
 
 /**
@@ -63,6 +65,17 @@ export function runStateVisual(
       badgeStyle: {
         background: COLORS.success,
         color: '#06231d',
+      },
+    };
+  }
+  if (state === 'interrupted') {
+    return {
+      borderColor: COLORS.interrupted,
+      boxShadow: `0 0 0 1px ${COLORS.interrupted}`,
+      badge: '!',
+      badgeStyle: {
+        background: COLORS.interrupted,
+        color: '#2a0a1a',
       },
     };
   }

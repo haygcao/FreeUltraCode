@@ -10,6 +10,7 @@ export interface AutoTextareaProps {
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
   /** Minimum height in px. */
   minHeight?: number;
   /** Maximum height in px before the textarea starts scrolling. */
@@ -21,6 +22,7 @@ export default function AutoTextarea({
   onChange,
   placeholder,
   className,
+  disabled = false,
   minHeight = 60,
   maxHeight = 260,
 }: AutoTextareaProps) {
@@ -45,6 +47,7 @@ export default function AutoTextarea({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
+      disabled={disabled}
       rows={1}
       style={{ minHeight, maxHeight, resize: 'none' }}
       className={className}

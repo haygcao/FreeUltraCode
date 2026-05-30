@@ -27,6 +27,7 @@ import PipelineNode from './nodes/PipelineNode';
 import ContainerNode from './nodes/ContainerNode';
 import ControlNode from './nodes/ControlNode';
 import CanvasToolbar from './CanvasToolbar';
+import { t, type Locale } from '@/lib/i18n';
 
 /**
  * CONTRACT: default export, no props. Renders the IRGraph from the store on a
@@ -39,6 +40,8 @@ import CanvasToolbar from './CanvasToolbar';
  * Crucially, `irToFlow` prefers `workflow.layout[id]` over its placeholder
  * grid — so positions written back by `setNodePosition` during a drag survive
  * the re-projection without flickering back to the default coordinates.
+ * Semantic branch/loop children are rendered as independent nodes rather than
+ * React Flow sub-flow children, so they can be inspected and dragged freely.
  *
  * Mode policy (design vs running):
  *   - design  → fully editable: connect, delete, drag, context-menu add.
@@ -62,19 +65,90 @@ const DEFAULT_DATA_OUT = 'data_out';
 const DEFAULT_DATA_IN = 'data_in';
 
 /** Node categories surfaced in the right-click context menu. Mirrors the catalogue. */
-const ADDABLE_NODES: { type: NodeType; label: string; accent: string }[] = [
-  { type: 'agent', label: 'Agent', accent: 'var(--accent)' },
-  { type: 'parallel', label: 'Parallel', accent: 'var(--accent-2)' },
-  { type: 'pipeline', label: 'Pipeline', accent: 'var(--accent-2)' },
-  { type: 'phase', label: 'Phase', accent: 'var(--accent-3)' },
-  { type: 'branch', label: 'Branch', accent: 'var(--accent-3)' },
-  { type: 'loop', label: 'Loop', accent: 'var(--accent-3)' },
-  { type: 'workflow', label: 'Sub-Workflow', accent: 'var(--accent)' },
-  { type: 'log', label: 'Log', accent: 'var(--fg-dim)' },
-  { type: 'variable', label: 'Variable', accent: 'var(--fg-dim)' },
-  { type: 'codeblock', label: 'Code Block', accent: 'var(--fg-dim)' },
-  { type: 'start', label: 'Start', accent: 'var(--accent-3)' },
-  { type: 'end', label: 'End', accent: 'var(--accent-4)' },
+const ADDABLE_NODES: {
+  type: NodeType;
+  label: string;
+  accent: string;
+  translations?: Partial<Record<Locale, { label: string }>>;
+}[] = [
+  {
+    type: 'agent',
+    label: 'Agent',
+    accent: 'var(--accent)',
+    translations: { 'zh-CN': { label: '智能体' }, 'en-US': { label: 'Agent' } },
+  },
+  {
+    type: 'parallel',
+    label: 'Parallel',
+    accent: 'var(--accent-2)',
+    translations: { 'zh-CN': { label: '并行' }, 'en-US': { label: 'Parallel' } },
+  },
+  {
+    type: 'pipeline',
+    label: 'Pipeline',
+    accent: 'var(--accent-2)',
+    translations: { 'zh-CN': { label: '流水线' }, 'en-US': { label: 'Pipeline' } },
+  },
+  {
+    type: 'phase',
+    label: 'Phase',
+    accent: 'var(--accent-3)',
+    translations: { 'zh-CN': { label: '阶段' }, 'en-US': { label: 'Phase' } },
+  },
+  {
+    type: 'branch',
+    label: 'Branch',
+    accent: 'var(--accent-3)',
+    translations: { 'zh-CN': { label: '分支' }, 'en-US': { label: 'Branch' } },
+  },
+  {
+    type: 'loop',
+    label: 'Loop',
+    accent: 'var(--accent-3)',
+    translations: { 'zh-CN': { label: '循环' }, 'en-US': { label: 'Loop' } },
+  },
+  {
+    type: 'workflow',
+    label: 'Sub-Workflow',
+    accent: 'var(--accent)',
+    translations: {
+      'zh-CN': { label: '子工作流' },
+      'en-US': { label: 'Sub-workflow' },
+    },
+  },
+  {
+    type: 'log',
+    label: 'Log',
+    accent: 'var(--fg-dim)',
+    translations: { 'zh-CN': { label: '日志' }, 'en-US': { label: 'Log' } },
+  },
+  {
+    type: 'variable',
+    label: 'Variable',
+    accent: 'var(--fg-dim)',
+    translations: { 'zh-CN': { label: '变量' }, 'en-US': { label: 'Variable' } },
+  },
+  {
+    type: 'codeblock',
+    label: 'Code Block',
+    accent: 'var(--fg-dim)',
+    translations: {
+      'zh-CN': { label: '代码块' },
+      'en-US': { label: 'Code block' },
+    },
+  },
+  {
+    type: 'start',
+    label: 'Start',
+    accent: 'var(--accent-3)',
+    translations: { 'zh-CN': { label: '开始' }, 'en-US': { label: 'Start' } },
+  },
+  {
+    type: 'end',
+    label: 'End',
+    accent: 'var(--accent-4)',
+    translations: { 'zh-CN': { label: '结束' }, 'en-US': { label: 'End' } },
+  },
 ];
 
 /** Infer the pin kind from the React Flow handle id. */
@@ -117,6 +191,7 @@ interface MenuState {
 
 function BlueprintCanvasInner() {
   const workflow = useStore((s) => s.workflow);
+  const locale = useStore((s) => s.locale);
   const runState = useStore((s) => s.runState);
   const mode = useStore((s) => s.mode);
   const selectedNodeId = useStore((s) => s.selectedNodeId);
@@ -181,15 +256,10 @@ function BlueprintCanvasInner() {
     [addEdge, isRunning],
   );
 
-  /**
-   * Persist drag-stop positions back to the IR layout. Child nodes (inside a
-   * branch/loop container) are auto-laid-out relative to their parent by
-   * irToFlow, so we don't persist their positions (it would be ignored anyway).
-   */
+  /** Persist drag-stop positions back to the IR layout. */
   const onNodeDragStop = useCallback<OnNodeDrag>(
     (_event, node) => {
       if (isRunning) return;
-      if (node.parentId) return;
       setNodePosition(node.id, node.position.x, node.position.y);
     },
     [setNodePosition, isRunning],
@@ -247,13 +317,6 @@ function BlueprintCanvasInner() {
     [addNode, menu, selectNode, setNodePosition],
   );
 
-  /** Toolbar "Add Node" — drops an agent node into a visible area. */
-  const addAgentFromToolbar = useCallback(() => {
-    if (isRunning) return;
-    const id = addNode('agent');
-    selectNode(id);
-  }, [addNode, isRunning, selectNode]);
-
   /** Close the context menu on Escape. */
   useEffect(() => {
     if (!menu) return;
@@ -283,10 +346,10 @@ function BlueprintCanvasInner() {
         }}
       >
         <span className="omc-pulse-dot" />
-        <span>运行中 · 只读</span>
+        <span>{t(locale, 'canvas.runningReadonly')}</span>
       </div>
     );
-  }, [isRunning]);
+  }, [isRunning, locale]);
 
   return (
     <div className="flex h-full w-full flex-col bg-bg">
@@ -294,24 +357,6 @@ function BlueprintCanvasInner() {
       <style>{KEYFRAME_CSS}</style>
 
       <CanvasToolbar />
-
-      {/* Local secondary toolbar: quick add-node + mode-aware hint. */}
-      <div className="flex items-center gap-2 border-b border-border-soft bg-bg px-3 py-1.5 text-[11px] text-fg-dim">
-        <button
-          type="button"
-          onClick={addAgentFromToolbar}
-          disabled={isRunning}
-          title={isRunning ? '运行中不可编辑' : '添加 Agent 节点'}
-          className="rounded border border-border bg-panel-2 px-2 py-0.5 text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          + Agent
-        </button>
-        <span className="text-fg-faint">
-          {isRunning
-            ? '运行中: 画布只读, 取消运行后可继续编辑'
-            : '右键空白处添加节点 · 拖拽连接端口 · Delete 删除选中'}
-        </span>
-      </div>
 
       <div className="relative min-h-0 flex-1" ref={wrapperRef}>
         {runningBadge}
@@ -352,6 +397,7 @@ function BlueprintCanvasInner() {
           <AddNodeMenu
             x={menu.screenX}
             y={menu.screenY}
+            locale={locale}
             onPick={addNodeAtMenu}
             onClose={() => setMenu(null)}
           />
@@ -369,11 +415,13 @@ function BlueprintCanvasInner() {
 function AddNodeMenu({
   x,
   y,
+  locale,
   onPick,
   onClose,
 }: {
   x: number;
   y: number;
+  locale: Locale;
   onPick: (type: NodeType) => void;
   onClose: () => void;
 }) {
@@ -393,7 +441,7 @@ function AddNodeMenu({
         style={{ left: x, top: y }}
       >
         <div className="border-b border-border-soft px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-fg-faint">
-          添加节点
+          {t(locale, 'canvas.addNode')}
         </div>
         <div className="flex max-h-[280px] flex-col overflow-y-auto py-1">
           {ADDABLE_NODES.map((n) => (
@@ -408,7 +456,7 @@ function AddNodeMenu({
                 style={{ background: n.accent }}
                 aria-hidden
               />
-              <span>{n.label}</span>
+              <span>{n.translations?.[locale]?.label ?? n.label}</span>
               <span className="ml-auto font-mono text-[10px] text-fg-faint">
                 {n.type}
               </span>
