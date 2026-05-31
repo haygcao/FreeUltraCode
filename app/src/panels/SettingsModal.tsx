@@ -3,9 +3,9 @@ import {
   Check,
   ChevronDown,
   DownloadCloud,
+  ExternalLink,
   Eye,
   EyeOff,
-  ExternalLink,
   FileText,
   FolderOpen,
   Globe,
@@ -37,6 +37,7 @@ import {
   deleteProvider,
   getActiveProviderIds,
   getProviderRuntimeInfo,
+  importProviders,
   isProviderBaseUrlValid,
   listProviders,
   providerMetadataSignature,
@@ -45,8 +46,8 @@ import {
   type Provider,
   type ProviderRuntimeStatus,
 } from '@/lib/apiConfig';
-import { importCcSwitchProviders } from '@/lib/ccSwitchAutoImport';
 import {
+  importCcSwitchClaude,
   isTauri,
   openExternal,
   validateCliPath,
@@ -985,39 +986,44 @@ function ModelsSettings({
     setImporting(true);
     setStatus(null);
     try {
-      const result = await importCcSwitchProviders({
-        promoteActiveAnthropic: true,
-      });
-      if (result.status === 'empty') {
+      const result = await importCcSwitchClaude();
+      if (!result.providers.length) {
         setStatus({ tone: 'err', msg: t(locale, 'settings.models.importEmpty') });
         return;
       }
-      if (result.status === 'no-source') {
-        const msg =
-          result.reason === 'NO_BACKEND'
-            ? t(locale, 'settings.models.importDesktopOnly')
-            : t(locale, 'settings.models.importNoDb');
-        setStatus({ tone: 'err', msg });
-        return;
-      }
-      if (result.status === 'failed') {
-        const reason = result.reason ?? 'Unknown error';
-        setStatus({
-          tone: 'err',
-          msg: `${t(locale, 'settings.models.importError')}: ${reason}`,
-        });
-        return;
-      }
-
+      // Only the Claude(anthropic) active pointer promotes the OWF active
+      // provider — importing Codex/Gemini channels should not silently switch
+      // the active model away from Claude.
+      const activeAnthropic = result.active?.anthropic;
+      const { imported, skipped } = importProviders(
+        result.providers.map((p) => ({
+          kind: p.kind,
+          name: p.name,
+          apiKey: p.apiKey,
+          baseUrl: p.baseUrl,
+          model: p.model,
+        })),
+        // Mark the cc-switch-active Claude provider as active. Matched by ccId
+        // via a name+key signature lookup (ccId is stripped before storage).
+        activeAnthropic
+          ? (incoming) =>
+              result.providers.some(
+                (r) =>
+                  r.ccId === activeAnthropic &&
+                  r.name === incoming.name &&
+                  r.apiKey === incoming.apiKey,
+              )
+          : undefined,
+      );
       refresh();
       const msg =
-        result.skippedCount > 0
+        skipped > 0
           ? t(locale, 'settings.models.importSkipped')
-              .replace('{n}', String(result.importedCount))
-              .replace('{m}', String(result.skippedCount))
+              .replace('{n}', String(imported))
+              .replace('{m}', String(skipped))
           : t(locale, 'settings.models.importSuccess').replace(
               '{n}',
-              String(result.importedCount),
+              String(imported),
             );
       setStatus({ tone: 'ok', msg });
     } catch (err) {
@@ -2179,7 +2185,7 @@ function AboutSettings({ locale }: { locale: Locale }) {
             <AboutLink label={t(locale, 'settings.aboutChangelog')} icon={<FileText size={14} />} onClick={() => void openExternal(RELEASES_URL)} />
             <button type="button" onClick={() => void runCheck()} disabled={checking}
               className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50">
-              <RefreshCw size={14} className={checking ? "animate-spin" : undefined} />
+              <RefreshCw size={14} className={checking ? 'animate-spin' : undefined} />
               {checking ? t(locale, 'settings.aboutChecking') : t(locale, 'settings.aboutCheckUpdate')}
             </button>
           </div>
