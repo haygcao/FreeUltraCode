@@ -8,7 +8,9 @@
 import { describe, expect, it } from 'vitest';
 import { EXEC, DATA, type IRGraph, type PinKind } from '@/core/ir';
 import {
+  classifyVotingNode,
   executeWorkflowDag,
+  isExecTerminalNode,
   type RunCallbacks,
   type RunContext,
   type RunGateway,
@@ -92,7 +94,11 @@ describe('executeWorkflowDag', () => {
       return 'B-OUTPUT';
     });
     const log: string[] = [];
-    const result = await executeWorkflowDag(chainGraph(), collectingCallbacks(log), ctx(gw));
+    const result = await executeWorkflowDag(
+      chainGraph(),
+      collectingCallbacks(log),
+      ctx(gw, { selection: { adapter: 'codex', modelClass: 'sonnet' } }),
+    );
 
     expect(result.success).toBe(true);
     expect(seen).toEqual(['B-got-A']);
@@ -101,6 +107,45 @@ describe('executeWorkflowDag', () => {
     // start before a before b before end.
     expect(log.indexOf('ok:a')).toBeLessThan(log.indexOf('start:b'));
     expect(log.indexOf('ok:b')).toBeLessThan(log.indexOf('ok:end'));
+  });
+
+  it('does not duplicate same-chain data context when resuming a warm CLI session', async () => {
+    const seenB: string[] = [];
+    const sessions: SpawnCliAgentOpts[] = [];
+    const gw = mockGateway(async (prompt, opts) => {
+      sessions.push(opts);
+      if (prompt.includes('do A')) return 'A-OUTPUT';
+      if (prompt.includes('do B')) {
+        seenB.push(prompt);
+        return 'B-OUTPUT';
+      }
+      return '';
+    });
+    const result = await executeWorkflowDag(chainGraph(), collectingCallbacks([]), ctx(gw));
+
+    expect(result.success).toBe(true);
+    expect(seenB).toHaveLength(1);
+    expect(seenB[0]).not.toContain('A-OUTPUT');
+    expect(sessions[0].sessionId).toBeTruthy();
+    expect(sessions[1].sessionId).toBe(sessions[0].sessionId);
+    expect(sessions[1].resume).toBe(true);
+  });
+
+  it('keeps data context on direct HTTP routes because they have no warm session', async () => {
+    const seen: string[] = [];
+    const gw: RunGateway = {
+      ...mockGateway(async () => ''),
+      resolveDirectRoute: () => ({ adapter: 'claude-code' }),
+      completeText: async ({ prompt }) => {
+        if (prompt.includes('do A')) return { text: 'A-OUTPUT', adapter: 'claude-code' };
+        seen.push(prompt.includes('A-OUTPUT') ? 'B-got-A' : 'B-missing-A');
+        return { text: 'B-OUTPUT', adapter: 'claude-code' };
+      },
+    };
+    const result = await executeWorkflowDag(chainGraph(), collectingCallbacks([]), ctx(gw));
+
+    expect(result.success).toBe(true);
+    expect(seen).toEqual(['B-got-A']);
   });
 
   it('auto-retries a transient failure then succeeds', async () => {
@@ -196,5 +241,225 @@ describe('executeWorkflowDag', () => {
     };
     const result = await executeWorkflowDag(chainGraph(), callbacks, ctx(gw));
     expect(result.success).toBe(false); // cancelled mid-run
+  });
+});
+
+/** A single terminal agent node: start → a → end. `a` is the exec-spine tail. */
+function singleAgentGraph(prompt = 'do the work'): IRGraph {
+  return {
+    version: 1,
+    meta: { name: 't', adapter: 'claude-code' },
+    nodes: [
+      { id: 'start', type: 'start', params: {} },
+      { id: 'a', type: 'agent', label: 'A', params: { prompt } },
+      { id: 'end', type: 'end', params: {} },
+    ],
+    edges: [edge('e1', 'start', 'a'), edge('e2', 'a', 'end')],
+    layout: {},
+  };
+}
+
+describe('adaptive divergence escalation (run-time voting)', () => {
+  // The escalation loop sends three kinds of prompt to the gateway:
+  //  - sample prompts (the node's own basePrompt),
+  //  - a judge prompt asking for a `disagreement: 0..1` score (prose path),
+  //  - a final vote/synthesis prompt that lists 【候选 N】 blocks.
+  // We classify by content so the sample counter only counts real samples.
+  const VOTE = (p: string) => p.includes('【候选');
+  const JUDGE = (p: string) => p.includes('disagreement');
+
+  const voteCtx = (over: Partial<RunContext> = {}) =>
+    ({
+      runtimeVoteSamplesMin: 2,
+      runtimeVoteSamplesMax: 16,
+      terminalVoteSamplesMin: 2,
+      terminalVoteSamplesMax: 16,
+      adaptiveEscalation: true,
+      maxRetries: 0, // isolate the voting path from node-level retry
+      ...over,
+    }) as Partial<RunContext>;
+
+  it('runs a single call when voting is disabled (max<=1) — default headless parity', async () => {
+    let samples = 0;
+    const gw = mockGateway(async () => {
+      samples += 1;
+      return 'answer';
+    });
+    // No *VoteSamplesMax in ctx ⇒ undefined ⇒ voting off.
+    const result = await executeWorkflowDag(singleAgentGraph(), collectingCallbacks([]), ctx(gw));
+    expect(result.success).toBe(true);
+    expect(samples).toBe(1); // exactly one call, no fan-out
+  });
+
+  it('runs MIN samples + one vote and does NOT escalate when outputs agree', async () => {
+    let samples = 0;
+    let judgeCalls = 0;
+    const gw = mockGateway(async (prompt) => {
+      if (JUDGE(prompt)) {
+        judgeCalls += 1;
+        return 'disagreement: 0.0';
+      }
+      if (VOTE(prompt)) return 'final';
+      samples += 1;
+      return 'SAME'; // all samples identical
+    });
+    const result = await executeWorkflowDag(
+      singleAgentGraph(),
+      collectingCallbacks([]),
+      ctx(gw, voteCtx()),
+    );
+    expect(result.success).toBe(true);
+    expect(samples).toBe(2); // started at min=2
+    expect(judgeCalls).toBe(1); // measured divergence once, then converged
+    expect(result.outputs.a).toBe('final');
+  });
+
+  it('escalates 2→4→8 on sustained disagreement, reusing prior samples, until it converges', async () => {
+    let samples = 0;
+    let judgeRound = 0;
+    const gw = mockGateway(async (prompt) => {
+      if (JUDGE(prompt)) {
+        judgeRound += 1;
+        // High disagreement for the first two measurements, then converge.
+        return judgeRound < 3 ? 'disagreement: 0.9' : 'disagreement: 0.1';
+      }
+      if (VOTE(prompt)) return 'final';
+      samples += 1;
+      return `out-${samples}`; // distinct outputs
+    });
+    const result = await executeWorkflowDag(
+      singleAgentGraph(),
+      collectingCallbacks([]),
+      ctx(gw, voteCtx()),
+    );
+    expect(result.success).toBe(true);
+    // 2 (start) → +2 → +4 = 8 accumulated samples (delta reuse: not 2+4+8).
+    expect(samples).toBe(8);
+    expect(result.outputs.a).toBe('final');
+  });
+
+  it('respects the master switch OFF — runs MIN, votes once, never doubles', async () => {
+    let samples = 0;
+    let judgeCalls = 0;
+    const gw = mockGateway(async (prompt) => {
+      if (JUDGE(prompt)) {
+        judgeCalls += 1;
+        return 'disagreement: 1.0';
+      }
+      if (VOTE(prompt)) return 'final';
+      samples += 1;
+      return `out-${samples}`;
+    });
+    const result = await executeWorkflowDag(
+      singleAgentGraph(),
+      collectingCallbacks([]),
+      ctx(gw, voteCtx({ adaptiveEscalation: false })),
+    );
+    expect(result.success).toBe(true);
+    expect(samples).toBe(2); // capped at min, no escalation
+    expect(judgeCalls).toBe(0); // off ⇒ no divergence measurement at all
+    expect(result.outputs.a).toBe('final');
+  });
+
+  it('does not disable voting when one sample of the first batch fails', async () => {
+    let calls = 0;
+    const gw = mockGateway(async (prompt) => {
+      if (JUDGE(prompt)) return 'disagreement: 0.0';
+      if (VOTE(prompt)) return 'voted-final';
+      calls += 1;
+      if (calls === 1) throw new Error('CLI "claude" 退出码 1: flaky'); // 1st sample fails
+      return 'good';
+    });
+    const result = await executeWorkflowDag(
+      singleAgentGraph(),
+      collectingCallbacks([]),
+      ctx(gw, voteCtx()),
+    );
+    expect(result.success).toBe(true);
+    // 1st batch: 1 ok + 1 fail ⇒ oks<2 ⇒ tops up more ⇒ ≥2 oks ⇒ votes.
+    expect(result.outputs.a).toBe('voted-final');
+  });
+
+  it('caps escalation by the run-level budget', async () => {
+    let samples = 0;
+    const gw = mockGateway(async (prompt) => {
+      if (JUDGE(prompt)) return 'disagreement: 0.9'; // never converges
+      if (VOTE(prompt)) return 'final';
+      samples += 1;
+      return `out-${samples}`;
+    });
+    const result = await executeWorkflowDag(
+      singleAgentGraph(),
+      collectingCallbacks([]),
+      ctx(gw, voteCtx({ escalationBudget: 3, escalationSpent: 0 })),
+    );
+    expect(result.success).toBe(true);
+    // start=2, budget allows only +3 extra ⇒ at most 5 samples (not 16).
+    expect(samples).toBeLessThanOrEqual(5);
+    expect(result.outputs.a).toBe('final');
+  });
+});
+
+describe('classifyVotingNode (UI marker ↔ engine parity)', () => {
+  // start → a → b(末端) → end ; plus a mid-graph "验证" node m with a successor.
+  const g: IRGraph = {
+    version: 1,
+    meta: { name: 't', adapter: 'claude-code' },
+    nodes: [
+      { id: 'start', type: 'start', params: {} },
+      { id: 'a', type: 'agent', label: '抓取', params: { prompt: '下载页面' } },
+      { id: 'm', type: 'agent', label: '验证输入', params: { prompt: '验证后继续处理下一步' } },
+      { id: 'b', type: 'agent', label: '汇总', params: { prompt: '汇总并输出最终结论' } },
+      { id: 'end', type: 'end', params: {} },
+    ],
+    edges: [
+      edge('e1', 'start', 'a'),
+      edge('e2', 'a', 'm'),
+      edge('e3', 'm', 'b'),
+      edge('e4', 'b', 'end'),
+    ],
+    layout: {},
+  };
+  const byId = (id: string) => g.nodes.find((n) => n.id === id)!;
+
+  it('marks the exec-spine tail as a terminal voting node', () => {
+    const c = classifyVotingNode(byId('b'), g);
+    expect(c.willVote).toBe(true);
+    expect(c.kind).toBe('terminal');
+    expect(c.reasons).toContain('执行链尾');
+  });
+
+  it('does NOT mark a mid-graph node whose label contains 验证 but has a successor', () => {
+    const c = classifyVotingNode(byId('m'), g);
+    // succ('m') = 1 (→ b), and it is not a long/complex prompt ⇒ not terminal, not complex.
+    expect(c.kind).not.toBe('terminal');
+  });
+
+  it('marks a long / high-stakes prompt as a complex voting node', () => {
+    const complex: IRGraph = {
+      ...g,
+      nodes: g.nodes.map((n) =>
+        n.id === 'a'
+          ? {
+              ...n,
+              label: '安全审计',
+              params: { prompt: '请做安全审计：首先 X；其次 Y；然后 Z；并交叉验证。'.repeat(8) },
+            }
+          : n,
+      ),
+    };
+    const c = classifyVotingNode(complex.nodes.find((n) => n.id === 'a')!, complex);
+    expect(c.willVote).toBe(true);
+    expect(c.kind).toBe('complex');
+    expect(c.reasons.length).toBeGreaterThan(0);
+  });
+
+  it('agrees with isExecTerminalNode for terminal nodes', () => {
+    expect(isExecTerminalNode(byId('b'), g)).toBe(true);
+    expect(isExecTerminalNode(byId('a'), g)).toBe(false);
+  });
+
+  it('leaves ordinary mid-graph nodes unmarked', () => {
+    expect(classifyVotingNode(byId('a'), g).willVote).toBe(false);
   });
 });

@@ -5,19 +5,38 @@
  */
 import { DATA, type IRGraph, type IRNode } from '../core/ir';
 
-/** Collect outputs of nodes that feed `node` via data edges (producer → node). */
+/**
+ * Collect outputs of nodes that feed `node` via data edges (producer → node).
+ *
+ * Port-aware for `composite` producers: a composite materialises each of its
+ * declared ports under the composite key `${nodeId}::${portId}` (input ports are
+ * seeded before the body runs; output ports after). So when the producing
+ * endpoint is a composite node AND the edge names a specific `from.port` (not the
+ * default `data_out`), read that port's value first, falling back to the
+ * composite's MAIN output. EVERY other edge keeps the legacy
+ * `results.get(e.from.node)` path — zero behaviour change for non-composite
+ * graphs and existing fixtures/tests.
+ */
 export function getDataInputs(
   node: IRNode,
   workflow: IRGraph,
   results: Map<string, string>,
+  opts?: { skipSourceNodes?: Set<string> },
 ): { label: string; text: string }[] {
   const byId = new Map(workflow.nodes.map((n) => [n.id, n]));
   const inputs: { label: string; text: string }[] = [];
   for (const e of workflow.edges) {
     if (e.kind !== DATA || e.to.node !== node.id) continue;
-    const out = results.get(e.from.node);
+    if (opts?.skipSourceNodes?.has(e.from.node)) continue;
+    const from = byId.get(e.from.node);
+    let out: string | undefined;
+    if (from?.type === 'composite' && e.from.port && e.from.port !== 'data_out') {
+      out = results.get(`${e.from.node}::${e.from.port}`) ?? results.get(e.from.node);
+    } else {
+      out = results.get(e.from.node);
+    }
     if (out == null) continue;
-    inputs.push({ label: byId.get(e.from.node)?.label ?? e.from.node, text: out });
+    inputs.push({ label: from?.label ?? e.from.node, text: out });
   }
   return inputs;
 }
@@ -38,6 +57,8 @@ export interface ContextCaps {
   maxTotalChars?: number;
   /** Convergence strategy; defaults to 'full' (byte-identical legacy output). */
   policy?: ContextPolicy | 'summary';
+  /** Data-edge source node ids already available through a warm conversation. */
+  skipSourceNodes?: Set<string>;
 }
 
 const DEFAULT_MAX_CHARS_PER_INPUT = 4000;
@@ -63,7 +84,9 @@ export function buildDataContextString(
   results: Map<string, string>,
   caps?: ContextCaps,
 ): string {
-  const inputs = getDataInputs(node, workflow, results);
+  const inputs = getDataInputs(node, workflow, results, {
+    skipSourceNodes: caps?.skipSourceNodes,
+  });
   if (inputs.length === 0) return '';
 
   // 'summary' is not implementable in this pure module (no model access); treat

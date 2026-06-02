@@ -5,6 +5,8 @@ import { t } from '@/lib/i18n';
 import { DataIn, DataOut, ExecIn, ExecOut } from './handles';
 import { NodeNumberBadge } from './NodeNumberBadge';
 import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
+import { CardHeader, VotingBadge } from './cardChrome';
+import { ACCENT_AGENT, cardClass, cardWrapperStyle } from './cardStyle';
 
 /**
  * Agent node — an `agent(prompt, opts)` invocation.
@@ -39,31 +41,31 @@ function AgentNodeImpl({ data, selected }: NodeProps) {
         : undefined;
 
   const run = runStateVisual(d.runState);
-  // Run state border wins over selection accent so users can see status while
-  // a node is still focused.
-  const borderColor =
-    run?.borderColor ?? (selected ? 'var(--accent)' : 'var(--border)');
-  const boxShadow =
-    run?.boxShadow ?? (selected ? '0 0 0 1px var(--accent)' : undefined);
+  const { accent, ambient } = ACCENT_AGENT;
 
   return (
     <div
-      className="relative min-w-[170px] overflow-visible rounded-md border bg-panel font-sans shadow-md"
-      style={{ borderColor, boxShadow }}
+      className={`${cardClass(!!selected)} min-w-[180px]`}
+      style={cardWrapperStyle({ accent, ambient, selected: !!selected, run })}
     >
-      <NodeNumberBadge value={d.numberLabel} accent="var(--accent)" />
+      <NodeNumberBadge value={d.numberLabel} accent={accent} />
 
-      {/* Header */}
-      <div
-        className="flex items-center gap-2 rounded-t-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide"
-        style={{ background: 'var(--panel-2)', color: 'var(--accent)' }}
-      >
-        <span aria-hidden>▶</span>
-        <span>{t(d.locale, 'nodeType.agent')}</span>
-      </div>
+      {d.voting && (
+        <VotingBadge
+          kind={d.voting}
+          title={`${t(
+            d.locale,
+            d.voting === 'terminal'
+              ? 'inspector.votingMarker.terminal'
+              : 'inspector.votingMarker.complex',
+          )} · ${t(d.locale, 'inspector.votingMarker.willVote')}`}
+        />
+      )}
+
+      <CardHeader accent={accent} glyph="▶" label={t(d.locale, 'nodeType.agent')} />
 
       {/* Body */}
-      <div className="px-3 py-2">
+      <div className="px-3.5 pb-3 pt-2">
         <div className="text-sm font-medium text-fg">{d.label}</div>
         {(agent || model) && (
           <div className="mt-1 font-mono text-[10px] text-fg-dim">

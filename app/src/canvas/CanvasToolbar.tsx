@@ -25,6 +25,8 @@ export default function CanvasToolbar() {
   const runWorkflow = useStore((s) => s.runWorkflow);
   const resumeWorkflow = useStore((s) => s.resumeWorkflow);
   const stopWorkflow = useStore((s) => s.stopWorkflow);
+  const autoArrange = useStore((s) => s.autoArrangeWorkflow);
+  const exportWorkflow = useStore((s) => s.exportWorkflow);
   const dirty = useStore((s) => s.dirty);
   const currentFilePath = useStore((s) => s.currentFilePath);
   const mode = useStore((s) => s.mode);
@@ -163,6 +165,32 @@ export default function CanvasToolbar() {
           +
         </button>
       </div>
+
+      {/* Auto-arrange — re-layer the graph along the exec spine, then fit. */}
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => {
+          autoArrange();
+          requestAnimationFrame(() => void fitView({ padding: 0.2, duration: 400 }));
+        }}
+        className="flex items-center gap-1.5 rounded-md border border-border bg-panel-2 px-2.5 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+        title={t(locale, 'canvas.autoArrange')}
+      >
+        <span aria-hidden>⤧</span>
+        <span>{t(locale, 'canvas.autoArrange')}</span>
+      </button>
+
+      {/* Export — write the current workflow to a portable .owf.json file. */}
+      <button
+        type="button"
+        onClick={() => exportWorkflow(t(locale, 'canvas.exportTitle'))}
+        className="flex items-center gap-1.5 rounded-md border border-border bg-panel-2 px-2.5 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+        title={t(locale, 'canvas.exportTitle')}
+      >
+        <span aria-hidden>⤓</span>
+        <span>{t(locale, 'canvas.export')}</span>
+      </button>
 
       {/* Script */}
       <button

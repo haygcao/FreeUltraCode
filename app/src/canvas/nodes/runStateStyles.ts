@@ -51,7 +51,7 @@ export function runStateVisual(
   if (state === 'running') {
     return {
       borderColor: COLORS.running,
-      boxShadow: `0 0 0 2px ${COLORS.running}`,
+      boxShadow: `0 0 0 2px ${COLORS.running}, 0 0 16px color-mix(in oklab, ${COLORS.running} 55%, transparent)`,
       badge: '◐',
       badgeStyle: {
         background: COLORS.running,

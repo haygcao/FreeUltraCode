@@ -18,6 +18,7 @@ export function specList(value: unknown, gateway: RunGateway): RunSpec[] {
       label: typeof o.label === 'string' ? o.label : undefined,
       agentType: typeof o.agentType === 'string' ? o.agentType : undefined,
       model: typeof o.model === 'string' ? o.model : undefined,
+      schema: typeof o.schema === 'string' ? o.schema : undefined,
       gateway: gateway.nodeGatewayOverride(o),
     };
   });
@@ -45,11 +46,11 @@ export function consensusStrategy(value: unknown): ConsensusStrategy {
     : 'multi-lens';
 }
 
-/** Clamp a consensus samples value to the supported 2..7 range. */
+/** Clamp a consensus samples value to the supported 2..16 range. */
 export function clampSamples(value: unknown, fallback: number): number {
   const n =
     typeof value === 'number' && Number.isFinite(value)
       ? Math.floor(value)
       : fallback;
-  return Math.min(7, Math.max(2, n || 3));
+  return Math.min(16, Math.max(2, n || 3));
 }

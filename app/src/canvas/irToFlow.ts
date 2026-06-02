@@ -2,6 +2,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { MarkerType } from '@xyflow/react';
 import { DATA, EXEC, type IRGraph, type NodeType } from '@/core/ir';
 import { nodeNumberLabelMap } from '@/core/nodeNumbers';
+import { classifyVotingNode } from '@/runtime';
 import type { NodeRunState } from '@/store/types';
 import type { Locale } from '@/lib/i18n';
 
@@ -27,6 +28,18 @@ export interface FlowNodeData extends Record<string, unknown> {
   scopeParentId?: string;
   /** Live execution state — only set while a workflow is running. */
   runState?: NodeRunState;
+  /**
+   * Set when this node would trigger run-time divergence voting (the
+   * 2→4→8→16 escalation): `'terminal'` = tail/self-test node, `'complex'` =
+   * flagged complex. Absent for ordinary nodes. Drives the canvas badge.
+   */
+  voting?: 'terminal' | 'complex';
+  /**
+   * Set on nodes belonging to a "simple workflow" (meta.simple). The lone
+   * start-type node uses this to display the user's inputs without showing a
+   * "Start" name. See simpleBlueprint() and ControlNode.
+   */
+  simple?: boolean;
 }
 
 export type FlowNode = Node<FlowNodeData>;
@@ -50,6 +63,8 @@ function flowNodeType(type: NodeType): string {
       return 'pipeline';
     case 'consensus':
       return 'consensus';
+    case 'composite':
+      return 'composite';
     case 'branch':
     case 'loop':
       return 'container';
@@ -80,6 +95,11 @@ function toFlowNode(
   locale: Locale,
 ): FlowNode {
   const state = runState?.[node.id];
+  const votingClass = classifyVotingNode(node, graph);
+  const voting: FlowNodeData['voting'] =
+    votingClass.willVote && votingClass.kind !== 'none'
+      ? votingClass.kind
+      : undefined;
   const result: FlowNode = {
     id: node.id,
     type: flowNodeType(node.type),
@@ -94,6 +114,8 @@ function toFlowNode(
       locale,
       ...(node.parent ? { scopeParentId: node.parent } : null),
       ...(state ? { runState: state } : null),
+      ...(voting ? { voting } : null),
+      ...(graph.meta?.simple ? { simple: true } : null),
     },
     ...(isControlContainer(node.type)
       ? { style: { width: CONTROL_W, height: CONTROL_H } }
@@ -140,21 +162,33 @@ function toFlowEdge(
   runState: Record<string, NodeRunState> | undefined,
 ): FlowEdge {
   const isData = edge.kind === DATA;
-  const color = isData ? 'var(--accent-2)' : 'var(--accent)';
+  const animated = shouldAnimateEdge(edge, runState);
+  // Static gradient ids (mounted by <EdgeDefs/>) keep this projection pure.
+  const stroke = isData ? 'url(#owf-edge-data)' : 'url(#owf-edge-exec)';
+  // Marker can't reference a gradient, so use each gradient's end-stop color.
+  const markerColor = isData ? 'var(--accent)' : 'var(--accent-3)';
   return {
     id: edge.id,
     source: edge.from.node,
     target: edge.to.node,
     sourceHandle: edge.from.port,
     targetHandle: edge.to.port,
-    type: 'smoothstep',
-    animated: shouldAnimateEdge(edge, runState),
+    type: 'default',
+    animated,
     style: {
-      stroke: color,
-      strokeWidth: 1.5,
-      strokeDasharray: isData ? '4 4' : undefined,
+      stroke,
+      strokeWidth: isData ? 'var(--edge-width-data)' : 'var(--edge-width)',
+      strokeDasharray: isData ? '6 4' : undefined,
+      strokeLinecap: 'round',
+      // Glow only along the active run path so idle canvases stay calm.
+      filter: animated ? 'url(#owf-edge-glow)' : undefined,
     },
-    markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16 },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: markerColor,
+      width: 16,
+      height: 16,
+    },
     data: { kind: edge.kind },
   };
 }
@@ -164,6 +198,40 @@ type IREdgeLike = IRGraph['edges'][number];
 export interface FlowGraph {
   nodes: FlowNode[];
   edges: FlowEdge[];
+}
+
+/**
+ * Restrict an {@link IRGraph} to the subgraph currently being viewed.
+ *
+ * - At the top level (`activeScopeId` undefined): only nodes with no `parent`.
+ * - Inside a composite C (`activeScopeId === C.id`): the nodes whose
+ *   `parent === C.id` plus C itself, kept as a read-only boundary node.
+ *
+ * Boundary-rendering choice: rather than synthesizing pseudo input/output bars,
+ * we keep the composite node C inside its own drilled-in view. The composite's
+ * boundary data edges (OUTER→C, C→INNER, INNER→C, C→DOWNSTREAM) already attach
+ * to C's port Handles, so every internal boundary edge renders naturally with
+ * zero rewriting — the simplest scheme that keeps all edges visible. The outer
+ * counterpart of each boundary edge (the node outside the scope) is dropped, so
+ * those edges are filtered out at this level; only the inner halves
+ * (C↔INNER) survive, which is exactly what the subgraph view should show.
+ */
+export function filterScope(
+  graph: IRGraph,
+  activeScopeId: string | undefined,
+): IRGraph {
+  const visible = new Set<string>();
+  for (const node of graph.nodes) {
+    if ((node.parent ?? undefined) === activeScopeId) visible.add(node.id);
+  }
+  // Keep the composite boundary node itself so its port edges can render.
+  if (activeScopeId) visible.add(activeScopeId);
+
+  const nodes = graph.nodes.filter((node) => visible.has(node.id));
+  const edges = graph.edges.filter(
+    (edge) => visible.has(edge.from.node) && visible.has(edge.to.node),
+  );
+  return { ...graph, nodes, edges };
 }
 
 /**

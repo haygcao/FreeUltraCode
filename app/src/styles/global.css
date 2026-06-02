@@ -61,6 +61,47 @@
   --owf-status-indicator-size: 14px;
   --owf-status-spinner-ring: 2px;
 
+  /* ── Canvas redesign: glass surface ─────────────────────────────────────── */
+  --node-glass: color-mix(in oklab, var(--panel) 96%, transparent);
+  --node-glass-solid: var(--panel);
+  --node-border: color-mix(in oklab, var(--fg) 10%, transparent);
+  --node-highlight: rgba(255, 255, 255, 0.06);
+  --node-tint: rgba(255, 255, 255, 0.025);
+  --node-blur: 10px;
+  --node-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -8px rgba(0, 0, 0, 0.45);
+  --node-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.35), 0 14px 32px -10px rgba(0, 0, 0, 0.55);
+
+  /* Per-accent ambient tint for the selected/hover lift. */
+  --shadow-accent: color-mix(in oklab, var(--accent) 34%, transparent);
+  --shadow-accent-2: color-mix(in oklab, var(--accent-2) 32%, transparent);
+  --shadow-accent-3: color-mix(in oklab, var(--accent-3) 32%, transparent);
+  --shadow-accent-4: color-mix(in oklab, var(--accent-4) 32%, transparent);
+
+  /* Header gradient tail + foreground. */
+  --header-tail: color-mix(in oklab, var(--panel-2) 70%, transparent);
+  --header-fg: #f5f7fb;
+
+  /* Pins. */
+  --pin-exec: var(--accent);
+  --pin-data: var(--accent-2);
+  --pin-glow-exec: color-mix(in oklab, var(--accent) 55%, transparent);
+  --pin-glow-data: color-mix(in oklab, var(--accent-2) 55%, transparent);
+
+  /* Edges. */
+  --edge-exec: var(--accent);
+  --edge-data: var(--accent-2);
+  --edge-glow: color-mix(in oklab, var(--accent) 50%, transparent);
+  --edge-width: 1.8px;
+  --edge-width-data: 1.4px;
+
+  /* Canvas chrome. */
+  --canvas-dot: color-mix(in oklab, var(--border) 80%, transparent);
+  --canvas-vignette: radial-gradient(
+    ellipse 120% 90% at 50% 40%,
+    transparent 0%,
+    color-mix(in oklab, var(--bg) 100%, #000 14%) 100%
+  );
+
   color-scheme: dark;
 }
 
@@ -174,6 +215,30 @@ html.owf-style-daylight {
   --owf-status-error-contrast: #ffffff;
   --owf-status-interrupted: #9aa3b2;
   --owf-status-interrupted-contrast: #1a1f28;
+
+  /* Canvas redesign — light-mode polarity flip (white lip, soft slate shadow,
+     weak glow) so the glass/neon system degrades to flat depth on white. */
+  --node-glass: color-mix(in oklab, var(--panel) 97%, transparent);
+  --node-border: color-mix(in oklab, #0f172a 11%, transparent);
+  --node-highlight: rgba(255, 255, 255, 0.9);
+  --node-tint: rgba(15, 23, 42, 0.02);
+  --node-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 6px 16px -6px rgba(15, 23, 42, 0.12);
+  --node-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.08), 0 12px 28px -8px rgba(15, 23, 42, 0.16);
+  --shadow-accent: color-mix(in oklab, var(--accent) 22%, transparent);
+  --shadow-accent-2: color-mix(in oklab, var(--accent-2) 22%, transparent);
+  --shadow-accent-3: color-mix(in oklab, var(--accent-3) 22%, transparent);
+  --shadow-accent-4: color-mix(in oklab, var(--accent-4) 22%, transparent);
+  --header-fg: #0b1320;
+  --header-tail: color-mix(in oklab, var(--panel-2) 88%, transparent);
+  --pin-glow-exec: color-mix(in oklab, var(--accent) 38%, transparent);
+  --pin-glow-data: color-mix(in oklab, var(--accent-2) 38%, transparent);
+  --edge-glow: color-mix(in oklab, var(--accent) 34%, transparent);
+  --canvas-dot: rgba(15, 23, 42, 0.1);
+  --canvas-vignette: radial-gradient(
+    ellipse 120% 90% at 50% 40%,
+    transparent 0%,
+    rgba(15, 23, 42, 0.05) 100%
+  );
 }
 
 html[data-owf-style='ember'],
@@ -315,8 +380,86 @@ pre,
   background: var(--panel-2);
 }
 .react-flow__edge-path {
-  stroke: var(--accent);
+  stroke-linejoin: round;
+  transition: stroke-width 160ms ease, filter 160ms ease;
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 6px var(--edge-glow));
 }
 .react-flow__attribution {
   display: none;
+}
+.react-flow__controls {
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--node-shadow);
+}
+
+/* ── Canvas redesign: node card hover + pins + relayout transition ─────────── */
+.owf-card {
+  will-change: transform;
+}
+.react-flow__node:hover .owf-card:not(.owf-card-selected) {
+  box-shadow: var(--node-shadow-hover);
+  border-color: color-mix(
+    in oklab,
+    var(--owf-node-accent, var(--accent)) 50%,
+    var(--node-border)
+  );
+}
+
+/* Pins — enlarge hit zone + glow on hover, pulse the active drop target. */
+.react-flow__handle.owf-pin-exec::before,
+.react-flow__handle.owf-pin-data::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 9999px;
+}
+.react-flow__handle.owf-pin-exec:hover {
+  transform: scale(1.18);
+  filter: drop-shadow(0 0 6px var(--pin-glow-exec));
+}
+.react-flow__handle.owf-pin-data:hover {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 2px var(--pin-data), 0 0 8px var(--pin-glow-data);
+}
+.react-flow__handle.connectingto {
+  animation: owf-pin-pulse 900ms ease-in-out infinite;
+}
+@keyframes owf-pin-pulse {
+  0%,
+  100% {
+    transform: scale(1.1);
+  }
+  50% {
+    transform: scale(1.4);
+  }
+}
+
+/* Smooth glide when the auto-arrange button re-layers the graph. */
+.react-flow__node {
+  transition: transform 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.react-flow__node.dragging {
+  transition: none;
+}
+
+/* Opaque fallback where translucency is unsupported or unwanted. */
+@supports not (backdrop-filter: blur(8px)) {
+  :root {
+    --node-glass: var(--panel);
+    --node-glass-solid: var(--panel);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --node-glass: var(--panel);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__node {
+    transition: none;
+  }
 }

@@ -3,6 +3,7 @@ import {
   DATA,
   type IREndpoint,
   type GatewaySelection,
+  type ConsensusStrategy,
   type IRGraph,
   type IRNode,
   type IRRunSnapshot,
@@ -12,7 +13,7 @@ import {
   type PinKind,
 } from '@/core/ir';
 import { autoLayoutGraph } from '@/core/autoLayout';
-import { defaultBlueprint } from '@/core/defaultBlueprint';
+import { defaultBlueprint, simpleBlueprint } from '@/core/defaultBlueprint';
 import { isEmptyWorkflow } from '@/core/isEmptyWorkflow';
 import { normalizeWorkflowNodeNumbers } from '@/core/nodeNumbers';
 import {
@@ -23,10 +24,25 @@ import {
 } from '@/core/genPrompt';
 import { applyIntent } from '@/core/intentEngine';
 import {
+  assessConsensusFit,
+  defaultConsensusLenses,
   generationAngles,
   isComplexGenerationRequest,
+  nodeComplexitySignal,
+  measureDivergence,
+  researchAngles,
+  scaleCount,
+  VOTE_DIVERGENCE_THRESHOLD,
 } from '@/core/consensusHeuristic';
-import { genCandidateCount } from '@/lib/consensusSettings';
+import {
+  adaptiveEscalationEnabled,
+  complexityScaling,
+  genCandidateCount,
+  nodeGenCandidateRange,
+  researchAngleRange,
+  runtimeVoteSampleRange,
+  terminalVoteSampleRange,
+} from '@/lib/consensusSettings';
 import {
   effectiveConsensusSamples,
   effectiveGenerationConsensusPlan,
@@ -34,7 +50,11 @@ import {
   recordModelCall,
   timeoutPolicyForSelection,
 } from '@/lib/modelSpeed';
-import { appendStartUserInputs } from '@/core/startInputs';
+import {
+  appendStartUserInputs,
+  setGenerationProvenance,
+  type GenProvenance,
+} from '@/core/startInputs';
 import { readApiKey, readBaseUrl } from '@/lib/apiConfig';
 import { appendComposerDraftState } from '@/lib/composerEntryPolicy';
 import {
@@ -64,6 +84,7 @@ import {
 } from '@/lib/modelGateway/modelGateway';
 import {
   UNIFIED_SYSTEM,
+  SIMPLE_CHAT_SYSTEM,
   extractJsonObject,
   modelStrategyGuidance,
 } from '@/lib/anthropic';
@@ -128,7 +149,12 @@ import {
   type StylePresetId,
 } from '@/lib/appearance';
 import { loadAppearance, saveAppearance } from '@/lib/appearanceStorage';
-import { autosave, loadLocalWorkflow } from '@/lib/persist';
+import {
+  autosave,
+  exportWorkflowToFile,
+  importWorkflowFromFile,
+  loadLocalWorkflow,
+} from '@/lib/persist';
 import {
   historyStore,
   isAutoTitlePlaceholder,
@@ -160,6 +186,17 @@ import {
 export { selectRunProgress } from './runProgress';
 export type { RunProgressSummary } from './runProgress';
 
+/**
+ * The id of the composite node whose subgraph is currently being viewed, or
+ * undefined when at the top level. New nodes added via {@link StoreState.addNode}
+ * are parented to this scope.
+ */
+export function selectActiveScopeId(
+  state: Pick<StoreState, 'graphPath'>,
+): string | undefined {
+  return state.graphPath[state.graphPath.length - 1]?.nodeId;
+}
+
 export type WorkflowSessionKey = {
   workspaceId: string | null;
   sessionId: string | null;
@@ -181,7 +218,7 @@ export type WorkflowSessionKey = {
  *
  * Actions (pre-existing, unchanged signatures):
  *   selectNode(id), setWorkflow(ir), setAdapter(id), runWorkflow(),
- *   newWorkflow(), newSession(), sendPrompt(text), setComposer(patch),
+ *   newWorkflow(), newSimpleWorkflow(), newSession(), sendPrompt(text), setComposer(patch),
  *   setComposerDraft(text), appendComposerDraft(text), setWorkspace(path),
  *   setStylePresetId(stylePresetId)
  * Actions (added this milestone — graph editing + run/mode control):
@@ -207,6 +244,14 @@ export interface StoreState {
   // Graph state
   workflow: IRGraph;
   selectedNodeId: string | null;
+  /**
+   * Drill-down navigation stack for composite nodes. `[]` = top-level graph;
+   * each entry pushes one level into a composite's subgraph. UI-transient only:
+   * it never mutates `workflow` and is not persisted (like canvasViewport, it is
+   * a view concern). The last entry's nodeId is the active scope into which new
+   * nodes are parented. See enterComposite/exitComposite/popToGraph.
+   */
+  graphPath: { nodeId: string; label: string }[];
 
   // Editor lifecycle state
   mode: 'design' | 'running';
@@ -218,7 +263,11 @@ export interface StoreState {
   currentFilePath: string | null;
 
   // AI state (browser-direct streaming).
-  /** True while an AI request is streaming in (drives loading + disables send). */
+  /**
+   * True while one or more AI blueprint edits are active. This is an aggregate
+   * background indicator; current-session send locking is derived from
+   * `aiEditingSessions`.
+   */
   aiStreaming: boolean;
   /**
    * Session-bound workflow edits currently owned by the AI-input dock. This is
@@ -281,8 +330,18 @@ export interface StoreState {
   setPromptAutoTranslate: (enabled: boolean) => void;
   setStylePresetId: (stylePresetId: StylePresetId) => void;
   selectNode: (id: string | null) => void;
+  /** Drill into a composite node's subgraph (pushes onto graphPath). */
+  enterComposite: (nodeId: string) => void;
+  /** Pop one level out of the current composite subgraph. */
+  exitComposite: () => void;
+  /** Truncate graphPath to `depth` levels (breadcrumb click; 0 = top level). */
+  popToGraph: (depth: number) => void;
   setWorkflow: (ir: IRGraph) => void;
   openWorkflowSession: (ir: IRGraph, path?: string) => void;
+  /** Export the current workflow to a user-chosen file (.owf.json). */
+  exportWorkflow: (title?: string) => void;
+  /** Import a workflow from a file and open it in a fresh session. */
+  importWorkflow: (title?: string) => void;
   setAdapter: (adapter: string) => void;
   setGlobalRunSelection: (selection: GatewaySelection) => void;
   /** Clear the composer model pin so it inherits the Settings-active provider. */
@@ -291,9 +350,15 @@ export interface StoreState {
   resumeWorkflow: () => void;
   stopWorkflow: () => void;
   newWorkflow: () => void;
+  newSimpleWorkflow: () => void;
   newSession: () => void;
   selectSession: (sessionId: string, workspaceId?: string) => void;
   deleteSession: (sessionId: string, workspaceId?: string) => void;
+  renameWorkflowSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    name: string,
+  ) => Promise<void>;
   sendPrompt: (text: string) => void;
   /**
    * Submit the user's answer to an interactive node message (the AI-return dock
@@ -324,10 +389,12 @@ export interface StoreState {
     override: NodeGatewayOverride | null,
   ) => void;
   updateNodeLabel: (id: string, label: string) => void;
+  convertNodeToConsensus: (id: string, strategy: ConsensusStrategy) => void;
   removeNode: (id: string) => void;
   addEdge: (from: IREndpoint, to: IREndpoint, kind: PinKind) => string;
   removeEdge: (id: string) => void;
   setNodePosition: (id: string, x: number, y: number) => void;
+  autoArrangeWorkflow: () => void;
 
   // Run / mode control
   setMode: (mode: 'design' | 'running') => void;
@@ -494,6 +561,21 @@ export function sessionLiveStatus(
   return null;
 }
 
+export type WorkflowDeleteProtectionReason = SessionLiveStatus;
+
+export function workflowDeleteProtectionReason(
+  session: Pick<Session, 'id' | 'isWorkflow'>,
+  workspaceId: string | null | undefined,
+  state: SessionLiveStatusState,
+): WorkflowDeleteProtectionReason {
+  if (!session.isWorkflow) return null;
+
+  return sessionLiveStatus(
+    { workspaceId: workspaceId ?? null, sessionId: session.id },
+    state,
+  );
+}
+
 const WORKSPACE_HISTORY_LIMIT = 8;
 const CANVAS_VIEWPORT_PERSIST_DEBOUNCE_MS = 250;
 
@@ -524,6 +606,7 @@ const NODE_DEFAULTS: Record<
   variable: { label: '变量', params: { value: null } },
   codeblock: { label: '代码块', params: { code: '' } },
   consensus: { label: '共识', params: { voters: [], strategy: 'multi-lens' } },
+  composite: { label: '复合', params: { inputs: [], outputs: [] } },
 };
 
 /**
@@ -604,6 +687,7 @@ function sessionFromSummary(summary: SessionSummary): Session {
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,
     isWorkflow: summary.isWorkflow,
+    ...(summary.simple ? { simple: true } : {}),
     preview: summary.preview,
     messageCount: summary.messageCount,
     ...(runStatus ? { runStatus } : {}),
@@ -620,6 +704,7 @@ function summaryFromRecord(record: SessionRecord): SessionSummary {
     isWorkflow: record.isWorkflow,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    ...(record.workflow?.meta?.simple ? { simple: true } : {}),
     preview: last ? last.slice(0, 80) : undefined,
     messageCount: record.messages.length,
     ...(runStatus ? { runStatus } : {}),
@@ -640,6 +725,16 @@ async function loadSessionTree(
     }),
   );
   return Object.fromEntries(pairs);
+}
+
+function sessionsForWorkspaceState(
+  state: Pick<StoreState, 'activeWorkspaceId' | 'sessions' | 'sessionTree'>,
+  workspaceId: string,
+): Session[] {
+  return (
+    state.sessionTree[workspaceId] ??
+    (state.activeWorkspaceId === workspaceId ? state.sessions : [])
+  );
 }
 
 function getActiveHistoryContext():
@@ -1247,10 +1342,12 @@ async function createNewChatSession(): Promise<void> {
   });
 }
 
-async function createNewWorkflowSession(): Promise<void> {
+async function createNewWorkflowSession(
+  build: (name: string | undefined, locale: Locale) => IRGraph = defaultBlueprint,
+): Promise<void> {
   const state = useStore.getState();
   const workspaceId = state.activeWorkspaceId;
-  const workflow = defaultBlueprint(undefined, state.locale);
+  const workflow = build(undefined, state.locale);
   const title =
     workflow.meta.name ??
     (state.locale === 'en-US' ? 'New Workflow' : '新建工作流');
@@ -1403,53 +1500,61 @@ async function openWorkflowInSession(ir: IRGraph, path?: string): Promise<void> 
 async function activateHistorySession(
   sessionId: string,
   workspaceId?: string,
+  options?: { onlyIfActive?: WorkflowSessionKey },
 ): Promise<void> {
   const state = useStore.getState();
   const targetWorkspaceId = workspaceId ?? state.activeWorkspaceId ?? undefined;
   if (!state.historyReady || !targetWorkspaceId) {
-    useStore.setState((s) => ({
-      activeSessionId: sessionId,
-      canvasViewport: null,
-      ...(() => {
-        const run = getRunChannel(s.activeWorkspaceId ?? null, sessionId);
-        const liveRun = runActive(run) ? run : null;
-        if (liveRun) {
-          return {
-            messages: liveRun.messages,
-            workflow: liveRun.workflow,
-            runState: liveRun.runState,
-            runOutputs: liveRun.runOutputs,
-            lastRunFailedNodeId: liveRun.failedNodeId,
-            mode: 'running' as const,
-          };
-        }
-        const aiEdit = getAiEditChannel(s.activeWorkspaceId ?? null, sessionId);
-        const liveAiEdit = aiEditActive(aiEdit) ? aiEdit : null;
-        const aiEditSnapshot =
-          liveAiEdit ?? getAiEditSnapshot(s.activeWorkspaceId ?? null, sessionId);
-        if (aiEditSnapshot) {
-          return {
-            messages: aiEditSnapshot.messages,
-            workflow: aiEditSnapshot.workflow,
-            selectedNodeId: null,
-            ...emptyRunProgress(),
-            mode: 'design' as const,
-          };
-        }
-        return {};
-      })(),
-      ...composerDraftPatchForSession(s, {
-        workspaceId: s.activeWorkspaceId ?? null,
-        sessionId,
-      }),
-    }));
+    useStore.setState((s) => {
+      if (
+        options?.onlyIfActive &&
+        !sameSessionKey(activeWorkflowSessionKey(s), options.onlyIfActive)
+      ) {
+        return s;
+      }
+      return {
+        activeSessionId: sessionId,
+        canvasViewport: null,
+        selectedNodeId: null,
+        ...(() => {
+          const run = getRunChannel(s.activeWorkspaceId ?? null, sessionId);
+          const liveRun = runActive(run) ? run : null;
+          if (liveRun) {
+            return {
+              messages: liveRun.messages,
+              workflow: liveRun.workflow,
+              runState: liveRun.runState,
+              runOutputs: liveRun.runOutputs,
+              lastRunFailedNodeId: liveRun.failedNodeId,
+              mode: 'running' as const,
+            };
+          }
+          const aiEdit = getAiEditChannel(s.activeWorkspaceId ?? null, sessionId);
+          const liveAiEdit = aiEditActive(aiEdit) ? aiEdit : null;
+          const aiEditSnapshot =
+            liveAiEdit ?? getAiEditSnapshot(s.activeWorkspaceId ?? null, sessionId);
+          if (aiEditSnapshot) {
+            return {
+              messages: aiEditSnapshot.messages,
+              workflow: aiEditSnapshot.workflow,
+              ...emptyRunProgress(),
+              mode: 'design' as const,
+            };
+          }
+          return {};
+        })(),
+        ...composerDraftPatchForSession(s, {
+          workspaceId: s.activeWorkspaceId ?? null,
+          sessionId,
+        }),
+      };
+    });
     return;
   }
 
   const record = await historyStore.getSession(targetWorkspaceId, sessionId);
   if (!record) return;
   const session = sessionFromRecord(record);
-  const workspace = state.workspaces.find((ws) => ws.id === targetWorkspaceId);
 
   // If we're switching BACK to the session whose run is still executing, rebuild
   // the view from the live in-memory channel (not the persisted snapshot, which
@@ -1480,11 +1585,20 @@ async function activateHistorySession(
     session.id,
     record.meta,
   );
+  let activated = false;
   useStore.setState((s) => {
+    if (
+      options?.onlyIfActive &&
+      !sameSessionKey(activeWorkflowSessionKey(s), options.onlyIfActive)
+    ) {
+      return s;
+    }
+    activated = true;
     const draftPatch = composerDraftPatchForSession(s, {
       workspaceId: targetWorkspaceId,
       sessionId: session.id,
     });
+    const workspace = s.workspaces.find((ws) => ws.id === targetWorkspaceId);
     const composer = workspace
       ? { ...s.composer, workspace: workspace.path }
       : s.composer;
@@ -1501,16 +1615,20 @@ async function activateHistorySession(
       composer,
       workspaceHistory,
       ...draftPatch,
-      sessions: s.sessionTree[targetWorkspaceId] ?? [session],
-      sessionTree: {
-        ...s.sessionTree,
-        [targetWorkspaceId]: [
+      ...(() => {
+        const currentSessions = sessionsForWorkspaceState(s, targetWorkspaceId);
+        const promotedSessions = [
           session,
-          ...(s.sessionTree[targetWorkspaceId] ?? []).filter(
-            (item) => item.id !== session.id,
-          ),
-      ],
-      },
+          ...currentSessions.filter((item) => item.id !== session.id),
+        ];
+        return {
+          sessions: promotedSessions,
+          sessionTree: {
+            ...s.sessionTree,
+            [targetWorkspaceId]: promotedSessions,
+          },
+        };
+      })(),
       messages: liveRun
         ? liveRun.messages
         : liveAiEdit
@@ -1519,9 +1637,11 @@ async function activateHistorySession(
       workflow,
       ...runProgress,
       canvasViewport,
+      selectedNodeId: null,
       mode: liveRun ? 'running' : 'design',
     };
   });
+  if (!activated) return;
   await historyStore.patchConfig({
     lastActiveWorkspaceId: targetWorkspaceId,
     lastActiveSessionId: session.id,
@@ -1536,49 +1656,55 @@ async function deleteHistorySession(
   const targetWorkspaceId = workspaceId ?? state.activeWorkspaceId ?? undefined;
   if (!targetWorkspaceId) return;
 
-  await historyStore.deleteSession(targetWorkspaceId, sessionId);
-
-  const workspaces = await historyStore.listWorkspaces();
-  const wasActive =
-    state.activeSessionId === sessionId &&
-    state.activeWorkspaceId === targetWorkspaceId;
-
-  if (!wasActive) {
-    useStore.setState((s) => {
-      const nextSessions = (s.sessionTree[targetWorkspaceId] ?? s.sessions).filter(
-        (session) => session.id !== sessionId,
-      );
-      return {
-        workspaces,
-        sessionTree: {
-          ...s.sessionTree,
-          [targetWorkspaceId]: nextSessions,
-        },
-      };
-    });
+  const targetSession = sessionsForWorkspaceState(
+    state,
+    targetWorkspaceId,
+  ).find((session) => session.id === sessionId);
+  if (
+    targetSession &&
+    workflowDeleteProtectionReason(targetSession, targetWorkspaceId, state)
+  ) {
     return;
   }
 
-  // Deleting the active session: switch to the next available session and
-  // load its full data (messages, workflow, run state), or clear the editor
-  // when the workspace becomes empty.
-  const freshState = useStore.getState();
-  const nextSessions = (
-    freshState.sessionTree[targetWorkspaceId] ?? freshState.sessions
-  ).filter((session) => session.id !== sessionId);
-  const nextActive = nextSessions[0] ?? null;
+  await historyStore.deleteSession(targetWorkspaceId, sessionId);
 
-  if (nextActive) {
-    await activateHistorySession(nextActive.id, targetWorkspaceId);
-  } else {
-    useStore.setState((s) => ({
+  const workspaces = await historyStore.listWorkspaces();
+  const postDelete = {
+    nextActiveId: null as string | null,
+    shouldClearActive: false,
+  };
+
+  useStore.setState((s) => {
+    const targetIsActiveWorkspace = s.activeWorkspaceId === targetWorkspaceId;
+    const sourceSessions = sessionsForWorkspaceState(s, targetWorkspaceId);
+    const nextSessions = sourceSessions.filter(
+      (session) => session.id !== sessionId,
+    );
+    const stillDeletingActive =
+      targetIsActiveWorkspace && s.activeSessionId === sessionId;
+    const nextActive = stillDeletingActive ? nextSessions[0] ?? null : null;
+    postDelete.nextActiveId = nextActive?.id ?? null;
+    postDelete.shouldClearActive = stillDeletingActive && nextActive == null;
+
+    const sessionTree = {
+      ...s.sessionTree,
+      [targetWorkspaceId]: nextSessions,
+    };
+
+    if (!postDelete.shouldClearActive) {
+      return {
+        workspaces,
+        sessionTree,
+        ...(targetIsActiveWorkspace ? { sessions: nextSessions } : {}),
+      };
+    }
+
+    return {
       workspaces,
       activeSessionId: null,
       sessions: nextSessions,
-      sessionTree: {
-        ...s.sessionTree,
-        [targetWorkspaceId]: nextSessions,
-      },
+      sessionTree,
       messages: [],
       workflow: defaultBlueprint(undefined, s.locale),
       selectedNodeId: null,
@@ -1592,10 +1718,139 @@ async function deleteHistorySession(
         workspaceId: targetWorkspaceId,
         sessionId: null,
       }),
-    }));
+    };
+  });
+
+  // Deleting the active session: switch to the next available session and
+  // load its full data (messages, workflow, run state), or clear the editor
+  // when the workspace becomes empty. The state above is computed after the
+  // async delete so a user switch during deletion is respected.
+  if (postDelete.nextActiveId) {
+    await activateHistorySession(postDelete.nextActiveId, targetWorkspaceId, {
+      onlyIfActive: {
+        workspaceId: targetWorkspaceId,
+        sessionId,
+      },
+    });
+  } else if (postDelete.shouldClearActive) {
     await historyStore.patchConfig({
       lastActiveSessionId: undefined,
     });
+  }
+}
+
+async function renameWorkflowHistorySession(
+  sessionId: string,
+  workspaceId: string | null,
+  name: string,
+): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error('Workflow name is required');
+  }
+
+  const state = useStore.getState();
+  const isActive =
+    state.activeSessionId === sessionId &&
+    state.activeWorkspaceId === workspaceId;
+
+  if (!workspaceId || !state.historyReady) {
+    const localSessions = workspaceId
+      ? state.sessionTree[workspaceId] ?? state.sessions
+      : state.sessions;
+    const target = localSessions.find((session) =>
+      sessionMatchesTarget(session, sessionId, workspaceId),
+    );
+    if (!target?.isWorkflow) {
+      throw new Error(`Workflow session not found: ${sessionId}`);
+    }
+
+    const liveWorkflow = renameWorkflowInLiveChannels(
+      workspaceId,
+      sessionId,
+      trimmed,
+    );
+    let activeWorkflow: IRGraph | null = null;
+    useStore.setState((s) => {
+      const update = (session: Session): Session =>
+        sessionMatchesTarget(session, sessionId, workspaceId)
+          ? { ...session, title: trimmed, updatedAt: Date.now() }
+          : session;
+      const sessionTree = workspaceId
+        ? {
+            ...s.sessionTree,
+            [workspaceId]: (s.sessionTree[workspaceId] ?? s.sessions).map(update),
+          }
+        : s.sessionTree;
+      activeWorkflow = isActive
+        ? (liveWorkflow ?? workflowWithName(s.workflow, trimmed))
+        : null;
+      return {
+        sessions: s.sessions.map(update),
+        sessionTree,
+        workflow: activeWorkflow ?? s.workflow,
+      };
+    });
+    if (activeWorkflow) {
+      const path = await autosave(activeWorkflow, useStore.getState().currentFilePath);
+      if (path) useStore.getState().markSaved(path);
+    }
+    return;
+  }
+
+  const record = await historyStore.getSession(workspaceId, sessionId);
+  if (!record?.isWorkflow) {
+    throw new Error(`Workflow session not found: ${workspaceId}/${sessionId}`);
+  }
+
+  const freshState = useStore.getState();
+  const activeAfterLoad =
+    freshState.activeSessionId === sessionId &&
+    freshState.activeWorkspaceId === workspaceId;
+  const liveWorkflow = renameWorkflowInLiveChannels(
+    workspaceId,
+    sessionId,
+    trimmed,
+  );
+  const baseWorkflow =
+    liveWorkflow ??
+    (activeAfterLoad ? freshState.workflow : null) ??
+    record.workflow;
+  const nextWorkflow = baseWorkflow
+    ? workflowWithName(baseWorkflow, trimmed)
+    : undefined;
+  const updated = await historyStore.updateSession(workspaceId, sessionId, {
+    title: trimmed,
+    isWorkflow: true,
+    ...(nextWorkflow ? { workflow: nextWorkflow } : {}),
+  });
+  const updatedSession = sessionFromRecord(updated);
+
+  let stillActive = false;
+  useStore.setState((s) => {
+    stillActive =
+      s.activeSessionId === sessionId &&
+      s.activeWorkspaceId === workspaceId;
+    const update = (session: Session): Session =>
+      sessionMatchesTarget(session, sessionId, workspaceId)
+        ? updatedSession
+        : session;
+    const sessionTree = s.sessionTree[workspaceId]
+      ? {
+          ...s.sessionTree,
+          [workspaceId]: s.sessionTree[workspaceId].map(update),
+        }
+      : s.sessionTree;
+    return {
+      sessions: s.sessions.map(update),
+      sessionTree,
+      workflow: stillActive && nextWorkflow ? nextWorkflow : s.workflow,
+    };
+  });
+
+  if (stillActive && nextWorkflow) {
+    const path = await autosave(nextWorkflow, useStore.getState().currentFilePath);
+    if (path) useStore.getState().markSaved(path);
   }
 }
 
@@ -1767,6 +2022,62 @@ function markedSessions(
   return dirty ? next : sessions;
 }
 
+function workflowWithName(workflow: IRGraph, name: string): IRGraph {
+  return { ...workflow, meta: { ...workflow.meta, name } };
+}
+
+function sessionMatchesTarget(
+  session: Session,
+  sessionId: string,
+  workspaceId: string | null,
+): boolean {
+  if (session.id !== sessionId) return false;
+  if (
+    workspaceId !== null &&
+    session.workspaceId !== undefined &&
+    session.workspaceId !== workspaceId
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function renameWorkflowInLiveChannels(
+  workspaceId: string | null,
+  sessionId: string,
+  name: string,
+): IRGraph | null {
+  let workflow: IRGraph | null = null;
+  const run = getRunChannel(workspaceId, sessionId);
+  if (run) {
+    run.workflow = workflowWithName(run.workflow, name);
+    workflow = run.workflow;
+  }
+
+  const aiEdit = getAiEditChannel(workspaceId, sessionId);
+  if (aiEdit) {
+    aiEdit.workflow = workflowWithName(aiEdit.workflow, name);
+    aiEditSnapshots.set(aiEdit.key, {
+      ...aiEdit,
+      messages: [...aiEdit.messages],
+    });
+    workflow = aiEdit.workflow;
+  } else {
+    const snapshot = getAiEditSnapshot(workspaceId, sessionId);
+    if (snapshot) {
+      const nextSnapshot = {
+        ...snapshot,
+        workflow: workflowWithName(snapshot.workflow, name),
+        messages: [...snapshot.messages],
+      };
+      aiEditSnapshots.set(snapshot.key, nextSnapshot);
+      workflow = nextSnapshot.workflow;
+    }
+  }
+
+  return workflow;
+}
+
 // Restore persisted composer settings + workspace history (if any). Normalize a
 // stale model id (e.g. an old fake option) back to the default so the real
 // Anthropic call always gets a valid model.
@@ -1851,6 +2162,7 @@ export const useStore = create<StoreState>((set) => ({
   // Seed graph: restored autosave, or a fresh default blueprint.
   workflow: seedWorkflowState,
   selectedNodeId: null,
+  graphPath: [],
 
   // Editor lifecycle: start in design mode, no run state, clean, unsaved.
   mode: 'design',
@@ -1920,6 +2232,36 @@ export const useStore = create<StoreState>((set) => ({
 
   selectNode: (id) => set({ selectedNodeId: id }),
 
+  // Composite drill-down navigation. These only touch the UI-transient
+  // graphPath + selection; they never read or mutate `workflow`.
+  enterComposite: (nodeId) =>
+    set((state) => {
+      const node = state.workflow.nodes.find((n) => n.id === nodeId);
+      if (!node) return state;
+      const label = node.label?.trim() || node.id;
+      return {
+        graphPath: [...state.graphPath, { nodeId, label }],
+        selectedNodeId: null,
+      };
+    }),
+  exitComposite: () =>
+    set((state) =>
+      state.graphPath.length === 0
+        ? state
+        : { graphPath: state.graphPath.slice(0, -1), selectedNodeId: null },
+    ),
+  popToGraph: (depth) =>
+    set((state) => {
+      const clamped = Math.max(0, Math.min(depth, state.graphPath.length));
+      if (clamped === state.graphPath.length) {
+        return { selectedNodeId: null };
+      }
+      return {
+        graphPath: state.graphPath.slice(0, clamped),
+        selectedNodeId: null,
+      };
+    }),
+
   setWorkflow: (ir) => {
     const workflow = restoreWorkflowRunSnapshot(
       migrateWorkflowGateway(ir, defaultComposer.model),
@@ -1937,6 +2279,24 @@ export const useStore = create<StoreState>((set) => ({
 
   openWorkflowSession: (ir, path) => {
     void openWorkflowInSession(ir, path).catch(() => {});
+  },
+
+  // Export the current workflow IR to a user-chosen .owf.json file. The run
+  // snapshot is stripped (see persist.ts) so the file is a clean, shareable
+  // blueprint. Export does not touch currentFilePath — it's a "save a copy".
+  exportWorkflow: (title) => {
+    const { workflow } = useStore.getState();
+    void exportWorkflowToFile(workflow, title).catch(() => {});
+  },
+
+  // Import a workflow from a file and open it as a fresh session. Invalid /
+  // cancelled picks are no-ops so the current canvas is never clobbered.
+  importWorkflow: (title) => {
+    void importWorkflowFromFile(title)
+      .then((result) => {
+        if (result) void openWorkflowInSession(result.ir, result.path ?? undefined);
+      })
+      .catch(() => {});
   },
 
   // Switch the target runtime adapter (Claude Code / Codex / Gemini). The
@@ -1995,6 +2355,10 @@ export const useStore = create<StoreState>((set) => ({
   newWorkflow: () =>
     void createNewWorkflowSession(),
 
+  // Load a minimal single-node starter graph (one agent, no sentinels).
+  newSimpleWorkflow: () =>
+    void createNewWorkflowSession(simpleBlueprint),
+
   newSession: () => {
     if (useStore.getState().aiStreaming) return;
     void createNewChatSession();
@@ -2007,6 +2371,9 @@ export const useStore = create<StoreState>((set) => ({
   deleteSession: (sessionId, workspaceId) => {
     void deleteHistorySession(sessionId, workspaceId);
   },
+
+  renameWorkflowSession: (sessionId, workspaceId, name) =>
+    renameWorkflowHistorySession(sessionId, workspaceId, name),
 
   // AI-driven graph edit (design mode only).
   //
@@ -2041,9 +2408,13 @@ export const useStore = create<StoreState>((set) => ({
     const trimmed = text.trim();
     if (!trimmed) return;
     const state = useStore.getState();
-    if (state.aiStreaming || isWorkflowReadOnly(state)) return;
+    if (isWorkflowReadOnly(state)) return;
     const aiEditingSession = activeWorkflowSessionKey(state);
     const capturedStartInputs: string[] = [trimmed];
+    // Accumulates how the blueprint was produced (research / candidates /
+    // escalation). Each generation phase writes into it; stamped onto the Start
+    // node by withCapturedStartInputs at every commit. Empty ⇒ no-op.
+    const provenance: GenProvenance = {};
 
     const userMsg: Message = {
       id: shortId('m'),
@@ -2084,6 +2455,11 @@ export const useStore = create<StoreState>((set) => ({
     }
 
     const ir = ch.workflow;
+    // Simple-workflow mode: the AI dock is a plain CLI/chat. The user's input
+    // goes straight to the model (no blueprint generation), and each input is
+    // appended to the lone start node's userInputs so the node mirrors the
+    // conversation. The graph stays a single node.
+    const simpleMode = ir.meta?.simple === true;
     const gatewaySelection = workflowGatewaySelection(ir, state.composer.model);
     const directRoute = resolveDirectGatewayRoute(gatewaySelection);
     const inTauri = isTauri();
@@ -2103,6 +2479,14 @@ export const useStore = create<StoreState>((set) => ({
 
     // No API key and no desktop CLI: local keyword fallback.
     if (!useApi && !useCli) {
+      if (simpleMode) {
+        // Simple mode is a direct model chat — there's no local fallback.
+        pushAssistant(
+          '简单模式需要可用的模型后端：请在桌面版配置本地 CLI，或切到 Claude Code 并配置 API key 后再试。',
+        );
+        removeAiEditChannel(ch);
+        return;
+      }
       const result = applyIntent(ir, trimmed);
       if (result.changed) {
         commitAiChannelBlueprint(
@@ -2128,7 +2512,10 @@ export const useStore = create<StoreState>((set) => ({
       : isEmptyWorkflow(ir)
         ? `我希望新建一个 workflow，目的如下：\n${trimmed}`
         : `我希望继续修改 workflow，根据下面意见你来优化流程：\n${trimmed}`;
-    const userContent = `当前 IRGraph(JSON)：\n${JSON.stringify(ir)}\n\n用户意见：\n${wrapped}`;
+    const irJson = JSON.stringify(ir);
+    // `let` so the multi-angle research step (Feature 1) can fold its findings
+    // into the generation context before any candidate/judge call reads it.
+    let userContent = `当前 IRGraph(JSON)：\n${irJson}\n\n用户意见：\n${wrapped}`;
     const generationPlan = effectiveGenerationConsensusPlan(
       genCandidateCount(),
       gatewaySelection,
@@ -2147,12 +2534,60 @@ export const useStore = create<StoreState>((set) => ({
           }
         : nextIr;
     const withCapturedStartInputs = (nextIr: IRGraph): IRGraph =>
-      appendStartUserInputs(
-        withPromptWorkflowName(nextIr),
-        capturedStartInputs,
-      );
+      appendStartUserInputs(withPromptWorkflowName(nextIr), capturedStartInputs);
+    // FEATURE 2 — complex-node generation verify+vote. When nodeGenCandidates>1,
+    // auto-escalate each generated `agent` node that the free heuristic flags as
+    // complex into a first-class `consensus` node (in place — same id, same edges
+    // — so the graph stays the source of truth and the change is portable). The
+    // voting happens at RUN time via the existing consensus machinery; this adds
+    // ZERO extra generation-time model calls. Voter count scales with the node's
+    // complexity (capped at 5). nodeGenCandidates<=1 ⇒ returns the graph verbatim.
+    // FEATURE 2 — complex-node generation verify+vote. Auto-escalate each
+    // generated `agent` node the heuristic flags as complex into a first-class
+    // `consensus` node (in place — same id/edges), seeding `min` lens voters so
+    // its adversarial vote runs at RUN time. max<=1 ⇒ feature off (graph
+    // verbatim). The starting voter count scales with node complexity.
+    const escalateComplexNodes = (graph: IRGraph): IRGraph => {
+      const range = nodeGenCandidateRange();
+      if (range.max <= 1 || !Array.isArray(graph.nodes)) return graph;
+      const mult = complexityScaling();
+      let upgraded = 0;
+      const nodes = graph.nodes.map((node) => {
+        if (node.type !== 'agent') return node;
+        const fit = assessConsensusFit(node, graph);
+        if (!fit.fit) return node;
+        const voterCount = Math.min(
+          range.max,
+          scaleCount(range.min, nodeComplexitySignal(node, graph), mult, range.max),
+        );
+        if (voterCount <= 1) return node;
+        const target = String(node.params.prompt ?? node.label ?? '');
+        const lenses = defaultConsensusLenses(target);
+        const voters = Array.from(
+          { length: voterCount },
+          (_, i) => lenses[i % lenses.length],
+        );
+        upgraded += 1;
+        return {
+          ...node,
+          type: 'consensus' as const,
+          params: { ...node.params, voters, strategy: fit.strategy },
+        };
+      });
+      if (upgraded === 0) return graph;
+      provenance.upgradedNodes = upgraded;
+      return { ...graph, nodes };
+    };
     const commitAiBlueprint = (nextIr: IRGraph): 'ok' | 'stale' | 'locked' => {
-      return commitAiChannelBlueprint(ch, nextIr) ? 'ok' : 'locked';
+      // Escalate complex nodes first (may set provenance.upgradedNodes), THEN
+      // stamp the accumulated provenance onto the Start node, THEN commit — so
+      // the Start node reflects the final escalated graph.
+      const escalated = escalateComplexNodes(nextIr);
+      const stamped = setGenerationProvenance(
+        escalated,
+        { ...provenance, at: provenance.at ?? Date.now() },
+      );
+      return commitAiChannelBlueprint(ch, stamped) ? 'ok' : 'locked';
     };
     const capturedAnswerText = (
       req: InteractionRequest,
@@ -2183,6 +2618,12 @@ export const useStore = create<StoreState>((set) => ({
       aiEditCommitMessages(ch, persist);
     };
     const persistAiMessages = () => aiEditCommitMessages(ch, true);
+    let aiCliRoutePromise: Promise<Awaited<ReturnType<typeof resolveCliGatewayRoute>>> | null =
+      null;
+    const resolveAiCliRoute = () => {
+      aiCliRoutePromise ??= resolveCliGatewayRoute(gatewaySelection);
+      return aiCliRoutePromise;
+    };
     const aiEditViaCliWithSpeed = async (
       prompt: string,
       cli: Awaited<ReturnType<typeof resolveCliGatewayRoute>>,
@@ -2191,6 +2632,7 @@ export const useStore = create<StoreState>((set) => ({
         model?: string;
         cliCommand?: string;
         env?: Record<string, string>;
+        cwd?: string;
         onProgress?: (chunk: string) => void;
       },
     ): Promise<string> => {
@@ -2269,6 +2711,29 @@ export const useStore = create<StoreState>((set) => ({
 
     // Split a full reply into explanation + optional IRGraph and apply it to the
     // active bubble. Only called once the AI is done asking (no interaction block).
+    // A short human summary of the quantity-for-quality machinery that produced
+    // this blueprint, appended to the success bubble (empty when nothing ran).
+    const provenanceSummary = (): string => {
+      const parts: string[] = [];
+      if (provenance.researchLenses) {
+        parts.push(
+          `${provenance.researchLenses} 视角调研` +
+            (provenance.researchRounds && provenance.researchRounds > 1
+              ? `(${provenance.researchRounds} 轮)`
+              : ''),
+        );
+      }
+      if (provenance.candidates && provenance.candidates > 1) {
+        parts.push(
+          `${provenance.candidates} 份候选` +
+            (provenance.judgeMerged ? '评审合并' : ''),
+        );
+      }
+      if (provenance.upgradedNodes) {
+        parts.push(`升级 ${provenance.upgradedNodes} 个共识节点`);
+      }
+      return parts.length ? ` · ${parts.join(' · ')}` : '';
+    };
     const finalizeReply = (full: string) => {
       const fence = full.indexOf('```');
       const explanation = (fence === -1 ? full : full.slice(0, fence)).trim();
@@ -2294,7 +2759,7 @@ export const useStore = create<StoreState>((set) => ({
               }
               setActive(
                 withAiTiming(
-                  `✓ 已更新蓝图（${nextIr.nodes.length} 节点 / ${nextIr.edges.length} 边）。`,
+                  `✓ 已更新蓝图（${nextIr.nodes.length} 节点 / ${nextIr.edges.length} 边）。${provenanceSummary()}`,
                 ),
               );
               persistAiMessages();
@@ -2335,7 +2800,7 @@ export const useStore = create<StoreState>((set) => ({
         const head = explanation ? `${explanation}\n\n` : '';
         setActive(
           withAiTiming(
-            `${head}✓ 已更新蓝图（${nextIr.nodes.length} 节点 / ${nextIr.edges.length} 边）。`,
+            `${head}✓ 已更新蓝图（${nextIr.nodes.length} 节点 / ${nextIr.edges.length} 边）。${provenanceSummary()}`,
           ),
         );
         persistAiMessages();
@@ -2395,7 +2860,7 @@ export const useStore = create<StoreState>((set) => ({
           ? clarifyingSystem
           : directWithEscapeSystem;
       if (useCli) {
-        const cli = await resolveCliGatewayRoute(gatewaySelection);
+        const cli = await resolveAiCliRoute();
         const cliPrompt =
           `${system}\n\n` +
           `只针对工作流蓝图作答，不要读取或探索任何代码文件，不要创建或修改任何本地文件。` +
@@ -2429,6 +2894,7 @@ export const useStore = create<StoreState>((set) => ({
     // when too few candidates are usable. Reuses finalizeReply to apply the result.
     const runGenConsensus = async (): Promise<void> => {
       const angles = generationAngles(generationPlan.count);
+      provenance.candidates = angles.length;
       newBubble(
         withAiTiming(
           `⟳ 复杂任务：生成 ${angles.length} 份候选蓝图（并发 ${generationPlan.concurrency}）…`,
@@ -2438,7 +2904,7 @@ export const useStore = create<StoreState>((set) => ({
       const genOne = async (angle: string): Promise<string> => {
         const convoA = `${userContent}\n\n【本候选侧重】${angle}\n（据此给出与任务复杂度匹配的完整蓝图。）`;
         if (useCli) {
-          const cli = await resolveCliGatewayRoute(gatewaySelection);
+          const cli = await resolveAiCliRoute();
           return aiEditViaCliWithSpeed(
             `${directSystem}\n\n只针对工作流蓝图作答，不要读取或修改任何文件；直接输出中文说明 + 一个完整 \`\`\`json IRGraph 代码块。\n\n${convoA}`,
             cli,
@@ -2485,6 +2951,7 @@ export const useStore = create<StoreState>((set) => ({
           return null;
         })
         .filter((v): v is { full: string; json: string } => v !== null);
+      provenance.candidatesValid = valid.length;
 
       if (valid.length === 0) {
         const failures = settled
@@ -2529,13 +2996,13 @@ export const useStore = create<StoreState>((set) => ({
         `${unifiedBase}\n\n你将收到同一需求的多份候选 workflow 蓝图(IRGraph JSON)。请择优合并：以整体最佳的一份为基底，把其它候选中确实更优的局部（更合理的并行/分支拓扑、遗漏的验收/回退、更贴切的 consensus 用法、更准确的节点划分）合并进去，并纠正明显问题。输出中文说明(2-4 句，说明取舍理由) + 一个完整的 \`\`\`json IRGraph。\n\n` +
         BLUEPRINT_DIRECT_EDIT_CONTRACT;
       const judgeConvo =
-        `原始需求：\n${wrapped}\n\n当前 IRGraph：\n${JSON.stringify(ir)}\n\n` +
+        `原始需求：\n${wrapped}\n\n当前 IRGraph：\n${irJson}\n\n` +
         `以下是多份候选蓝图，请评审合并出最佳：\n\n` +
         valid.map((v, i) => `【候选 ${i + 1}】\n${v.json}`).join('\n\n');
 
       let merged = '';
       if (useCli) {
-        const cli = await resolveCliGatewayRoute(gatewaySelection);
+        const cli = await resolveAiCliRoute();
         merged = await aiEditViaCliWithSpeed(`${judgeSystem}\n\n${judgeConvo}`, cli, {
           permission: 'full',
           model: cli.model,
@@ -2555,13 +3022,147 @@ export const useStore = create<StoreState>((set) => ({
         merged = merged || judgeFull;
       }
       // If the judge didn't return a graph, keep the best candidate as-is.
-      finalizeReply(replyIncludesIRGraph(merged) ? merged : valid[0].full);
+      const judgeProducedGraph = replyIncludesIRGraph(merged);
+      provenance.judgeMerged = judgeProducedGraph;
+      finalizeReply(judgeProducedGraph ? merged : valid[0].full);
     };
+
+    // Simple-workflow mode: skip ALL blueprint generation. Send the user's
+    // input straight to the model (like a plain CLI/chat), stream the answer
+    // into the chat bubble, and append the input to the lone start node so the
+    // node mirrors the conversation. The graph never grows past one node.
+    if (simpleMode) {
+      void (async () => {
+        const chatSystem = `${SIMPLE_CHAT_SYSTEM}${languageAdaptationPrompt(state.locale)}`;
+        try {
+          newBubble(withAiTiming('⟳ 生成中…'));
+          let answer = '';
+          if (useCli) {
+            const cli = await resolveAiCliRoute();
+            answer = await aiEditViaCliWithSpeed(`${chatSystem}\n\n${trimmed}`, cli, {
+              permission: 'full',
+              model: cli.model,
+              cliCommand: cli.cliCommand,
+              env: cli.env,
+              cwd: state.composer.workspace || undefined,
+            });
+          } else {
+            let full = '';
+            const returned = await completeDirectWithSpeed({
+              system: chatSystem,
+              userContent: trimmed,
+              onDelta: (chunk) => {
+                full += chunk;
+                setActive(withAiTiming(full) || '⟳ 生成中…');
+              },
+            });
+            answer = full || returned;
+          }
+          setActive(withAiTiming(answer.trim() || '（模型没有返回内容）'), true);
+          // Record the input on the node (keeps the graph a single node).
+          commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [trimmed]));
+        } catch (err) {
+          const msg = (err as Error)?.message ?? String(err);
+          if (activeId) setActive(withAiTiming(`✗ 调用失败: ${msg}`), true);
+          else pushAssistant(withAiTiming(`✗ 调用失败: ${msg}`));
+          persistAiMessages();
+        } finally {
+          removeAiEditChannel(ch);
+        }
+      })();
+      return;
+    }
 
     void (async () => {
       let convo = userContent;
       let finalized = false;
       try {
+        // FEATURE 1 — multi-angle research before generation. max<=1 ⇒ skipped
+        // entirely. Starts at `min` lenses; when adaptive escalation is on and
+        // the findings disagree, it doubles the lens count (min→…→max, reusing
+        // prior findings) before folding the accumulated conclusions into the
+        // generation context. CLI lenses may read the workspace (cwd + full
+        // permission); API lenses are reasoning-only over the request + IRGraph.
+        const researchRange = researchAngleRange();
+        if (
+          (useApi || useCli) &&
+          researchRange.max > 1 &&
+          !isGrill &&
+          !allowClarification &&
+          complexGenerationRequest
+        ) {
+          try {
+            const adaptive = adaptiveEscalationEnabled();
+            const allLenses = researchAngles(researchRange.max);
+            const researchSystem = useCli
+              ? `${unifiedBase}\n\n你现在处于「调研」阶段（不是改图）。请围绕给定视角调研，可读取工作区中的相关代码/文件以了解现状，但不要创建或修改任何文件，也不要输出蓝图或 \`\`\`json 代码块。只用要点列表给出该视角的简明结论（不超过 200 字）。`
+              : `${unifiedBase}\n\n你现在处于「调研」阶段（不是改图）。请仅基于给定的需求与当前 IRGraph，围绕给定视角做分析推理（你无法读取本地文件）。不要输出蓝图或 \`\`\`json 代码块。只用要点列表给出该视角的简明结论（不超过 200 字）。`;
+            const runLens = async (lens: string): Promise<string> => {
+              const convoR =
+                `调研目标（用户需求）：\n${wrapped}\n\n当前 IRGraph：\n${irJson}\n\n` +
+                `【本视角聚焦】${lens}`;
+              try {
+                if (useCli) {
+                  const cli = await resolveAiCliRoute();
+                  return await aiEditViaCliWithSpeed(`${researchSystem}\n\n${convoR}`, cli, {
+                    permission: 'full',
+                    model: cli.model,
+                    cliCommand: cli.cliCommand,
+                    env: cli.env,
+                    cwd: state.composer.workspace || undefined,
+                  });
+                }
+                return await completeDirectWithSpeed({ system: researchSystem, userContent: convoR });
+              } catch {
+                return '';
+              }
+            };
+            const findings: string[] = [];
+            let ran = 0;
+            let rounds = 0;
+            let lastDivergence = 0;
+            let target = Math.max(2, Math.min(researchRange.min, researchRange.max));
+            for (;;) {
+              const delta = allLenses.slice(ran, target);
+              if (delta.length === 0) break;
+              const conc = Math.max(1, Math.min(delta.length, generationPlan.concurrency || delta.length));
+              newBubble(
+                withAiTiming(`⟳ 多角度调研：并行展开 ${target} 个视角（并发 ${conc}）…`),
+              );
+              const batch = await runWithConcurrency(delta, conc, runLens);
+              findings.push(...batch);
+              ran = target;
+              rounds += 1;
+              const usable = findings.filter((f) => f && f.trim());
+              if (!adaptive || ran >= researchRange.max || usable.length < 2) break;
+              // Prose findings: distinct conclusions ⇒ escalate one doubling step.
+              const div = measureDivergence(usable);
+              lastDivergence = div;
+              if (div <= VOTE_DIVERGENCE_THRESHOLD) break;
+              target = Math.min(researchRange.max, ran * 2);
+              if (target <= ran) break;
+            }
+            const usable = findings.filter((f) => f && f.trim());
+            if (usable.length) {
+              provenance.researchLenses = ran;
+              provenance.researchUsable = usable.length;
+              provenance.researchRounds = rounds;
+              provenance.researchDivergence = lastDivergence;
+              const block =
+                `\n\n=== 多角度调研结论（供生成参考，请据此完善蓝图） ===\n` +
+                usable.map((f, i) => `【视角 ${i + 1}】\n${f.trim()}`).join('\n\n');
+              userContent += block;
+              convo = userContent;
+              setActive(
+                withAiTiming(
+                  `✓ 多角度调研完成（${usable.length}/${ran} 个视角有结论），已并入生成上下文。`,
+                ),
+              );
+            }
+          } catch {
+            /* research is best-effort; fall through to normal generation */
+          }
+        }
         if (shouldGenConsensus) {
           await runGenConsensus();
           finalized = true;
@@ -2752,7 +3353,7 @@ export const useStore = create<StoreState>((set) => ({
   setWorkspace: (path) => {
     const trimmed = path.trim();
     if (!trimmed) return;
-    if (useStore.getState().aiStreaming) return;
+    if (isActiveAiEditingSession(useStore.getState())) return;
     set((state) => {
       const composer = { ...state.composer, workspace: trimmed };
       const workspaceHistory = [
@@ -2771,10 +3372,14 @@ export const useStore = create<StoreState>((set) => ({
     const id = shortId('n');
     const committed = applyWorkflowEdit('user', (state) => {
       const defaults = NODE_DEFAULTS[type];
+      // Default the parent to the composite subgraph currently being viewed, so
+      // nodes created while drilled in are owned by that composite. An explicit
+      // `parent` arg (e.g. type-change preserving branch/loop nesting) wins.
+      const effectiveParent = parent ?? selectActiveScopeId(state);
       const node: IRNode = {
         id,
         type,
-        ...(parent ? { parent } : {}),
+        ...(effectiveParent ? { parent: effectiveParent } : {}),
         label: defaults.label,
         params: { ...defaults.params, ...(params ?? {}) },
       };
@@ -2835,6 +3440,36 @@ export const useStore = create<StoreState>((set) => ({
       dirty: true,
       ...emptyRunProgress(),
     }));
+  },
+
+  convertNodeToConsensus: (id, strategy) => {
+    applyWorkflowEdit('user', (state) => {
+      let converted = false;
+      const nodes = state.workflow.nodes.map((n) => {
+        if (n.id !== id || n.type !== 'agent') return n;
+        converted = true;
+        const target = String(n.params.prompt ?? n.label ?? '');
+        return {
+          ...n,
+          type: 'consensus' as const,
+          params: {
+            ...n.params,
+            voters: defaultConsensusLenses(target),
+            strategy,
+          },
+        };
+      });
+      if (!converted) return null;
+      return {
+        workflow: workflowWithoutRunSnapshot({
+          ...state.workflow,
+          nodes,
+        }),
+        selectedNodeId: id,
+        dirty: true,
+        ...emptyRunProgress(),
+      };
+    });
   },
 
   // Remove a node and, when it is a container (branch/loop), all of its
@@ -2914,6 +3549,28 @@ export const useStore = create<StoreState>((set) => ({
           ...state.workflow,
           layout: { ...(state.workflow.layout ?? {}), [id]: { x, y } },
         },
+      };
+    });
+    if (committed) void markActiveHistorySessionWorkflow();
+  },
+
+  // Re-layer every node into a clean topological layout along the exec spine.
+  // Layout-only (preserves run state) but dirties so positions persist. Reuses
+  // the existing layered engine; stripping the prior layout forces a full
+  // re-arrange rather than honoring stale coordinates.
+  autoArrangeWorkflow: () => {
+    let committed = false;
+    set((state) => {
+      if (!canWriteWorkflow(state)) return state;
+      const arranged = autoLayoutGraph(
+        { ...state.workflow, layout: {} },
+        undefined,
+        { engine: 'layered', relayout: 'all' },
+      );
+      committed = true;
+      return {
+        workflow: { ...state.workflow, layout: arranged.layout },
+        dirty: true,
       };
     });
     if (committed) void markActiveHistorySessionWorkflow();
@@ -4238,6 +4895,18 @@ function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContex
     concurrency: runConcurrency(),
     maxRetries: runMaxRetries(),
     consensusSamples: defaultConsensusSamples(),
+    // Quantity-for-quality run-time voting: starting count (min) + escalation
+    // ceiling (max). GUI default 2/16; a feature's max<=1 disables it.
+    runtimeVoteSamplesMin: runtimeVoteSampleRange().min,
+    runtimeVoteSamplesMax: runtimeVoteSampleRange().max,
+    terminalVoteSamplesMin: terminalVoteSampleRange().min,
+    terminalVoteSamplesMax: terminalVoteSampleRange().max,
+    complexityScaling: complexityScaling(),
+    adaptiveEscalation: adaptiveEscalationEnabled(),
+    // Run-level guardrail: bound total escalation samples so a large graph can't
+    // multiply the per-node ceiling by node count unbounded.
+    escalationBudget: 64,
+    escalationSpent: 0,
     gateway: buildGuiGateway(ch),
     cliCommand: ch.config.cliCommand,
   };

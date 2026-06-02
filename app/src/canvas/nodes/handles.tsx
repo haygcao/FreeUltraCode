@@ -12,30 +12,31 @@ import type { CSSProperties } from 'react';
  * `data_in`, `data_out`) so edges from {@link irToFlow} attach correctly.
  */
 
-const EXEC_COLOR = 'var(--fg)';
-const DATA_COLOR = 'var(--accent-2)';
-
 /** Triangle (exec) styling — a right-pointing ▶ drawn with a CSS border trick. */
 const execStyle: CSSProperties = {
   width: 0,
   height: 0,
   background: 'transparent',
   border: 'none',
-  borderTop: '6px solid transparent',
-  borderBottom: '6px solid transparent',
-  borderLeft: `9px solid ${EXEC_COLOR}`,
+  borderTop: '7px solid transparent',
+  borderBottom: '7px solid transparent',
+  borderLeft: '11px solid var(--pin-exec)',
   borderRadius: 0,
+  filter: 'drop-shadow(0 0 3px var(--pin-glow-exec))',
+  transition: 'filter 120ms ease, transform 120ms ease',
 };
 
-/** Circle (data) styling — a filled dot. */
+/** Circle (data) styling — a glass-filled ring dot that reads on any surface. */
 const dataStyle: CSSProperties = {
-  width: 10,
-  height: 10,
-  minWidth: 10,
-  minHeight: 10,
-  background: DATA_COLOR,
-  border: 'none',
+  width: 12,
+  height: 12,
+  minWidth: 12,
+  minHeight: 12,
+  background: 'var(--node-glass-solid)',
+  border: '2px solid var(--pin-data)',
   borderRadius: '50%',
+  boxShadow: '0 0 0 1px var(--node-glass-solid), 0 0 4px var(--pin-glow-data)',
+  transition: 'box-shadow 120ms ease, transform 120ms ease',
 };
 
 export interface PinProps {
@@ -52,7 +53,8 @@ export function ExecIn({ id, top }: PinProps) {
       type="target"
       position={Position.Left}
       id={id}
-      style={{ ...execStyle, top, left: -5 }}
+      className="owf-pin-exec"
+      style={{ ...execStyle, top, left: -6 }}
     />
   );
 }
@@ -64,7 +66,8 @@ export function ExecOut({ id, top }: PinProps) {
       type="source"
       position={Position.Right}
       id={id}
-      style={{ ...execStyle, top, right: -5 }}
+      className="owf-pin-exec"
+      style={{ ...execStyle, top, right: -6 }}
     />
   );
 }
@@ -76,7 +79,8 @@ export function DataIn({ id, top }: PinProps) {
       type="target"
       position={Position.Left}
       id={id}
-      style={{ ...dataStyle, top, left: -5 }}
+      className="owf-pin-data"
+      style={{ ...dataStyle, top, left: -6 }}
     />
   );
 }
@@ -88,7 +92,8 @@ export function DataOut({ id, top }: PinProps) {
       type="source"
       position={Position.Right}
       id={id}
-      style={{ ...dataStyle, top, right: -5 }}
+      className="owf-pin-data"
+      style={{ ...dataStyle, top, right: -6 }}
     />
   );
 }

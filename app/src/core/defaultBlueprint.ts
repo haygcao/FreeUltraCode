@@ -105,3 +105,46 @@ export function defaultBlueprint(
     },
   });
 }
+
+/**
+ * CONTRACT: simpleBlueprint(name?, locale?) returns a "simple workflow" — a
+ * single, nameless node that just collects and displays the user's inputs:
+ *
+ *   (one start-type node, no label, no edges)
+ *
+ * Used by newSimpleWorkflow() for easy one-shot questions. `meta.simple` marks
+ * the graph as simple mode: the AI dock then behaves like a plain CLI/chat
+ * (sends the user's input straight to the model, no blueprint generation) and
+ * appends each input to this node's `userInputs` so the node mirrors the
+ * conversation. The node reuses the start-node input-list rendering but hides
+ * the "Start" name (see ControlNode's `simple` handling). The graph stays a
+ * single node for its whole lifetime.
+ */
+export function simpleBlueprint(
+  name?: string,
+  locale?: Locale,
+): IRGraph {
+  const localeCode: Locale = locale ?? DEFAULT_LOCALE;
+  const workflowName =
+    name ?? t(localeCode, 'defaultBlueprint.untitledWorkflow');
+  return normalizeWorkflowNodeNumbers({
+    version: 1,
+    meta: {
+      name: workflowName,
+      adapter: 'claude-code',
+      simple: true,
+      gateway: { defaults: { adapter: 'claude-code', modelClass: 'sonnet' } },
+    },
+    nodes: [
+      {
+        id: 'n_start',
+        type: 'start',
+        params: { userInputs: [] },
+      },
+    ],
+    edges: [],
+    layout: {
+      n_start: { x: 240, y: 160 },
+    },
+  });
+}

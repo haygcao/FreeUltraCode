@@ -6,13 +6,25 @@ import type {
   GatewaySelection,
   IRAgentSpec,
   IRNode,
+  IRPort,
   NodeGatewayOverride,
   NodeType,
+  PinKind,
 } from '@/core/ir';
-import { assessConsensusFit, defaultConsensusLenses } from '@/core/consensusHeuristic';
+import { shortId } from '@/lib/id';
+import { assessConsensusFit } from '@/core/consensusHeuristic';
+import { classifyVotingNode } from '@/runtime';
 import { isNumberedWorkflowNode } from '@/core/nodeNumbers';
-import { autoSuggestEnabled } from '@/lib/consensusSettings';
-import { readStartUserInputs } from '@/core/startInputs';
+import {
+  autoSuggestEnabled,
+  runtimeVoteSampleRange,
+  terminalVoteSampleRange,
+} from '@/lib/consensusSettings';
+import {
+  readGenerationProvenance,
+  readStartUserInputs,
+  type GenProvenance,
+} from '@/core/startInputs';
 import { primeCliRuntime, subscribeCliRuntime } from '@/lib/cliConfig';
 import { t, type Locale } from '@/lib/i18n';
 import { nodeGatewayOverride } from '@/lib/modelGateway/modelGateway';
@@ -57,6 +69,7 @@ const NODE_TYPE_OPTIONS: { id: NodeType; label: string }[] = [
   { id: 'parallel', label: 'Parallel' },
   { id: 'pipeline', label: 'Pipeline' },
   { id: 'consensus', label: 'Consensus' },
+  { id: 'composite', label: 'Composite' },
   { id: 'phase', label: 'Phase' },
   { id: 'branch', label: 'Branch' },
   { id: 'loop', label: 'Loop' },
@@ -282,6 +295,105 @@ function SpecListField({
   );
 }
 
+/** Coerce a params value into IRPort[], keeping only entries of `direction`. */
+function readPorts(value: unknown, direction: 'in' | 'out'): IRPort[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (p): p is IRPort =>
+      !!p &&
+      typeof p === 'object' &&
+      typeof (p as IRPort).id === 'string' &&
+      (p as IRPort).direction === direction,
+  );
+}
+
+interface PortListFieldProps {
+  label: string;
+  ports: IRPort[];
+  direction: 'in' | 'out';
+  onChange: (ports: IRPort[]) => void;
+  addLabel: string;
+  locale: Locale;
+  disabled?: boolean;
+}
+
+/**
+ * Editor for a composite node's input/output ports. The port `id` is generated
+ * on add and shown read-only — renaming it would orphan any edge endpoint bound
+ * to it. Only the human label and pin kind (data/exec) are editable.
+ */
+function PortListField({
+  label,
+  ports,
+  direction,
+  onChange,
+  addLabel,
+  locale,
+  disabled = false,
+}: PortListFieldProps) {
+  const update = (i: number, patch: Partial<IRPort>) =>
+    onChange(ports.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+  const remove = (i: number) => onChange(ports.filter((_, idx) => idx !== i));
+  const add = () =>
+    onChange([
+      ...ports,
+      { id: shortId('p'), direction, kind: 'data' as PinKind, label: '' },
+    ]);
+
+  return (
+    <Field label={label}>
+      <div className="flex flex-col gap-2">
+        {ports.map((p, i) => (
+          <div
+            key={p.id}
+            className="flex flex-col gap-1 rounded-md border border-border-soft bg-panel-2 p-2"
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] text-fg-faint">{p.id}</span>
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                disabled={disabled}
+                className="text-[11px] text-fg-faint hover:text-accent-4 disabled:cursor-not-allowed disabled:opacity-40"
+                title={t(locale, 'inspector.removePort')}
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex gap-1">
+              <input
+                className={textInputClass}
+                value={asString(p.label)}
+                onChange={(e) => update(i, { label: e.target.value })}
+                placeholder={t(locale, 'inspector.portLabelPlaceholder')}
+                disabled={disabled}
+              />
+              <select
+                className={selectClass}
+                style={{ width: 'auto' }}
+                value={p.kind}
+                onChange={(e) => update(i, { kind: e.target.value as PinKind })}
+                disabled={disabled}
+              >
+                <option value="data">data</option>
+                <option value="exec">exec</option>
+              </select>
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={add}
+          disabled={disabled}
+          className="rounded-md border border-border bg-panel-2 px-2 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {addLabel}
+        </button>
+      </div>
+    </Field>
+  );
+}
+
 function StartInputsDetails({
   inputs,
   locale,
@@ -316,6 +428,64 @@ function StartInputsDetails({
   );
 }
 
+/**
+ * Read-only readout of how an AI-generated blueprint was produced (multi-angle
+ * research / candidate consensus / complex-node escalation), shown on the Start
+ * node. Only the rows that actually ran are listed.
+ */
+function GenProvenanceDetails({
+  prov,
+  locale,
+}: {
+  prov: GenProvenance;
+  locale: Locale;
+}) {
+  const rows: string[] = [];
+  if (prov.candidates && prov.candidates > 1) {
+    rows.push(
+      t(locale, 'inspector.provenance.candidates')
+        .replace('{n}', String(prov.candidates))
+        .replace('{valid}', String(prov.candidatesValid ?? prov.candidates)) +
+        (prov.judgeMerged ? ` · ${t(locale, 'inspector.provenance.judged')}` : ''),
+    );
+  }
+  if (prov.researchLenses) {
+    rows.push(
+      t(locale, 'inspector.provenance.research')
+        .replace('{n}', String(prov.researchLenses))
+        .replace('{usable}', String(prov.researchUsable ?? 0))
+        .replace('{rounds}', String(prov.researchRounds ?? 1)),
+    );
+  }
+  if (prov.upgradedNodes) {
+    rows.push(
+      t(locale, 'inspector.provenance.upgraded').replace(
+        '{n}',
+        String(prov.upgradedNodes),
+      ),
+    );
+  }
+  const when =
+    typeof prov.at === 'number'
+      ? new Date(prov.at).toLocaleString(locale === 'en-US' ? 'en-US' : 'zh-CN')
+      : null;
+
+  return (
+    <div className="rounded-md border border-border-soft bg-panel-2 p-2 text-[11px] leading-relaxed text-fg-dim">
+      {rows.length === 0 ? (
+        <div className="text-fg-faint">{t(locale, 'inspector.provenance.none')}</div>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {rows.map((r, i) => (
+            <li key={i}>· {r}</li>
+          ))}
+        </ul>
+      )}
+      {when && <div className="mt-1.5 text-fg-faint">{when}</div>}
+    </div>
+  );
+}
+
 interface FieldProps {
   label: string;
   children: React.ReactNode;
@@ -334,6 +504,7 @@ interface ParamFieldsProps {
   node: IRNode;
   onParam: (patch: Record<string, unknown>) => void;
   onGatewayOverride: (override: NodeGatewayOverride | null) => void;
+  onOpenSubgraph: () => void;
   workflowSelection: GatewaySelection;
   globalRunSelection: GatewaySelection;
   gatewayOptions: GatewayRunOption[];
@@ -346,6 +517,7 @@ function ParamFields({
   node,
   onParam,
   onGatewayOverride,
+  onOpenSubgraph,
   workflowSelection,
   globalRunSelection,
   gatewayOptions,
@@ -579,6 +751,38 @@ function ParamFields({
       );
     }
 
+    case 'composite':
+      return (
+        <>
+          <PortListField
+            label={t(locale, 'inspector.compositeInputs')}
+            ports={readPorts(p.inputs, 'in')}
+            direction="in"
+            onChange={(inputs) => onParam({ inputs })}
+            addLabel={t(locale, 'inspector.addPort')}
+            locale={locale}
+            disabled={disabled}
+          />
+          <PortListField
+            label={t(locale, 'inspector.compositeOutputs')}
+            ports={readPorts(p.outputs, 'out')}
+            direction="out"
+            onChange={(outputs) => onParam({ outputs })}
+            addLabel={t(locale, 'inspector.addPort')}
+            locale={locale}
+            disabled={disabled}
+          />
+          <button
+            type="button"
+            onClick={onOpenSubgraph}
+            disabled={disabled}
+            className="w-full rounded-md border border-border bg-panel-2 px-2 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {t(locale, 'inspector.openSubgraph')}
+          </button>
+        </>
+      );
+
     case 'phase':
       return (
         <Field label="Title">
@@ -698,6 +902,7 @@ function ParamFields({
         inputs.length > 0
           ? `${t(locale, 'inspector.startInputsLabel')} (${inputs.length})`
           : t(locale, 'inspector.startInputsLabel');
+      const prov = readGenerationProvenance(p);
       return (
         <>
           <Field label={label}>
@@ -706,6 +911,11 @@ function ParamFields({
           <div className="text-[11px] text-fg-faint">
             {t(locale, 'inspector.startInputsHelp')}
           </div>
+          {prov && (
+            <Field label={t(locale, 'inspector.provenance.label')}>
+              <GenProvenanceDetails prov={prov} locale={locale} />
+            </Field>
+          )}
         </>
       );
     }
@@ -732,7 +942,9 @@ export default function NodeInspector() {
   const updateNodeGatewayOverride = useStore((s) => s.updateNodeGatewayOverride);
   const removeNode = useStore((s) => s.removeNode);
   const addNode = useStore((s) => s.addNode);
+  const convertNodeToConsensus = useStore((s) => s.convertNodeToConsensus);
   const selectNode = useStore((s) => s.selectNode);
+  const enterComposite = useStore((s) => s.enterComposite);
   const readOnly = useStore((s) => isWorkflowReadOnly(s));
   const gatewayOptions = useGatewayRunOptions();
 
@@ -754,13 +966,18 @@ export default function NodeInspector() {
   }
 
   /**
-   * Changing a node's type is destructive (params shape differs per type),
-   * so we keep the IRGraph consistent by deleting the current node and
-   * adding a fresh one of the new type, preserving the label.
+   * Most type changes are destructive because params shape differs per type.
+   * Agent -> consensus is the safe exception: keep the node id/edges and only
+   * replace the node params with seeded voters.
    */
   const handleTypeChange = (nextType: NodeType) => {
     if (readOnly) return;
     if (nextType === node.type) return;
+    if (node.type === 'agent' && nextType === 'consensus') {
+      convertNodeToConsensus(node.id, 'multi-lens');
+      selectNode(node.id);
+      return;
+    }
     const label = node.label;
     const parent = node.parent;
     removeNode(node.id);
@@ -770,31 +987,23 @@ export default function NodeInspector() {
     selectNode(newId);
   };
 
-  /**
-   * Upgrade a plain agent node into a consensus node, seeding differentiated lens
-   * voters from its prompt. The free heuristic (assessConsensusFit) only suggests
-   * this — the user decides — so consensus stays a visible, first-class node.
-   */
   const convertToConsensus = (strategy: ConsensusStrategy) => {
     if (readOnly) return;
-    const prompt = String(node.params.prompt ?? node.label ?? '');
-    const label = node.label;
-    const parent = node.parent;
-    removeNode(node.id);
-    const newId = addNode(
-      'consensus',
-      { strategy, voters: defaultConsensusLenses(prompt) },
-      parent,
-    );
-    if (!newId) return;
-    if (label) updateNodeLabel(newId, label);
-    selectNode(newId);
+    convertNodeToConsensus(node.id, strategy);
+    selectNode(node.id);
   };
 
   const consensusFit =
     node.type === 'agent' && !readOnly && autoSuggestEnabled()
       ? assessConsensusFit(node, workflow)
       : { fit: false as const, strategy: 'multi-lens' as ConsensusStrategy, reason: '' };
+
+  // Will this node trigger run-time divergence voting (the 2→4→8→16 escalation)?
+  // Purely structural — independent of the current sample knobs — so the marker
+  // is stable. The range it shows reflects the user's current min/max settings.
+  const voting = classifyVotingNode(node, workflow);
+  const votingRange =
+    voting.kind === 'terminal' ? terminalVoteSampleRange() : runtimeVoteSampleRange();
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -837,6 +1046,39 @@ export default function NodeInspector() {
 
       <div className="my-1 border-t border-border-soft" />
 
+      {voting.willVote && votingRange.max > 1 && (
+        <div
+          className="rounded-md border px-2 py-2 text-[11px] leading-relaxed"
+          style={{
+            borderColor: 'var(--accent-3)',
+            background: 'var(--bg-alt)',
+            color: 'var(--fg-dim)',
+          }}
+        >
+          <div className="mb-1 font-medium" style={{ color: 'var(--fg)' }}>
+            {voting.kind === 'terminal' ? '⧿ ' : '⚡ '}
+            {t(
+              locale,
+              voting.kind === 'terminal'
+                ? 'inspector.votingMarker.terminal'
+                : 'inspector.votingMarker.complex',
+            )}
+          </div>
+          <div>
+            {t(locale, 'inspector.votingMarker.willVote')} ·{' '}
+            {t(locale, 'inspector.votingMarker.range')
+              .replace('{min}', String(votingRange.min))
+              .replace('{max}', String(votingRange.max))}
+          </div>
+          {voting.reasons.length > 0 && (
+            <div className="mt-1 text-fg-faint">
+              {t(locale, 'inspector.votingMarker.because')}
+              {voting.reasons.join('、')}
+            </div>
+          )}
+        </div>
+      )}
+
       {consensusFit.fit && (
         <div
           className="rounded-md border px-2 py-2 text-[11px] leading-relaxed"
@@ -865,6 +1107,7 @@ export default function NodeInspector() {
           onGatewayOverride={(override) =>
             updateNodeGatewayOverride(node.id, override)
           }
+          onOpenSubgraph={() => enterComposite(node.id)}
           workflowSelection={workflowSelection}
           globalRunSelection={globalRunSelection}
           gatewayOptions={gatewayOptions}

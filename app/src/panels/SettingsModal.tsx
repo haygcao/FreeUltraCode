@@ -2380,10 +2380,135 @@ function ConsensusSettings({ locale }: { locale: Locale }) {
         />
       </SettingRow>
 
+      <div className="border-t border-border pt-4">
+        <h4 className="text-sm font-semibold text-fg">
+          {t(locale, 'settings.consensus.quantityTitle')}
+        </h4>
+        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+          {t(locale, 'settings.consensus.quantityDesc')}
+        </p>
+      </div>
+
+      <SettingRow
+        title={t(locale, 'settings.consensus.adaptiveEscalationLabel')}
+        description={t(locale, 'settings.consensus.adaptiveEscalationDesc')}
+      >
+        <SwitchControl
+          checked={s.adaptiveEscalation}
+          onChange={(v) => update('adaptiveEscalation', v)}
+        />
+      </SettingRow>
+
+      <ConsensusRangeRow
+        locale={locale}
+        labelKey="settings.consensus.researchAnglesLabel"
+        descKey="settings.consensus.researchAnglesDesc"
+        minValue={s.researchAnglesMin}
+        maxValue={s.researchAnglesMax}
+        onMin={(v) => update('researchAnglesMin', v)}
+        onMax={(v) => update('researchAnglesMax', v)}
+      />
+
+      <ConsensusRangeRow
+        locale={locale}
+        labelKey="settings.consensus.nodeGenCandidatesLabel"
+        descKey="settings.consensus.nodeGenCandidatesDesc"
+        minValue={s.nodeGenCandidatesMin}
+        maxValue={s.nodeGenCandidatesMax}
+        onMin={(v) => update('nodeGenCandidatesMin', v)}
+        onMax={(v) => update('nodeGenCandidatesMax', v)}
+      />
+
+      <ConsensusRangeRow
+        locale={locale}
+        labelKey="settings.consensus.runtimeVoteSamplesLabel"
+        descKey="settings.consensus.runtimeVoteSamplesDesc"
+        minValue={s.runtimeVoteSamplesMin}
+        maxValue={s.runtimeVoteSamplesMax}
+        onMin={(v) => update('runtimeVoteSamplesMin', v)}
+        onMax={(v) => update('runtimeVoteSamplesMax', v)}
+      />
+
+      <ConsensusRangeRow
+        locale={locale}
+        labelKey="settings.consensus.terminalVoteSamplesLabel"
+        descKey="settings.consensus.terminalVoteSamplesDesc"
+        minValue={s.terminalVoteSamplesMin}
+        maxValue={s.terminalVoteSamplesMax}
+        onMin={(v) => update('terminalVoteSamplesMin', v)}
+        onMax={(v) => update('terminalVoteSamplesMax', v)}
+      />
+
+      <SettingRow
+        title={t(locale, 'settings.consensus.complexityScalingLabel')}
+        description={t(locale, 'settings.consensus.complexityScalingDesc')}
+      >
+        <StepperControl
+          value={s.complexityScaling}
+          min={CONSENSUS_LIMITS.complexityScaling.min}
+          max={CONSENSUS_LIMITS.complexityScaling.max}
+          onChange={(v) => update('complexityScaling', v)}
+        />
+      </SettingRow>
+
       <p className="text-xs leading-relaxed text-fg-faint">
         {t(locale, 'settings.consensus.costNote')}
       </p>
     </div>
+  );
+}
+
+/**
+ * A single quantity-for-quality tunable rendered as a (start, ceiling) pair:
+ * "起始" = the Min stepper, "上限" = the Max stepper. The Max stepper's floor is
+ * clamped to the current Min (and Min's ceiling to the current Max) so the UI
+ * can never display an inverted range — the cross-field invariant the per-key
+ * setter can't enforce. Range 1..16; set ceiling to 1 to disable the feature.
+ */
+function ConsensusRangeRow({
+  locale,
+  labelKey,
+  descKey,
+  minValue,
+  maxValue,
+  onMin,
+  onMax,
+}: {
+  locale: Locale;
+  labelKey: TranslationKey;
+  descKey: TranslationKey;
+  minValue: number;
+  maxValue: number;
+  onMin: (v: number) => void;
+  onMax: (v: number) => void;
+}) {
+  return (
+    <SettingRow title={t(locale, labelKey)} description={t(locale, descKey)}>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-fg-faint">
+            {t(locale, 'settings.consensus.rangeStart')}
+          </span>
+          <StepperControl
+            value={minValue}
+            min={1}
+            max={maxValue}
+            onChange={onMin}
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-fg-faint">
+            {t(locale, 'settings.consensus.rangeCeiling')}
+          </span>
+          <StepperControl
+            value={maxValue}
+            min={Math.max(1, minValue)}
+            max={16}
+            onChange={onMax}
+          />
+        </div>
+      </div>
+    </SettingRow>
   );
 }
 

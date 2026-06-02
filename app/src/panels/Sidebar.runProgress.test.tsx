@@ -33,6 +33,7 @@ type MockStoreState = {
   locale: 'zh-CN' | 'en-US';
   mode: 'design' | 'running';
   sessions: MockSession[];
+  historyReady: boolean;
   workspaces: MockWorkspace[];
   sessionTree: Record<string, MockSession[]>;
   activeWorkspaceId: string | null;
@@ -45,6 +46,12 @@ type MockStoreState = {
   aiEditingSessions: SessionKey[];
   newWorkflow: () => void;
   selectSession: (sessionId: string, workspaceId?: string) => void;
+  deleteSession: (sessionId: string, workspaceId?: string) => void;
+  renameWorkflowSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    name: string,
+  ) => Promise<void>;
   setWorkflow: () => void;
   markSaved: () => void;
 };
@@ -52,9 +59,27 @@ type MockStoreState = {
 let mockState: MockStoreState;
 
 vi.mock('@/store/useStore', () => {
-  const useStore = vi.fn((selector: (state: MockStoreState) => unknown) =>
-    selector(mockState),
+  const useStore = Object.assign(
+    vi.fn((selector: (state: MockStoreState) => unknown) =>
+      selector(mockState),
+    ),
+    { getState: () => mockState },
   );
+
+  const sessionLiveStatus = (
+    sessionKey: SessionKey,
+    liveState: Pick<
+      MockStoreState,
+      'runningSessions' | 'aiEditingSessions'
+    >,
+  ) => {
+    const isMatch = (item: SessionKey) =>
+      item.workspaceId === sessionKey.workspaceId &&
+      item.sessionId === sessionKey.sessionId;
+    if (liveState.runningSessions.some(isMatch)) return 'running';
+    if (liveState.aiEditingSessions.some(isMatch)) return 'aiEditing';
+    return null;
+  };
 
   return {
     isActiveAiEditingSession: (
@@ -70,21 +95,22 @@ vi.mock('@/store/useStore', () => {
       ),
     isWorkflowReadOnly: (state: Pick<MockStoreState, 'mode'>) =>
       state.mode === 'running',
-    sessionLiveStatus: (
-      sessionKey: SessionKey,
+    sessionLiveStatus,
+    useStore,
+    workflowDeleteProtectionReason: (
+      session: Pick<MockSession, 'id' | 'isWorkflow'>,
+      workspaceId: string | null | undefined,
       liveState: Pick<
         MockStoreState,
         'runningSessions' | 'aiEditingSessions'
       >,
     ) => {
-      const isMatch = (item: SessionKey) =>
-        item.workspaceId === sessionKey.workspaceId &&
-        item.sessionId === sessionKey.sessionId;
-      if (liveState.runningSessions.some(isMatch)) return 'running';
-      if (liveState.aiEditingSessions.some(isMatch)) return 'aiEditing';
-      return null;
+      if (!session.isWorkflow) return null;
+      return sessionLiveStatus(
+        { workspaceId: workspaceId ?? null, sessionId: session.id },
+        liveState,
+      );
     },
-    useStore,
     workflowSessionKeyId: (sessionKey: SessionKey) =>
       `${sessionKey.workspaceId ?? ''}::${sessionKey.sessionId ?? ''}`,
   };
@@ -135,6 +161,7 @@ function resetSidebarStore(): void {
     locale: 'zh-CN',
     mode: 'design',
     sessions: [SESSION],
+    historyReady: true,
     workspaces: [WORKSPACE],
     sessionTree: { [WORKSPACE.id]: [SESSION] },
     activeWorkspaceId: WORKSPACE.id,
@@ -144,6 +171,8 @@ function resetSidebarStore(): void {
     aiEditingSessions: [],
     newWorkflow: vi.fn(),
     selectSession: vi.fn(),
+    deleteSession: vi.fn(),
+    renameWorkflowSession: vi.fn(async () => undefined),
     setWorkflow: vi.fn(),
     markSaved: vi.fn(),
   };
@@ -206,10 +235,272 @@ function newWorkflowButton(container: HTMLElement): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
+function historySearchInput(container: HTMLElement): HTMLInputElement {
+  const input = container.querySelector('input[aria-label="搜索会话"]');
+  expect(input).toBeInstanceOf(HTMLInputElement);
+  return input as HTMLInputElement;
+}
+
+function queryHistorySearchInput(container: HTMLElement): HTMLInputElement | null {
+  return container.querySelector('input[aria-label="搜索会话"]');
+}
+
+function sessionButton(
+  container: HTMLElement,
+  title: string,
+): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find((item) =>
+    item.textContent?.includes(title),
+  );
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button as HTMLButtonElement;
+}
+
+async function openSessionContextMenu(
+  button: HTMLButtonElement,
+): Promise<void> {
+  await act(async () => {
+    button.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 120,
+        clientY: 140,
+      }),
+    );
+  });
+}
+
+async function clickButton(button: HTMLButtonElement): Promise<void> {
+  await act(async () => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+function contextMenuDeleteButton(container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (item) => item.textContent?.includes('删除'),
+  );
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button as HTMLButtonElement;
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+async function changeInputValue(
+  input: HTMLInputElement,
+  value: string,
+): Promise<void> {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value',
+  )?.set;
+
+  await act(async () => {
+    setter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function pressInputKey(
+  input: HTMLInputElement,
+  key: string,
+): Promise<void> {
+  await act(async () => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  });
+}
+
 afterEach(() => {
   window.localStorage.clear();
   document.body.innerHTML = '';
   resetSidebarStore();
+});
+
+describe('Sidebar workflow rename', () => {
+  async function startRename(container: HTMLElement): Promise<HTMLInputElement> {
+    await openSessionContextMenu(sessionButton(container, SESSION.title));
+    const renameButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('重命名'),
+    );
+    expect(renameButton).toBeInstanceOf(HTMLButtonElement);
+
+    await clickButton(renameButton as HTMLButtonElement);
+
+    const input = container.querySelector('input[aria-label="重命名"]');
+    expect(input).toBeInstanceOf(HTMLInputElement);
+    return input as HTMLInputElement;
+  }
+
+  it('shows Rename only for workflow sessions', async () => {
+    resetSidebarStore();
+    const chatSession = {
+      ...SESSION,
+      id: 's_chat',
+      title: 'Chat run',
+      isWorkflow: false,
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [chatSession],
+    };
+    mockState.sessions = [chatSession];
+
+    const view = await renderSidebar();
+
+    try {
+      await openSessionContextMenu(sessionButton(view.container, 'Chat run'));
+
+      expect(view.container.textContent).toContain('删除');
+      expect(view.container.textContent).not.toContain('重命名');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('saves a trimmed workflow name from the context menu', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      const input = await startRename(view.container);
+      await changeInputValue(input, '  Renamed Workflow  ');
+
+      const saveButton = Array.from(view.container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === '保存',
+      );
+      expect(saveButton).toBeInstanceOf(HTMLButtonElement);
+
+      await clickButton(saveButton as HTMLButtonElement);
+      await flushAsyncWork();
+
+      expect(mockState.renameWorkflowSession).toHaveBeenCalledWith(
+        SESSION.id,
+        WORKSPACE.id,
+        'Renamed Workflow',
+      );
+      expect(
+        view.container.querySelector('input[aria-label="重命名"]'),
+      ).toBeNull();
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('cancels rename without saving the draft', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      const input = await startRename(view.container);
+      await changeInputValue(input, 'Draft Name');
+
+      const cancelButton = Array.from(view.container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === '取消',
+      );
+      expect(cancelButton).toBeInstanceOf(HTMLButtonElement);
+
+      await clickButton(cancelButton as HTMLButtonElement);
+
+      expect(mockState.renameWorkflowSession).not.toHaveBeenCalled();
+      expect(view.container.textContent).toContain(SESSION.title);
+      expect(
+        view.container.querySelector('input[aria-label="重命名"]'),
+      ).toBeNull();
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('clears inline rename state when the same session is deleted from the context menu', async () => {
+    resetSidebarStore();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const view = await renderSidebar();
+
+    try {
+      const input = await startRename(view.container);
+      await changeInputValue(input, 'Draft Name');
+
+      const renameRow = input.closest('div');
+      expect(renameRow).toBeInstanceOf(HTMLDivElement);
+      await act(async () => {
+        renameRow?.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 120,
+            clientY: 140,
+          }),
+        );
+      });
+
+      await clickButton(contextMenuDeleteButton(view.container));
+
+      expect(mockState.deleteSession).toHaveBeenCalledWith(
+        SESSION.id,
+        WORKSPACE.id,
+      );
+      expect(
+        view.container.querySelector('input[aria-label="重命名"]'),
+      ).toBeNull();
+      expect(view.container.textContent).toContain(SESSION.title);
+    } finally {
+      confirmSpy.mockRestore();
+      await view.cleanup();
+    }
+  });
+
+  it('rejects an empty workflow name', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      const input = await startRename(view.container);
+      await changeInputValue(input, '   ');
+      await pressInputKey(input, 'Enter');
+
+      expect(view.container.textContent).toContain('名称不能为空');
+      expect(mockState.renameWorkflowSession).not.toHaveBeenCalled();
+      expect(
+        view.container.querySelector('input[aria-label="重命名"]'),
+      ).toBe(input);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('rejects duplicate workflow names in the same workspace list', async () => {
+    resetSidebarStore();
+    const existingSession = {
+      ...SESSION,
+      id: 's_existing',
+      title: 'Existing Workflow',
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [SESSION, existingSession],
+    };
+    mockState.sessions = [SESSION, existingSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+
+    const view = await renderSidebar();
+
+    try {
+      const input = await startRename(view.container);
+      await changeInputValue(input, 'Existing Workflow');
+      await pressInputKey(input, 'Enter');
+
+      expect(view.container.textContent).toContain(
+        '同一历史列表中已存在同名 Workflow',
+      );
+      expect(mockState.renameWorkflowSession).not.toHaveBeenCalled();
+    } finally {
+      await view.cleanup();
+    }
+  });
 });
 
 describe('Sidebar running progress dot', () => {
@@ -392,6 +683,521 @@ describe('Sidebar running progress dot', () => {
       expect(indicator?.style.getPropertyValue('--owf-status-color')).toBe(
         'var(--status-ai-edit)',
       );
+    } finally {
+      await view.cleanup();
+    }
+  });
+});
+
+describe('Sidebar delete protection', () => {
+  it.each([
+    ['running', '运行中的蓝图不能删除'],
+    ['aiEditing', 'AI 正在优化蓝图，暂不能删除'],
+  ] as const)(
+    'disables deleting protected %s workflow sessions',
+    async (reason, label) => {
+      resetSidebarStore();
+      if (reason === 'running') {
+        mockState.runningSessions = [SESSION_KEY];
+      } else {
+        mockState.aiEditingSessions = [SESSION_KEY];
+      }
+
+      const view = await renderSidebar();
+
+      try {
+        await openSessionContextMenu(
+          sessionButton(view.container, SESSION.title),
+        );
+
+        const deleteButton = contextMenuDeleteButton(view.container);
+        expect(deleteButton.disabled).toBe(true);
+        expect(deleteButton.getAttribute('title')).toBe(label);
+      } finally {
+        await view.cleanup();
+      }
+    },
+  );
+
+  it.each([
+    ['running', '运行中的蓝图不能删除'],
+    ['aiEditing', 'AI 正在优化蓝图，暂不能删除'],
+  ] as const)(
+    'rechecks %s protection when delete is clicked from a stale menu',
+    async (reason, label) => {
+      resetSidebarStore();
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const alertSpy = vi
+        .spyOn(window, 'alert')
+        .mockImplementation(() => undefined);
+      const view = await renderSidebar();
+
+      try {
+        await openSessionContextMenu(
+          sessionButton(view.container, SESSION.title),
+        );
+
+        const deleteButton = contextMenuDeleteButton(view.container);
+        expect(deleteButton.disabled).toBe(false);
+
+        if (reason === 'running') {
+          mockState.runningSessions = [SESSION_KEY];
+        } else {
+          mockState.aiEditingSessions = [SESSION_KEY];
+        }
+        await clickButton(deleteButton);
+
+        expect(alertSpy).toHaveBeenCalledWith(label);
+        expect(confirmSpy).not.toHaveBeenCalled();
+        expect(mockState.deleteSession).not.toHaveBeenCalled();
+      } finally {
+        confirmSpy.mockRestore();
+        alertSpy.mockRestore();
+        await view.cleanup();
+      }
+    },
+  );
+});
+
+describe('Sidebar session search', () => {
+  it('renders an enabled search field after history is ready', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      const input = historySearchInput(view.container);
+      expect(input.disabled).toBe(false);
+      expect(input.placeholder).toBe('搜索会话');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows an empty history state without rendering the search field', async () => {
+    resetSidebarStore();
+    mockState.sessions = [];
+    mockState.workspaces = [];
+    mockState.sessionTree = {};
+    mockState.activeWorkspaceId = null;
+    mockState.activeSessionId = null;
+
+    const view = await renderSidebar();
+
+    try {
+      expect(
+        view.container.querySelector('input[aria-label="搜索会话"]'),
+      ).toBeNull();
+      expect(view.container.textContent).toContain('暂无会话');
+      expect(view.container.textContent).toContain('新建 Workflow');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows a loading state before history is ready', async () => {
+    resetSidebarStore();
+    mockState.historyReady = false;
+    mockState.workspaces = [];
+    mockState.sessionTree = {};
+    mockState.sessions = [];
+
+    const view = await renderSidebar();
+
+    try {
+      const input = historySearchInput(view.container);
+      expect(input.disabled).toBe(true);
+      expect(input.placeholder).toBe('加载历史记录…');
+      expect(view.container.textContent).toContain('加载历史记录…');
+      expect(view.container.textContent).not.toContain('暂无会话');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows an empty history state without search when history is ready and empty', async () => {
+    resetSidebarStore();
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 0 }];
+    mockState.sessionTree = { [WORKSPACE.id]: [] };
+    mockState.sessions = [];
+    mockState.activeSessionId = null;
+
+    const view = await renderSidebar();
+
+    try {
+      expect(queryHistorySearchInput(view.container)).toBeNull();
+      expect(view.container.textContent).toContain('暂无会话');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('filters sessions by title with trimmed case-insensitive input', async () => {
+    resetSidebarStore();
+    const deploySession = {
+      ...SESSION,
+      id: 's_deploy',
+      title: 'Deploy Pipeline',
+      preview: 'release notes',
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [SESSION, deploySession],
+    };
+    mockState.sessions = [SESSION, deploySession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+
+    const view = await renderSidebar();
+
+    try {
+      await changeInputValue(historySearchInput(view.container), '  deploy  ');
+
+      expect(view.container.textContent).toContain('Deploy Pipeline');
+      expect(view.container.textContent).not.toContain('Workflow run');
+
+      const clearButton = view.container.querySelector(
+        'button[aria-label="清除搜索"]',
+      );
+      expect(clearButton).toBeInstanceOf(HTMLButtonElement);
+      await clickButton(clearButton as HTMLButtonElement);
+
+      expect(view.container.textContent).toContain('Deploy Pipeline');
+      expect(view.container.textContent).toContain('Workflow run');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('filters sessions by preview text', async () => {
+    resetSidebarStore();
+    const previewSession = {
+      ...SESSION,
+      id: 's_preview',
+      title: 'Research chat',
+      preview: 'contains needle text',
+      isWorkflow: false,
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [SESSION, previewSession],
+    };
+    mockState.sessions = [SESSION, previewSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+
+    const view = await renderSidebar();
+
+    try {
+      await changeInputValue(historySearchInput(view.container), 'needle');
+
+      expect(view.container.textContent).toContain('Research chat');
+      expect(view.container.textContent).not.toContain('Workflow run');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows a no-results state and clears back to the full list', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      await changeInputValue(historySearchInput(view.container), 'missing');
+
+      expect(view.container.textContent).toContain('没有找到匹配的会话');
+      expect(view.container.textContent).not.toContain('Workflow run');
+
+      const clearButton = Array.from(
+        view.container.querySelectorAll('button'),
+      ).find((button) => button.textContent?.includes('清除搜索'));
+      expect(clearButton).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        clearButton?.dispatchEvent(
+          new MouseEvent('click', { bubbles: true }),
+        );
+      });
+
+      expect(view.container.textContent).toContain('Workflow run');
+      expect(view.container.textContent).not.toContain('没有找到匹配的会话');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('updates filtered results after a matching session is deleted', async () => {
+    resetSidebarStore();
+    const deploySession = {
+      ...SESSION,
+      id: 's_deploy',
+      title: 'Deploy Pipeline',
+      preview: 'release notes',
+    };
+    const reviewSession = {
+      ...SESSION,
+      id: 's_review',
+      title: 'Review Notes',
+      preview: 'nonmatching history item',
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [deploySession, reviewSession],
+    };
+    mockState.sessions = [deploySession, reviewSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+    mockState.activeSessionId = deploySession.id;
+    mockState.deleteSession = vi.fn((sessionId) => {
+      const nextSessions = mockState.sessions.filter(
+        (session) => session.id !== sessionId,
+      );
+      mockState.sessions = nextSessions;
+      mockState.sessionTree = { [WORKSPACE.id]: nextSessions };
+      mockState.workspaces = [
+        { ...WORKSPACE, sessionCount: nextSessions.length },
+      ];
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    const view = await renderSidebar();
+
+    try {
+      await changeInputValue(historySearchInput(view.container), 'deploy');
+      await openSessionContextMenu(sessionButton(view.container, 'Deploy Pipeline'));
+
+      expect(view.container.textContent).toContain('重命名');
+      const deleteButton = Array.from(
+        view.container.querySelectorAll('button'),
+      ).find((button) => button.textContent?.includes('删除'));
+      expect(deleteButton).toBeInstanceOf(HTMLButtonElement);
+
+      await clickButton(deleteButton as HTMLButtonElement);
+      await view.rerender();
+
+      expect(mockState.deleteSession).toHaveBeenCalledWith(
+        deploySession.id,
+        WORKSPACE.id,
+      );
+      expect(view.container.textContent).toContain('没有找到匹配的会话');
+      expect(view.container.textContent).not.toContain('Deploy Pipeline');
+      expect(view.container.textContent).not.toContain('Review Notes');
+    } finally {
+      confirmSpy.mockRestore();
+      await view.cleanup();
+    }
+  });
+
+  it('updates filtered results after a matching session is renamed outside the query', async () => {
+    resetSidebarStore();
+    const draftSession = {
+      ...SESSION,
+      id: 's_draft',
+      title: 'Draft Workflow',
+      preview: 'planning notes',
+    };
+    const archiveSession = {
+      ...SESSION,
+      id: 's_archive',
+      title: 'Archive Workflow',
+      preview: 'reference notes',
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [draftSession, archiveSession],
+    };
+    mockState.sessions = [draftSession, archiveSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+    mockState.activeSessionId = draftSession.id;
+    mockState.renameWorkflowSession = vi.fn(async (sessionId, workspaceId, name) => {
+      expect(workspaceId).toBe(WORKSPACE.id);
+      const nextSessions = mockState.sessions.map((session) =>
+        session.id === sessionId ? { ...session, title: name } : session,
+      );
+      mockState.sessions = nextSessions;
+      mockState.sessionTree = { [WORKSPACE.id]: nextSessions };
+    });
+
+    const view = await renderSidebar();
+
+    try {
+      await changeInputValue(historySearchInput(view.container), 'draft');
+      await openSessionContextMenu(sessionButton(view.container, 'Draft Workflow'));
+
+      const renameButton = Array.from(
+        view.container.querySelectorAll('button'),
+      ).find((button) => button.textContent?.includes('重命名'));
+      expect(renameButton).toBeInstanceOf(HTMLButtonElement);
+      await clickButton(renameButton as HTMLButtonElement);
+
+      const input = view.container.querySelector('input[aria-label="重命名"]');
+      expect(input).toBeInstanceOf(HTMLInputElement);
+      await changeInputValue(input as HTMLInputElement, 'Published Workflow');
+
+      const saveButton = Array.from(
+        view.container.querySelectorAll('button'),
+      ).find((button) => button.textContent?.trim() === '保存');
+      expect(saveButton).toBeInstanceOf(HTMLButtonElement);
+      await clickButton(saveButton as HTMLButtonElement);
+      await flushAsyncWork();
+      await view.rerender();
+
+      expect(mockState.renameWorkflowSession).toHaveBeenCalledWith(
+        draftSession.id,
+        WORKSPACE.id,
+        'Published Workflow',
+      );
+      expect(view.container.textContent).toContain('没有找到匹配的会话');
+      expect(view.container.textContent).not.toContain('Draft Workflow');
+      expect(view.container.textContent).not.toContain('Archive Workflow');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('clears on Escape, then blurs on Escape when already empty', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      const input = historySearchInput(view.container);
+      input.focus();
+      expect(document.activeElement).toBe(input);
+
+      await changeInputValue(input, 'workflow');
+      await pressInputKey(input, 'Escape');
+      expect(input.value).toBe('');
+
+      await pressInputKey(input, 'Escape');
+      expect(document.activeElement).not.toBe(input);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('opens the first matching workspace session on Enter', async () => {
+    resetSidebarStore();
+    const deploySession = {
+      ...SESSION,
+      id: 's_deploy',
+      title: 'Deploy Pipeline',
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [SESSION, deploySession],
+    };
+    mockState.sessions = [SESSION, deploySession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+
+    const view = await renderSidebar();
+
+    try {
+      const input = historySearchInput(view.container);
+      await changeInputValue(input, 'deploy');
+      await pressInputKey(input, 'Enter');
+
+      expect(mockState.selectSession).toHaveBeenCalledWith(
+        's_deploy',
+        WORKSPACE.id,
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('filters flat fallback sessions and selects the first match without a workspace', async () => {
+    resetSidebarStore();
+    const flatMatch = {
+      ...SESSION,
+      id: 's_flat_match',
+      title: 'Flat Session',
+      preview: 'fallback needle',
+      isWorkflow: false,
+    };
+    const flatOther = {
+      ...SESSION,
+      id: 's_flat_other',
+      title: 'Other Flat',
+      preview: 'different text',
+      isWorkflow: false,
+    };
+    mockState.workspaces = [];
+    mockState.sessionTree = {};
+    mockState.sessions = [flatMatch, flatOther];
+    mockState.activeWorkspaceId = null;
+    mockState.activeSessionId = flatMatch.id;
+
+    const view = await renderSidebar();
+
+    try {
+      const input = historySearchInput(view.container);
+      await changeInputValue(input, 'fallback needle');
+
+      expect(view.container.textContent).toContain('Flat Session');
+      expect(view.container.textContent).not.toContain('Other Flat');
+
+      await pressInputKey(input, 'Enter');
+
+      expect(mockState.selectSession).toHaveBeenCalledWith(
+        's_flat_match',
+        undefined,
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows all matching workspace sessions while searching and restores pagination when cleared', async () => {
+    resetSidebarStore();
+    const manySessions = Array.from({ length: 25 }, (_, index) => ({
+      ...SESSION,
+      id: `s_bulk_${index}`,
+      title: `Bulk Session ${index + 1}`,
+    }));
+    mockState.sessionTree = { [WORKSPACE.id]: manySessions };
+    mockState.sessions = manySessions;
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: manySessions.length }];
+
+    const view = await renderSidebar();
+    const visibleBulkSessionButtons = () =>
+      Array.from(view.container.querySelectorAll('button')).filter((button) =>
+        button.textContent?.includes('Bulk Session'),
+      );
+
+    try {
+      expect(view.container.textContent).toContain('Bulk Session 10');
+      expect(visibleBulkSessionButtons()).toHaveLength(10);
+      expect(view.container.textContent).not.toContain('Bulk Session 25');
+      expect(view.container.textContent).toContain('加载更多');
+
+      await changeInputValue(historySearchInput(view.container), 'bulk');
+
+      expect(view.container.textContent).toContain('Bulk Session 25');
+      expect(view.container.textContent).not.toContain('加载更多');
+
+      const clearButton = view.container.querySelector(
+        'button[aria-label="清除搜索"]',
+      );
+      expect(clearButton).toBeInstanceOf(HTMLButtonElement);
+      await clickButton(clearButton as HTMLButtonElement);
+
+      expect(visibleBulkSessionButtons()).toHaveLength(10);
+      expect(view.container.textContent).not.toContain('Bulk Session 25');
+      expect(view.container.textContent).toContain('加载更多');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps live running status visible while filtered', async () => {
+    resetSidebarStore();
+    mockState.runningSessions = [SESSION_KEY];
+    mockState.runningSessionProgress = {
+      [WORKSPACE.id + '::' + SESSION.id]: {
+        completed: 1,
+        incomplete: 1,
+        percent: 50,
+      },
+    };
+
+    const view = await renderSidebar();
+
+    try {
+      await changeInputValue(historySearchInput(view.container), 'workflow');
+
+      expect(runningDot(view.container, 50)).not.toBeNull();
+      expect(view.container.textContent).toContain('Workflow run');
     } finally {
       await view.cleanup();
     }

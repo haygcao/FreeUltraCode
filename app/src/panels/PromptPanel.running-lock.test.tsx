@@ -92,6 +92,14 @@ function buttonByAriaLabel(
   return button as HTMLButtonElement;
 }
 
+function sendButton(container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find((item) =>
+    ['↑', '…'].includes(item.textContent?.trim() ?? ''),
+  );
+  if (!button) throw new Error('Missing AI send button');
+  return button;
+}
+
 function typeIntoInput(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
@@ -166,6 +174,24 @@ describe('PromptPanel running lock', () => {
       expect(useStore.getState().composerFocusVersion).toBe(8);
       expect(input.value).toBe('existing draft\ngrill-me');
       expect(document.activeElement).toBe(input);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps the send action enabled while another workflow is AI editing', async () => {
+    resetStoreForPromptLock('design', 'optimize this workflow');
+    useStore.setState({
+      aiStreaming: true,
+      aiEditingSessions: [{ workspaceId: null, sessionId: 's_other' }],
+    });
+    const view = await renderPanels();
+
+    try {
+      const button = sendButton(view.container);
+
+      expect(button.disabled).toBe(false);
+      expect(button.textContent?.trim()).toBe('↑');
     } finally {
       await view.cleanup();
     }

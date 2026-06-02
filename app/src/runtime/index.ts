@@ -35,9 +35,24 @@ export {
   runConsensus,
   resolveConsensus,
 } from './node-dispatch';
+export { runComposite, compositePortKey } from './composite';
+export { runSingleNode, type SingleNodeOutcome } from './run-node';
+export {
+  resolveSchemaShape,
+  describeSchema,
+  extractJson,
+  validateAgainstSchema,
+  schemaRetryFeedback,
+  type ResolvedSchema,
+  type SchemaValidation,
+} from './schema';
 export {
   executeWorkflowDag,
   getRunnableNodes,
   buildDependencyGraph,
+  classifyVotingNode,
+  isExecTerminalNode,
+  execNonEndSuccessorCount,
+  type VotingClassification,
   type ExecuteWorkflowOptions,
 } from './dag';

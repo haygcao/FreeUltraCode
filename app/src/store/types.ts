@@ -64,6 +64,12 @@ export interface Session {
    * SessionRecord contract in history-store-spec.md §4.3).
    */
   isWorkflow: boolean;
+  /**
+   * True when this workflow session is a "simple workflow" (meta.simple) — a
+   * single nameless node used for easy one-shot questions. Drives the "SW"
+   * history badge (vs "WF"). Always false/undefined for chat sessions.
+   */
+  simple?: boolean;
   /** Sidebar preview from the last persisted message. */
   preview?: string;
   /** Persisted message count for lightweight history rendering. */

@@ -10,17 +10,146 @@
  * run's observable order, retries, and terminal state match exactly.
  */
 import { EXEC, type IRGraph, type IRNode, type IRRunStatus } from '../core/ir';
+import {
+  assessConsensusFit,
+  isTerminalIntentNode,
+  nodeComplexitySignal,
+} from '../core/consensusHeuristic';
 import { isRunnable, topoOrderExec } from '../core/topo';
-import { delay } from './concurrency';
-import { failureTitle, isRetryable, parseRunFailure, runFailureMeta } from './failure';
-import { formatClock, formatDuration } from './format';
+import { runFailureMeta } from './failure';
 import { newSessionId } from './gateway';
-import { dispatchNode } from './node-dispatch';
+import { runSingleNode } from './run-node';
 import type { NodeRunResult, RunCallbacks, RunContext, RunResult } from './types';
 
-/** Runnable nodes in exec-topological order (drops structural `phase` markers). */
+/**
+ * Build `parentOf: Map<childId, parentId>` for every node in a single pass. Used
+ * by {@link inCompositeBody} to walk parent chains without an O(n²) `nodes.find`.
+ */
+function buildParentOf(workflow: IRGraph): Map<string, string | undefined> {
+  const parentOf = new Map<string, string | undefined>();
+  for (const n of workflow.nodes) parentOf.set(n.id, n.parent ?? undefined);
+  return parentOf;
+}
+
+/**
+ * True when `nodeId`'s parent chain passes through ANY `composite` node — i.e.
+ * the node lives inside a composite body and must NOT be scheduled by the outer
+ * pump (it is run by {@link runComposite} when the composite node executes).
+ * Branch/loop bodies are unaffected: their children stay in the flat runnable
+ * set exactly as before (their parent chain never hits a composite).
+ */
+function inCompositeBody(
+  nodeId: string,
+  parentOf: Map<string, string | undefined>,
+  compositeIds: Set<string>,
+): boolean {
+  let cur = parentOf.get(nodeId);
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    if (compositeIds.has(cur)) return true;
+    seen.add(cur);
+    cur = parentOf.get(cur);
+  }
+  return false;
+}
+
+/**
+ * Runnable nodes in exec-topological order (drops structural `phase` markers and
+ * composite-body nodes). Composite-body nodes (whose parent chain reaches a
+ * `composite`) are excluded from the outer schedule: the composite node itself is
+ * retained, and {@link runComposite} drives its body when it executes. This
+ * prevents double-execution (outer pump + composite body). When the graph has no
+ * composites this is byte-for-byte the legacy `topoOrderExec(...).filter(...)`.
+ */
 export function getRunnableNodes(workflow: IRGraph): IRNode[] {
-  return topoOrderExec(workflow).filter(isRunnable);
+  const flat = topoOrderExec(workflow).filter(isRunnable);
+  const compositeIds = new Set(
+    workflow.nodes.filter((n) => n.type === 'composite').map((n) => n.id),
+  );
+  if (compositeIds.size === 0) return flat;
+  const parentOf = buildParentOf(workflow);
+  return flat.filter((n) => !inCompositeBody(n.id, parentOf, compositeIds));
+}
+
+/**
+ * Count a node's EXEC successors that are real work: runnable (not `phase`),
+ * not a self-edge, and not the `start`/`end` sentinels. `0` ⇒ the node is the
+ * tail of the exec spine (its only successor, if any, is `end`). Reuses
+ * {@link getRunnableNodes} so the view matches exactly what a run executes —
+ * the run engine uses this to detect terminal nodes for adversarial verify+vote.
+ */
+export function execNonEndSuccessorCount(
+  workflow: IRGraph,
+  nodeId: string,
+): number {
+  const byId = new Map(getRunnableNodes(workflow).map((n) => [n.id, n]));
+  if (!byId.has(nodeId)) return 0;
+  let count = 0;
+  for (const e of workflow.edges) {
+    if (e.kind !== EXEC) continue;
+    if (e.from.node !== nodeId || e.to.node === nodeId) continue;
+    const to = byId.get(e.to.node);
+    if (!to || to.type === 'start' || to.type === 'end') continue;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Whether a node sits at the tail of the exec spine for run-time voting: no real
+ * downstream work, OR a self-test/summary/validation step with <= 1 successor.
+ * Shared by the run engine ({@link classifyVotingNode}) so the UI marker and the
+ * dispatcher never disagree on what counts as "terminal".
+ */
+export function isExecTerminalNode(node: IRNode, workflow: IRGraph): boolean {
+  const succ = execNonEndSuccessorCount(workflow, node.id);
+  if (succ === 0) return true;
+  return succ <= 1 && isTerminalIntentNode(node);
+}
+
+/** Why a node will trigger run-time divergence voting (for the UI marker tooltip). */
+export interface VotingClassification {
+  /** Will this node fan out + adversarially vote when run-time voting is enabled? */
+  willVote: boolean;
+  /** Which sample-knob category applies (terminal beats complex). */
+  kind: 'terminal' | 'complex' | 'none';
+  /** Deterministic 0..1 complexity signal (drives the starting-count scaling). */
+  complexitySignal: number;
+  /** Short human-readable reasons (e.g. 执行链尾 / 提示较长 / 含 3 个子目标). */
+  reasons: string[];
+}
+
+/**
+ * Pure, zero-model classifier shared by the run engine and the GUI: would this
+ * node trigger run-time divergence voting (the 2→4→8→16 escalation)? `terminal`
+ * (tail of the spine, or self-test/summary near the tail) takes precedence over
+ * `complex` (assessConsensusFit). `willVote` is purely structural — it reflects
+ * "would vote IF run-time voting is enabled", independent of the user's settings,
+ * so the canvas/inspector marker stays stable regardless of the current knobs.
+ */
+export function classifyVotingNode(
+  node: IRNode,
+  workflow: IRGraph,
+): VotingClassification {
+  const signal = nodeComplexitySignal(node, workflow);
+  if (node.type === 'agent' || node.type === 'workflow') {
+    if (isExecTerminalNode(node, workflow)) {
+      const reasons: string[] = [];
+      if (execNonEndSuccessorCount(workflow, node.id) === 0) reasons.push('执行链尾');
+      if (isTerminalIntentNode(node)) reasons.push('自检/汇总/校验类');
+      return { willVote: true, kind: 'terminal', complexitySignal: signal, reasons };
+    }
+    const fit = assessConsensusFit(node, workflow);
+    if (fit.fit) {
+      return {
+        willVote: true,
+        kind: 'complex',
+        complexitySignal: signal,
+        reasons: fit.reason ? fit.reason.split('、') : [],
+      };
+    }
+  }
+  return { willVote: false, kind: 'none', complexitySignal: signal, reasons: [] };
 }
 
 /**
@@ -113,6 +242,9 @@ export function detectAgentChains(
     const from = byId.get(e.from.node);
     const to = byId.get(e.to.node);
     if (!isChainable(from) || !isChainable(to)) continue;
+    // Same-scope only — a warm-session chain must not cross a composite (or any
+    // container) boundary, where the body-entry edge joins different scopes.
+    if ((from.parent ?? undefined) !== (to.parent ?? undefined)) continue;
     // Single-out from `from`, single-in to `to` — excludes fan-in / fan-out.
     if ((outDeg.get(from.id) ?? 0) !== 1 || (inDeg.get(to.id) ?? 0) !== 1) continue;
     const sf = selectionOf(from);
@@ -205,96 +337,31 @@ export async function executeWorkflowDag(
   if (resumeFromNodeId) done.delete(resumeFromNodeId);
 
   const nodeResults: Record<string, NodeRunResult> = {};
+  // Expose the live accumulator so nested composite-body schedulers record their
+  // body nodes' terminal results into the same aggregate RunResult.
+  context.nodeResults = nodeResults;
   let errored = false;
   let failedNodeId: string | null = null;
   let runError: Record<string, unknown> | null = null;
 
   const processNode = async (node: IRNode): Promise<boolean> => {
-    if (node.type === 'start' || node.type === 'end') {
-      callbacks.onNodeSuccess(node, null);
-      nodeResults[node.id] = { status: 'success' };
-      return true;
-    }
-
-    const nodeStartedAt = Date.now();
-    callbacks.onNodeStart(node);
-    callbacks.onLog(
-      `▸ ${node.label ?? node.type} · 开始 ${formatClock(nodeStartedAt)}`,
-      'system',
+    const outcome = await runSingleNode(
+      context,
+      callbacks,
+      node,
+      workflow,
+      results,
+      nodeResults,
     );
-
-    const maxRetries = context.maxRetries;
-    let attempt = 0;
-
-    for (;;) {
-      try {
-        const out = await dispatchNode(context, callbacks, node, workflow, results);
-        if (!stillRunning()) return false;
-        if (out !== null) {
-          results.set(node.id, out);
-        }
-        callbacks.onNodeSuccess(node, out);
-        nodeResults[node.id] = {
-          status: 'success',
-          output: out ?? undefined,
-          durationMs: Date.now() - nodeStartedAt,
-          retryCount: attempt,
-        };
-        const nodeFinishedAt = Date.now();
-        callbacks.onLog(
-          `✓ ${node.label ?? node.type} · 完成 ${formatClock(nodeFinishedAt)} · 耗时 ${formatDuration(
-            nodeFinishedAt - nodeStartedAt,
-          )}${attempt > 0 ? ` · 重试 ${attempt} 次后成功` : ''}`,
-          'assistant',
-        );
-        return true;
-      } catch (err) {
-        const failure = parseRunFailure(err);
-        if (!stillRunning()) return false;
-
-        if (attempt < maxRetries && isRetryable(failure)) {
-          attempt += 1;
-          const backoffMs = Math.min(15000, 1500 * attempt);
-          callbacks.onLog(
-            `⟳ ${node.label ?? node.type} · ${failureTitle(
-              failure,
-            )}，正在自动重试（第 ${attempt}/${maxRetries} 次，${Math.round(
-              backoffMs / 1000,
-            )}s 后重试）：${failure.message}`,
-            'assistant',
-          );
-          callbacks.onNodeRetry?.(node, failure, attempt, maxRetries, backoffMs);
-          await delay(backoffMs);
-          if (!stillRunning()) return false;
-          continue;
-        }
-
-        const nodeFinishedAt = Date.now();
-        const retriedNote = attempt > 0 ? `（已自动重试 ${attempt} 次仍失败）` : '';
-        callbacks.onLog(
-          `✗ ${node.label ?? node.type} · 失败 ${formatClock(nodeFinishedAt)} · 耗时 ${formatDuration(
-            nodeFinishedAt - nodeStartedAt,
-          )}${retriedNote}: ${failure.message}`,
-          'assistant',
-        );
-        const state: IRRunStatus =
-          failure.code === 'interrupted' ? 'interrupted' : 'error';
-        nodeResults[node.id] = {
-          status: state,
-          durationMs: nodeFinishedAt - nodeStartedAt,
-          failure,
-          retryCount: attempt,
-        };
-        // Only the first failure becomes the run's recorded error / resume point.
-        if (!errored) {
-          errored = true;
-          failedNodeId = node.id;
-          runError = runFailureMeta(node, adapter, failure);
-        }
-        callbacks.onNodeFailure(node, failure, state);
-        return false;
-      }
+    if (outcome.kind === 'ok') return true;
+    if (outcome.kind === 'cancelled') return false;
+    // Terminal failure — only the first becomes the run's error / resume point.
+    if (!errored) {
+      errored = true;
+      failedNodeId = node.id;
+      runError = runFailureMeta(node, adapter, outcome.failure);
     }
+    return false;
   };
 
   const concurrency = context.gateway.effectiveConcurrency(

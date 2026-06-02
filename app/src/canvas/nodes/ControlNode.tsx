@@ -5,6 +5,8 @@ import { t } from '@/lib/i18n';
 import { readStartUserInputs } from '@/core/startInputs';
 import { ExecIn, ExecOut } from './handles';
 import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
+import { CardHeader } from './cardChrome';
+import { ACCENT_CONTROL, ACCENT_END, cardClass, cardWrapperStyle } from './cardStyle';
 
 /**
  * Control node — the `start` / `end` flow terminals.
@@ -18,38 +20,38 @@ import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
 function ControlNodeImpl({ data, selected }: NodeProps) {
   const d = data as FlowNodeData;
   const isStart = d.irType === 'start';
-  const accent = isStart ? 'var(--accent-3)' : 'var(--accent-4)';
+  const { accent, ambient } = isStart ? ACCENT_CONTROL : ACCENT_END;
   const glyph = isStart ? '⏵' : '⏹';
   const startInputs = isStart ? readStartUserInputs(d.params) : [];
   const hasStartInputs = startInputs.length > 0;
+  // Simple-workflow nodes (meta.simple) drop the "Start" name entirely — the
+  // node is just a nameless container for the user's inputs.
+  const nameless = isStart && d.simple === true;
+  const startName = nameless ? '' : (d.label ?? t(d.locale, 'nodeType.start'));
   // Show all inputs — node size adapts via CSS (max-width + break-words)
 
   const run = runStateVisual(d.runState);
-  const borderColor =
-    run?.borderColor ?? (selected ? accent : 'var(--border)');
-  const boxShadow = run?.boxShadow ?? (selected ? `0 0 0 1px ${accent}` : undefined);
+
+  // A simple-workflow node with no inputs yet renders nothing — the canvas
+  // stays empty until the user sends something (the node still exists in the
+  // graph so inputs can accumulate, it's just invisible while empty).
+  if (nameless && !hasStartInputs) return null;
 
   if (hasStartInputs) {
     return (
       <div
-        className="relative inline-flex w-fit min-w-[220px] max-w-[420px] flex-col rounded-md border bg-panel font-sans shadow-md"
-        style={{ borderColor, boxShadow }}
+        className={`${cardClass(!!selected)} inline-flex w-fit min-w-[220px] max-w-[420px] flex-col`}
+        style={cardWrapperStyle({ accent, ambient, selected: !!selected, run })}
         title={startInputs.join('\n\n')}
       >
-        <div
-          className="flex items-center gap-2 rounded-t-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide"
-          style={{ background: 'var(--panel-2)', color: accent }}
-        >
-          <span aria-hidden>{glyph}</span>
-          <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">
-            {d.label ?? t(d.locale, 'nodeType.start')}
-          </span>
-          <span className="rounded bg-border-soft px-1.5 py-0.5 font-mono text-[10px] text-fg-faint">
-            {startInputs.length}
-          </span>
-        </div>
+        <CardHeader
+          accent={accent}
+          glyph={glyph}
+          label={startName}
+          meta={startInputs.length}
+        />
 
-        <div className="flex min-w-0 flex-col gap-1 px-3 py-2">
+        <div className="flex min-w-0 flex-col gap-1 px-3.5 pb-3 pt-2">
           {startInputs.map((input, index) => (
             <div
               key={`${index}-${input.slice(0, 24)}`}
@@ -76,8 +78,8 @@ function ControlNodeImpl({ data, selected }: NodeProps) {
 
   return (
     <div
-      className="relative flex min-w-[110px] items-center gap-2 rounded-full border bg-panel px-4 py-2 font-sans shadow-md"
-      style={{ borderColor, boxShadow }}
+      className={`${cardClass(!!selected)} flex min-w-[110px] items-center gap-2 rounded-full px-4 py-2`}
+      style={cardWrapperStyle({ accent, ambient, selected: !!selected, run, pill: true })}
     >
       <span
         className="text-sm font-semibold"
@@ -86,9 +88,11 @@ function ControlNodeImpl({ data, selected }: NodeProps) {
       >
         {glyph}
       </span>
-      <span className="text-sm font-medium" style={{ color: accent }}>
-        {d.label ?? (isStart ? t(d.locale, 'nodeType.start') : t(d.locale, 'nodeType.end'))}
-      </span>
+      {!nameless && (
+        <span className="text-sm font-medium" style={{ color: accent }}>
+          {d.label ?? (isStart ? t(d.locale, 'nodeType.start') : t(d.locale, 'nodeType.end'))}
+        </span>
+      )}
 
       {/* Pins: start exposes exec_out only; end exposes exec_in only. */}
       {isStart ? <ExecOut id="exec_out" /> : <ExecIn id="exec_in" />}

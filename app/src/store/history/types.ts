@@ -333,6 +333,8 @@ export type SessionSummary = Pick<
   SessionRecord,
   'id' | 'workspaceId' | 'title' | 'isWorkflow' | 'createdAt' | 'updatedAt'
 > & {
+  /** True when the workflow snapshot is a "simple workflow" (meta.simple). */
+  simple?: boolean;
   /** First 80 chars of the last message - sidebar two-line preview. */
   preview?: string;
   messageCount: number;

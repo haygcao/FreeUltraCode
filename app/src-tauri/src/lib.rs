@@ -545,6 +545,10 @@ const DEFAULT_AI_CLI_TIMEOUT_SECS: u64 = 1800;
 /// Default "no observable progress" timeout for a single CLI invocation.
 const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 300;
 const CLI_ERROR_CONTEXT_LIMIT: usize = 1200;
+/// Idle gap (no stdout activity) after which a "still running" heartbeat line is
+/// emitted to the run log, so a long node never looks completely frozen even
+/// during a long tool execution or a slow first token.
+const AI_CLI_HEARTBEAT_SECS: u64 = 12;
 
 /// Read the CLI timeout override from the environment, falling back to a
 /// longer default so legitimate long-running workflows are less likely to be
@@ -569,6 +573,21 @@ fn ai_cli_timeout_secs(override_secs: Option<u64>) -> u64 {
 /// workflows whose nodes actually call an MCP tool.
 fn mcp_enabled() -> bool {
     std::env::var("OPENWORKFLOW_ENABLE_MCP")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes"
+        })
+        .unwrap_or(false)
+}
+
+/// Whether to request token-level partial streaming from the claude CLI via
+/// `--include-partial-messages`. On by default so assistant text + extended
+/// thinking stream as they are generated (matching the interactive CLI's live
+/// feel); the plain `-p` stream otherwise emits only one event per *completed*
+/// message, leaving the run log blank while a single long answer is composed.
+/// Set OPENWORKFLOW_DISABLE_PARTIAL=1 if a CLI build predates the flag.
+fn partial_enabled() -> bool {
+    !std::env::var("OPENWORKFLOW_DISABLE_PARTIAL")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             v == "1" || v == "true" || v == "yes"
@@ -693,6 +712,32 @@ fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     }
 }
 
+/// Summarize a `tool_result` block (the `user`-role event that carries a tool's
+/// output) into one short, single-line breadcrumb, e.g. `app/src/core/ir.ts …`.
+/// `content` may be a bare string or an array of `{type:"text",text}` blocks.
+/// Returns an empty string when there is nothing useful to show.
+fn summarize_tool_result(block: &serde_json::Value) -> String {
+    let raw = match block.get("content") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
+    };
+    let one_line = raw.replace(['\n', '\r'], " ");
+    let truncated: String = one_line.trim().chars().take(160).collect();
+    if truncated.is_empty() {
+        return String::new();
+    }
+    if block.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false) {
+        format!("⚠ {truncated}")
+    } else {
+        truncated
+    }
+}
+
 /// Codex CLI JSONL uses `item.completed` events rather than Claude's
 /// `assistant` / `result` events. Emit readable agent text and a compact tool
 /// breadcrumb when a tool-like item appears.
@@ -801,10 +846,13 @@ fn cancel_ai_cli(run_id: String) -> Result<(), String> {
 /// Run a prompt through the locally-installed agent CLI (e.g. `claude`) using the
 /// machine's own environment/credentials — no API key is passed from the app.
 ///
-/// Uses `claude -p "<prompt>" --output-format stream-json --verbose` so that:
-///   - per-step events (assistant text, tool uses) stream to the frontend via the
-///     `ai-cli-progress` event (tagged with `run_id`) — the run no longer looks
-///     frozen while a node's agent is exploring the project; and
+/// Uses `claude -p "<prompt>" --output-format stream-json --verbose
+/// --include-partial-messages` so that:
+///   - token-level partial deltas (assistant text + extended thinking), tool
+///     uses, tool results (with durations) and the opening `init` event all
+///     stream to the frontend via the `ai-cli-progress` event (tagged with
+///     `run_id`) — the run no longer looks frozen while a node is working; a
+///     "still running" heartbeat covers any remaining silent gap; and
 ///   - the clean final answer is taken from the terminal `result` event.
 /// The optional `model` maps the node's model tier (haiku/sonnet/opus) onto
 /// `--model`. stdin is closed; the call is bounded by a timeout that kills the
@@ -922,6 +970,11 @@ async fn ai_cli(
             args.push("--output-format".into());
             args.push("stream-json".into());
             args.push("--verbose".into());
+            // Token-level streaming so the run log fills in as text/thinking is
+            // generated, instead of staying blank until a whole message lands.
+            if partial_enabled() {
+                args.push("--include-partial-messages".into());
+            }
             // Don't let the CLI auto-update mid-run: an interrupted update can
             // leave the binary corrupted ("bin executable does not exist").
             disable_autoupdater = true;
@@ -1027,9 +1080,16 @@ async fn ai_cli(
         let codex_turn_status = Arc::new(Mutex::new(None::<String>));
         let codex_turn_status_reader = Arc::clone(&codex_turn_status);
         let stdout_activity = Arc::clone(&last_activity);
+        let partial_streaming = partial_enabled();
         let out_handle = std::thread::spawn(move || -> String {
             let mut result = String::new();
             let mut acc = String::new();
+            // `prev_kind` tracks the last delta kind ("text" / "thinking") so we
+            // can insert a separator when the model switches between them.
+            let mut prev_kind: &str = "";
+            // tool_use id → start time, so a tool_result can report its duration.
+            let mut tool_starts: HashMap<String, std::time::Instant> = HashMap::new();
+            let mut init_done = false;
             if let Some(o) = stdout {
                 let reader = std::io::BufReader::new(o);
                 for line in reader.lines() {
@@ -1061,6 +1121,65 @@ async fn ai_cli(
                         continue;
                     }
                     match v.get("type").and_then(|t| t.as_str()) {
+                        Some("system") => {
+                            // The opening `init` event is the first "I'm alive"
+                            // signal — surface it so cold-start latency isn't blank.
+                            if !init_done
+                                && v.get("subtype").and_then(|s| s.as_str()) == Some("init")
+                            {
+                                init_done = true;
+                                let model =
+                                    v.get("model").and_then(|m| m.as_str()).unwrap_or("");
+                                let line = if model.is_empty() {
+                                    "⚙ 会话已启动，开始处理…".to_string()
+                                } else {
+                                    format!("⚙ 会话已启动（{model}），开始处理…")
+                                };
+                                emit_progress(&app2, &run2, &format!("{line}\n"));
+                            }
+                        }
+                        Some("stream_event") => {
+                            // Token-level partial deltas: live display ONLY. The
+                            // authoritative text is still captured from the complete
+                            // `assistant` / `result` events below, so we never push
+                            // a partial chunk into `acc` (that would double-count).
+                            if let Some(ev) = v.get("event") {
+                                let ev_type =
+                                    ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                if ev_type == "content_block_delta" {
+                                    if let Some(delta) = ev.get("delta") {
+                                        match delta.get("type").and_then(|t| t.as_str()) {
+                                            Some("text_delta") => {
+                                                if let Some(tx) =
+                                                    delta.get("text").and_then(|t| t.as_str())
+                                                {
+                                                    if prev_kind == "thinking" {
+                                                        emit_progress(&app2, &run2, "\n");
+                                                    }
+                                                    prev_kind = "text";
+                                                    emit_progress(&app2, &run2, tx);
+                                                }
+                                            }
+                                            Some("thinking_delta") => {
+                                                if let Some(tx) = delta
+                                                    .get("thinking")
+                                                    .and_then(|t| t.as_str())
+                                                {
+                                                    if prev_kind != "thinking" {
+                                                        emit_progress(
+                                                            &app2, &run2, "\n💭 思考：",
+                                                        );
+                                                    }
+                                                    prev_kind = "thinking";
+                                                    emit_progress(&app2, &run2, tx);
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Some("assistant") => {
                             if let Some(content) =
                                 v.pointer("/message/content").and_then(|c| c.as_array())
@@ -1071,8 +1190,14 @@ async fn ai_cli(
                                             if let Some(tx) =
                                                 block.get("text").and_then(|t| t.as_str())
                                             {
+                                                // Capture for the fallback return
+                                                // value. When partial streaming is on
+                                                // it was already shown live via deltas,
+                                                // so don't re-emit (avoids duplication).
                                                 acc.push_str(tx);
-                                                emit_progress(&app2, &run2, tx);
+                                                if !partial_streaming {
+                                                    emit_progress(&app2, &run2, tx);
+                                                }
                                             }
                                         }
                                         Some("tool_use") => {
@@ -1084,6 +1209,15 @@ async fn ai_cli(
                                                 .get("input")
                                                 .cloned()
                                                 .unwrap_or(serde_json::Value::Null);
+                                            if let Some(id) =
+                                                block.get("id").and_then(|t| t.as_str())
+                                            {
+                                                tool_starts.insert(
+                                                    id.to_string(),
+                                                    std::time::Instant::now(),
+                                                );
+                                            }
+                                            prev_kind = "";
                                             emit_progress(
                                                 &app2,
                                                 &run2,
@@ -1094,6 +1228,42 @@ async fn ai_cli(
                                             );
                                         }
                                         _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        Some("user") => {
+                            // Tool results arrive as a `user`-role message. Show a
+                            // truncated breadcrumb + the tool's wall-clock duration so
+                            // a long Bash/Read/test is no longer a silent gap.
+                            if let Some(content) =
+                                v.pointer("/message/content").and_then(|c| c.as_array())
+                            {
+                                for block in content {
+                                    if block.get("type").and_then(|t| t.as_str())
+                                        != Some("tool_result")
+                                    {
+                                        continue;
+                                    }
+                                    let dur = block
+                                        .get("tool_use_id")
+                                        .and_then(|t| t.as_str())
+                                        .and_then(|id| tool_starts.remove(id))
+                                        .map(|start| start.elapsed().as_secs());
+                                    let head = match dur {
+                                        Some(s) => format!("✓ 工具完成（{s}s）"),
+                                        None => "✓ 工具完成".to_string(),
+                                    };
+                                    let summary = summarize_tool_result(block);
+                                    prev_kind = "";
+                                    if summary.is_empty() {
+                                        emit_progress(&app2, &run2, &format!("{head}\n"));
+                                    } else {
+                                        emit_progress(
+                                            &app2,
+                                            &run2,
+                                            &format!("{head}: {summary}\n"),
+                                        );
                                     }
                                 }
                             }
@@ -1150,6 +1320,8 @@ async fn ai_cli(
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         let mut last_sidecar_len = 0_u64;
         let mut last_sidecar_modified: Option<std::time::SystemTime> = None;
+        let run_started_at = std::time::Instant::now();
+        let mut last_heartbeat = run_started_at;
         let wait_result = loop {
             if is_codex {
                 let status = codex_turn_status
@@ -1191,6 +1363,21 @@ async fn ai_cli(
                             break Err(format!(
                                 "CLI \"{binary}\" 空转超过 {idle_timeout_secs}s 未产生输出，已终止。"
                             ));
+                        }
+                    }
+                    // Heartbeat: during a silent gap (slow first token, long tool
+                    // run, extended thinking with partial streaming off), drop a
+                    // "still running" line so the node never looks frozen. Reads
+                    // activity only — must NOT touch it, or idle detection breaks.
+                    if !is_codex {
+                        let beat = std::time::Duration::from_secs(AI_CLI_HEARTBEAT_SECS);
+                        let now = std::time::Instant::now();
+                        if activity_elapsed(&last_activity) >= beat
+                            && now.duration_since(last_heartbeat) >= beat
+                        {
+                            let total = run_started_at.elapsed().as_secs();
+                            emit_progress(&app, &run_id, &format!("\n⏳ 仍在运行…（已 {total}s）\n"));
+                            last_heartbeat = now;
                         }
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -1261,6 +1448,35 @@ async fn ai_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summarizes_tool_result_variants() {
+        // String content.
+        let s = serde_json::json!({ "type": "tool_result", "content": "hello\nworld" });
+        assert_eq!(summarize_tool_result(&s), "hello world");
+
+        // Array-of-text-blocks content.
+        let arr = serde_json::json!({
+            "type": "tool_result",
+            "content": [{ "type": "text", "text": "line one" }, { "type": "text", "text": "line two" }]
+        });
+        assert_eq!(summarize_tool_result(&arr), "line one line two");
+
+        // Error results are prefixed.
+        let err = serde_json::json!({
+            "type": "tool_result", "is_error": true, "content": "boom"
+        });
+        assert_eq!(summarize_tool_result(&err), "⚠ boom");
+
+        // Empty / missing content yields an empty breadcrumb.
+        let empty = serde_json::json!({ "type": "tool_result", "content": "   " });
+        assert_eq!(summarize_tool_result(&empty), "");
+
+        // Long output is truncated to 160 chars.
+        let long = "x".repeat(300);
+        let big = serde_json::json!({ "type": "tool_result", "content": long });
+        assert_eq!(summarize_tool_result(&big).chars().count(), 160);
+    }
 
     #[test]
     fn parses_codex_type_events() {

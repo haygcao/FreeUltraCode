@@ -59,6 +59,10 @@ function buildAnsweredGraph(): IRGraph {
 }
 
 function resetStore(): void {
+  window.localStorage.setItem('owf_research_angles_max', '1');
+  window.localStorage.setItem('owf_nodegen_candidates_max', '1');
+  window.localStorage.setItem('owf_runtime_vote_samples_max', '1');
+  window.localStorage.setItem('owf_terminal_vote_samples_max', '1');
   useStore.setState({
     workflow: cloneGraph(defaultBlueprint('Current workflow')),
     selectedNodeId: null,
@@ -109,6 +113,7 @@ describe('AI edit interactions', () => {
   it('continues after a select answer and commits the returned IRGraph', async () => {
     resetStore();
     gatewayMocks.resolveDirectGatewayRoute.mockReturnValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
       adapter: 'claude-code',
       apiKey: 'test-key',
       model: 'sonnet',
@@ -181,6 +186,7 @@ describe('AI edit interactions', () => {
       activeWorkspaceId: null,
     });
     gatewayMocks.resolveDirectGatewayRoute.mockReturnValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
       adapter: 'claude-code',
       apiKey: 'test-key',
       model: 'sonnet',
@@ -233,5 +239,69 @@ describe('AI edit interactions', () => {
 
     expect(useStore.getState().activeSessionId).toBe('s_main');
     expect(useStore.getState().aiStreaming).toBe(false);
+  });
+
+  it('starts a new workflow AI edit while another workflow is still generating', async () => {
+    resetStore();
+    useStore.setState({
+      activeSessionId: 's_main',
+      activeWorkspaceId: null,
+    });
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+      adapter: 'claude-code',
+      apiKey: 'test-key',
+      model: 'sonnet',
+      transport: 'anthropic',
+    });
+
+    const resolvers: Array<(value: string) => void> = [];
+    gatewayMocks.completeGatewayText.mockImplementation(async () => {
+      return await new Promise<string>((resolve) => {
+        resolvers.push(resolve);
+      });
+    });
+
+    const reply = `已更新蓝图。\n\n\`\`\`json\n${JSON.stringify(
+      buildAnsweredGraph(),
+    )}\n\`\`\``;
+
+    try {
+      useStore.getState().sendPrompt('先优化第一个 workflow。');
+
+      await waitFor(
+        () => resolvers.length === 1 && useStore.getState().aiStreaming,
+        'the first workflow AI edit to start',
+      );
+
+      useStore.getState().newWorkflow();
+
+      await waitFor(
+        () => useStore.getState().activeSessionId !== 's_main',
+        'the new workflow session to become active',
+      );
+      const secondSessionId = useStore.getState().activeSessionId;
+
+      useStore.getState().sendPrompt('再优化这个新的 workflow。');
+
+      await waitFor(
+        () =>
+          resolvers.length === 2 &&
+          useStore
+            .getState()
+            .aiEditingSessions.some(
+              (session) => session.sessionId === secondSessionId,
+            ),
+        'the second workflow AI edit to start',
+      );
+
+      expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(2);
+    } finally {
+      for (const resolve of resolvers) resolve(reply);
+      await waitFor(
+        () => !useStore.getState().aiStreaming,
+        'all workflow AI edits to finish',
+      );
+    }
   });
 });

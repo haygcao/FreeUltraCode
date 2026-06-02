@@ -4,6 +4,7 @@ import {
   type IREdge,
   type IRGraph,
   type IRNode,
+  type IRPort,
 } from './ir';
 import { topoOrderScope } from './topo';
 
@@ -61,7 +62,8 @@ export function emitClaudeScript(ir: IRGraph): string {
   const dataSources = buildDataSourceIndex(ir);
   const hoisted = computeHoistedProducers(ir, dataSources);
 
-  const ctx: EmitCtx = { ir, varNames, dataSources, hoisted };
+  const portVarNames = assignCompositePortVarNames(ir, varNames);
+  const ctx: EmitCtx = { ir, varNames, dataSources, hoisted, portVarNames };
 
   // Schema identifier definitions, so `schema: REVIEW` references resolve.
   const preamble = emitSchemaPreamble(ir);
@@ -114,6 +116,14 @@ interface EmitCtx {
   dataSources: Map<string, string[]>;
   /** producer node ids that must be hoisted to a top-scope `let`. */
   hoisted: Set<string>;
+  /**
+   * `${compositeId}::${portId}` → the JS parameter name the composite function
+   * exposes for that input port. Consumers inside the body read a declared input
+   * via this parameter rather than via a producer var (they live in a different
+   * function scope), so a data edge whose source is the composite node resolves to
+   * a param name here.
+   */
+  portVarNames: Map<string, string>;
 }
 
 /**
@@ -212,6 +222,10 @@ function emitScope(
         out.push(`${pad}while (${cond}) { // @node ${node.id}`);
         out.push(...emitScope(ctx, node.id, indent + 1));
         out.push(`${pad}}`);
+        break;
+      }
+      case 'composite': {
+        out.push(...emitComposite(ctx, node, indent));
         break;
       }
       case 'codeblock': {
@@ -364,6 +378,186 @@ function readSpecs(value: unknown): IRAgentSpec[] {
       phase: optStr(o.phase),
     };
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* composite (encapsulated sub-workflow → local async function)               */
+/* -------------------------------------------------------------------------- */
+
+/** Read a composite node's declared `inputs`/`outputs` port arrays from params. */
+function compositePorts(node: IRNode, key: 'inputs' | 'outputs'): IRPort[] {
+  const raw = node.params?.[key];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (p): p is IRPort =>
+      !!p && typeof p === 'object' && typeof (p as IRPort).id === 'string',
+  );
+}
+
+/** The data-kind input ports of a composite, in declared order. */
+function compositeDataInputs(node: IRNode): IRPort[] {
+  return compositePorts(node, 'inputs').filter((p) => (p.kind ?? DATA) === DATA);
+}
+
+/** The data-kind output ports of a composite, in declared order. */
+function compositeDataOutputs(node: IRNode): IRPort[] {
+  return compositePorts(node, 'outputs').filter((p) => (p.kind ?? DATA) === DATA);
+}
+
+/** The local async function name anchored to a composite's call var (`__composite_<callVar>`). */
+function compositeFnName(callVar: string): string {
+  return `__composite_${callVar}`;
+}
+
+/**
+ * Assign each composite input *data* port a JS parameter name, recorded under
+ * `${compositeId}::${portId}`. Names derive deterministically from the port label
+ * (or id), are sanitized to valid identifiers, and are de-duplicated *within each
+ * composite* (params share a function scope). Seeded with reserved globals so a
+ * param never shadows `agent`/`parallel`/… .
+ */
+function assignCompositePortVarNames(
+  ir: IRGraph,
+  varNames: Map<string, string>,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const node of ir.nodes) {
+    if (node.type !== 'composite') continue;
+    const used = new Set<string>(RESERVED_VAR_NAMES);
+    // Avoid colliding with the composite's own call var / function name.
+    const callVar = varNames.get(node.id);
+    if (callVar) {
+      used.add(callVar);
+      used.add(compositeFnName(callVar));
+    }
+    for (const port of compositeDataInputs(node)) {
+      const base = sanitizeIdent(port.label ?? port.id ?? 'arg') || 'arg';
+      let candidate = base;
+      let i = 2;
+      while (used.has(candidate)) {
+        candidate = `${base}${i}`;
+        i += 1;
+      }
+      used.add(candidate);
+      out.set(`${node.id}::${port.id}`, candidate);
+    }
+  }
+  return out;
+}
+
+/**
+ * Emit a composite as a local `async function` declaration immediately preceding
+ * its call site (so re-emit is byte-stable and nesting falls out naturally):
+ *
+ *   // @composite c1
+ *   // @ports in=in_topic:topic out=out_summary:summary
+ *   async function __composite_callVar(topic) {
+ *     const researcher = await agent('…') // @node a1
+ *     const summarizer = await agent('…') // @node a2
+ *     return summarizer // @return out_summary
+ *   }
+ *
+ *   const callVar = await __composite_callVar(inputArg) // @node c1
+ *
+ * The body reuses the normal `emitScope` machinery (so inner data edges round-trip
+ * through the same CTX-block mechanism); declared input ports surface as function
+ * params and declared output ports as the `return`.
+ */
+function emitComposite(ctx: EmitCtx, node: IRNode, indent: number): string[] {
+  const pad = '  '.repeat(indent);
+  const callVar = assign(ctx, node.id);
+  const fnName = compositeFnName(callVar);
+  const inputs = compositeDataInputs(node);
+  const outputs = compositeDataOutputs(node);
+
+  const params = inputs
+    .map((p) => ctx.portVarNames.get(`${node.id}::${p.id}`))
+    .filter((v): v is string => !!v);
+
+  const out: string[] = [];
+  // Annotations carry the authoritative id + declared port ids/labels.
+  out.push(`${pad}// @composite ${node.id}`);
+  out.push(`${pad}// @ports ${emitPortsAnnotation(inputs, outputs)}`);
+  out.push(`${pad}async function ${fnName}(${params.join(', ')}) {`);
+
+  // Body: ordinary scoped emission (children carry parent === node.id).
+  out.push(...emitScope(ctx, node.id, indent + 1));
+
+  // return over declared output ports → inner producer vars.
+  out.push(...emitCompositeReturn(ctx, node, outputs, indent + 1));
+  out.push(`${pad}}`);
+  out.push('');
+
+  // Call site: bind outer inputs (by declared input-port order) to the args.
+  const args = inputs.map((p) => compositeInputArg(ctx, node, p)).join(', ');
+  out.push(
+    `${pad}${decl(ctx, node.id, callVar)}await ${fnName}(${args}) // @node ${node.id}`,
+  );
+  return out;
+}
+
+/** `in=portId:label in=… out=portId:label …` annotation (labels optional). */
+function emitPortsAnnotation(inputs: IRPort[], outputs: IRPort[]): string {
+  const tok = (dir: 'in' | 'out', p: IRPort): string => {
+    const label = p.label ? `:${slugToken(p.label)}` : '';
+    return `${dir}=${p.id}${label}`;
+  };
+  return [
+    ...inputs.map((p) => tok('in', p)),
+    ...outputs.map((p) => tok('out', p)),
+  ].join(' ');
+}
+
+/** A single annotation token's value, with whitespace collapsed (no spaces). */
+function slugToken(label: string): string {
+  return label.trim().replace(/\s+/g, '_');
+}
+
+/**
+ * The argument expression passed for a composite input port at the call site: the
+ * var name of the outer producer bound to that port via an input-binding data edge
+ * `{ from:OUTER, to:{node:composite,port} }`. Undefined when unbound.
+ */
+function compositeInputArg(ctx: EmitCtx, node: IRNode, port: IRPort): string {
+  const byId = new Map(ctx.ir.nodes.map((n) => [n.id, n]));
+  const edge = ctx.ir.edges.find(
+    (e) => e.kind === DATA && e.to.node === node.id && e.to.port === port.id,
+  );
+  if (!edge) return 'undefined';
+  return resolveSourceVar(ctx, byId, edge.from.node, edge.from.port) ?? 'undefined';
+}
+
+/**
+ * Emit the composite's `return`. Single declared output → `return <var> // @return
+ * <portId>`. Multiple → `return { <portId>: <var>, … } // @returns p1,p2`. No
+ * output → no return. The inner producer for an output port is the source of the
+ * output-binding edge `{ from:INNER, to:{node:composite,port} }`.
+ */
+function emitCompositeReturn(
+  ctx: EmitCtx,
+  node: IRNode,
+  outputs: IRPort[],
+  indent: number,
+): string[] {
+  const pad = '  '.repeat(indent);
+  if (outputs.length === 0) return [];
+  const byId = new Map(ctx.ir.nodes.map((n) => [n.id, n]));
+  const resolve = (port: IRPort): string => {
+    const edge = ctx.ir.edges.find(
+      (e) => e.kind === DATA && e.to.node === node.id && e.to.port === port.id,
+    );
+    return (
+      (edge && resolveSourceVar(ctx, byId, edge.from.node, edge.from.port)) ??
+      'undefined'
+    );
+  };
+  if (outputs.length === 1) {
+    const port = outputs[0];
+    return [`${pad}return ${resolve(port)} // @return ${port.id}`];
+  }
+  const entries = outputs.map((p) => `${p.id}: ${resolve(p)}`).join(', ');
+  const ports = outputs.map((p) => p.id).join(',');
+  return [`${pad}return { ${entries} } // @returns ${ports}`];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -522,10 +716,75 @@ function buildDataSourceIndex(ir: IRGraph): Map<string, string[]> {
   return out;
 }
 
-/** The producer var names that flow into `nodeId` (only those with a var name). */
+/**
+ * The producer var names that flow into `nodeId` (only those resolvable to a
+ * name). A normal producer resolves to its `const` var name. A composite *input
+ * port* (a data edge whose source node is a composite and whose source port is one
+ * of that composite's declared input ports) resolves instead to the function
+ * *parameter* name the composite exposes for that port — because the consumer
+ * lives inside the composite's function body, a different lexical scope.
+ */
 function ctxVars(ctx: EmitCtx, nodeId: string): string[] {
+  const byId = new Map(ctx.ir.nodes.map((n) => [n.id, n]));
+  const names: string[] = [];
+  const seen = new Set<string>();
+  // Deterministic order: iterate sorted source node ids (matches dataSources),
+  // resolving each source's contribution(s) for this consumer.
   const sources = ctx.dataSources.get(nodeId) ?? [];
-  return sources.map((id) => ctx.varNames.get(id)).filter((v): v is string => !!v);
+  const push = (name: string | undefined): void => {
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  };
+  for (const sourceId of sources) {
+    const source = byId.get(sourceId);
+    if (source?.type === 'composite') {
+      // A composite feeds a consumer through declared ports: INPUT ports resolve to
+      // the function param (consumer is inside the body); OUTPUT ports resolve to
+      // the composite call var (consumer is outside). Iterate every edge from this
+      // composite into the consumer, sorted by port id for determinism.
+      const edges = ctx.ir.edges
+        .filter(
+          (e) =>
+            e.kind === DATA && e.from.node === sourceId && e.to.node === nodeId,
+        )
+        .sort((a, b) => a.from.port.localeCompare(b.from.port));
+      for (const e of edges) {
+        push(resolveSourceVar(ctx, byId, sourceId, e.from.port));
+      }
+      continue;
+    }
+    push(ctx.varNames.get(sourceId));
+  }
+  return names;
+}
+
+/** True when `portId` is one of `composite`'s declared input ports. */
+function isCompositeInputPort(composite: IRNode, portId: string): boolean {
+  return compositePorts(composite, 'inputs').some((p) => p.id === portId);
+}
+
+/**
+ * Resolve the JS expression that names the value emitted by a data-edge source
+ * `(fromNode, fromPort)` *from the perspective of code reading it*:
+ *  - composite + input port  → the function parameter exposed for that port
+ *    (the reader is inside that composite's body);
+ *  - composite + output port → the composite's call var (the reader is outside);
+ *  - any other producer       → its `const` var name.
+ * Returns undefined when no name can be resolved.
+ */
+function resolveSourceVar(
+  ctx: EmitCtx,
+  byId: Map<string, IRNode>,
+  fromNode: string,
+  fromPort: string,
+): string | undefined {
+  const source = byId.get(fromNode);
+  if (source?.type === 'composite' && isCompositeInputPort(source, fromPort)) {
+    return ctx.portVarNames.get(`${fromNode}::${fromPort}`);
+  }
+  return ctx.varNames.get(fromNode);
 }
 
 /**
@@ -542,29 +801,88 @@ function computeHoistedProducers(
   for (const [consumerId, producers] of dataSources) {
     const consumer = byId.get(consumerId);
     if (!consumer) continue;
+    // Port-binding edges (source or target IS a composite node) cross function
+    // boundaries via declared ports → params/return, never via a hoisted `let`.
+    if (consumer.type === 'composite') continue;
     for (const producerId of producers) {
       const producer = byId.get(producerId);
       if (!producer) continue;
+      if (producer.type === 'composite') continue; // composite output → param/return
+      // A producer that is invisible across a composite function boundary cannot
+      // be reached via a hoisted `let` (the let would reference an out-of-scope
+      // var, or an inner var leaking out). Such illegal bare edges (bypassing a
+      // declared port) are simply not wired — skip rather than emit invalid JS.
+      if (!sameFunctionReachable(producer, consumer, byId)) continue;
       if (!isVisible(producer, consumer, byId)) hoist.add(producerId);
     }
   }
   return hoist;
 }
 
-/** True when `producer`'s declaration scope is visible at `consumer`. */
+/**
+ * The nearest composite ancestor of a node (its enclosing function body), or
+ * undefined when the node lives in the top-level function. Used to decide whether
+ * two nodes share a function for hoisting purposes.
+ */
+function enclosingComposite(
+  node: IRNode,
+  byId: Map<string, IRNode>,
+): string | undefined {
+  let scope = node.parent ?? undefined;
+  while (scope !== undefined) {
+    const n = byId.get(scope);
+    if (n?.type === 'composite') return scope;
+    scope = n?.parent ?? undefined;
+  }
+  return undefined;
+}
+
+/** True when `producer` and `consumer` live in the same emitted function. */
+function sameFunctionReachable(
+  producer: IRNode,
+  consumer: IRNode,
+  byId: Map<string, IRNode>,
+): boolean {
+  return (
+    enclosingComposite(producer, byId) === enclosingComposite(consumer, byId)
+  );
+}
+
+/**
+ * True when `producer`'s declaration scope is visible at `consumer`.
+ *
+ * branch/loop are transparent lexical blocks inside the same function, so a
+ * top-scope (or ancestor-scope) `let` is visible from a nested block. `composite`
+ * is a hard boundary: it compiles to a *separate* `async function`, so a producer
+ * inside a composite is invisible outside it and vice versa. We model this by
+ * walking the consumer's scope chain toward the root and refusing to cross a
+ * composite boundary: the moment the walk steps *out of* a composite scope, the
+ * producer's scope (if not yet matched) is in a different function and invisible.
+ *
+ * Legal cross-boundary data flow only travels through declared ports (input/output
+ * binding edges, whose source or target is the composite node itself); those
+ * resolve to function params / return values and never need hoisting.
+ */
 function isVisible(
   producer: IRNode,
   consumer: IRNode,
   byId: Map<string, IRNode>,
 ): boolean {
   const producerScope = producer.parent ?? undefined;
-  if (producerScope === undefined) return true; // top scope: visible everywhere
-  // Walk the consumer's scope chain up to the root.
+  // Walk the consumer's scope chain up to the root, checking the match before each
+  // step (so the consumer's own scope is considered first).
   let scope: string | undefined = consumer.parent ?? undefined;
+  if (scope === producerScope) return true;
   while (scope !== undefined) {
+    // Stepping out of a composite scope crosses a function boundary: if the
+    // producer was not in this composite (or an inner scope already checked), it
+    // lives in a different function and is not visible.
+    const node = byId.get(scope);
+    if (node?.type === 'composite') return false;
+    scope = node?.parent ?? undefined;
     if (scope === producerScope) return true;
-    scope = byId.get(scope)?.parent ?? undefined;
   }
+  // Consumer reached top scope without matching; producer lives elsewhere.
   return false;
 }
 
@@ -584,7 +902,13 @@ function flattenEmissionOrder(ir: IRGraph): IRNode[] {
   const walk = (parentId: string | undefined): void => {
     for (const node of topoOrderScope(ir, parentId)) {
       out.push(node);
-      if (node.type === 'branch' || node.type === 'loop') walk(node.id);
+      if (
+        node.type === 'branch' ||
+        node.type === 'loop' ||
+        node.type === 'composite'
+      ) {
+        walk(node.id);
+      }
     }
   };
   walk(undefined);
@@ -629,6 +953,9 @@ function assignVarNames(order: IRNode[]): Map<string, string> {
       i += 1;
     }
     used.add(candidate);
+    // A composite also occupies its derived function name so no other node's var
+    // (or another composite's function name) can ever collide with it.
+    if (node.type === 'composite') used.add(compositeFnName(candidate));
     names.set(node.id, candidate);
   }
   return names;
@@ -641,6 +968,7 @@ function producesValue(type: IRNode['type']): boolean {
     type === 'pipeline' ||
     type === 'workflow' ||
     type === 'consensus' ||
+    type === 'composite' ||
     type === 'variable'
   );
 }
@@ -652,7 +980,8 @@ function producesReturn(type: IRNode['type']): boolean {
     type === 'parallel' ||
     type === 'pipeline' ||
     type === 'workflow' ||
-    type === 'consensus'
+    type === 'consensus' ||
+    type === 'composite'
   );
 }
 

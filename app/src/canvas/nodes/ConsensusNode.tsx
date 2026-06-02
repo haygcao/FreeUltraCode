@@ -6,6 +6,8 @@ import { t } from '@/lib/i18n';
 import { DataIn, DataOut, ExecIn, ExecOut } from './handles';
 import { NodeNumberBadge } from './NodeNumberBadge';
 import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
+import { CardHeader, SubChip } from './cardChrome';
+import { ACCENT_PARALLEL, cardClass, cardWrapperStyle } from './cardStyle';
 
 /**
  * Consensus node — Claude-Code-style "win by adversarial verification": fan out
@@ -43,43 +45,31 @@ function ConsensusNodeImpl({ data, selected }: NodeProps) {
       : Math.ceil(count / 2);
 
   const run = runStateVisual(d.runState);
-  const borderColor =
-    run?.borderColor ?? (selected ? 'var(--accent-2)' : 'var(--border)');
-  const boxShadow =
-    run?.boxShadow ?? (selected ? '0 0 0 1px var(--accent-2)' : undefined);
+  const { accent, ambient } = ACCENT_PARALLEL;
 
   return (
     <div
-      className="relative min-w-[180px] overflow-visible rounded-md border bg-panel font-sans shadow-md"
-      style={{ borderColor, boxShadow }}
+      className={`${cardClass(!!selected)} min-w-[190px] max-w-[260px]`}
+      style={cardWrapperStyle({ accent, ambient, selected: !!selected, run })}
     >
-      <NodeNumberBadge value={d.numberLabel} accent="var(--accent-2)" />
+      <NodeNumberBadge value={d.numberLabel} accent={accent} />
 
-      {/* Header */}
-      <div
-        className="flex items-center gap-2 rounded-t-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide"
-        style={{ background: 'var(--panel-2)', color: 'var(--accent-2)' }}
-      >
-        <span aria-hidden>⚖</span>
-        <span>{t(d.locale, 'nodeType.consensus')}</span>
-        <span className="ml-auto font-mono text-[10px] normal-case text-fg-dim">
-          {STRATEGY_LABEL[strategy]} · {count}选{quorum}
-        </span>
-      </div>
+      <CardHeader
+        accent={accent}
+        glyph="⚖"
+        label={t(d.locale, 'nodeType.consensus')}
+        meta={`${STRATEGY_LABEL[strategy]} · ${count}选${quorum}`}
+      />
 
       {/* Body */}
-      <div className="px-3 py-2">
+      <div className="px-3.5 pb-3 pt-2">
         <div className="text-sm font-medium text-fg">{d.label}</div>
         {voters.length > 0 ? (
           <div className="mt-1.5 flex flex-col gap-1">
             {voters.map((v, i) => (
-              <div
-                key={i}
-                className="rounded border px-2 py-0.5 font-mono text-[10px] text-fg-dim"
-                style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-alt)' }}
-              >
+              <SubChip key={i} accent={accent}>
                 {v}
-              </div>
+              </SubChip>
             ))}
           </div>
         ) : (

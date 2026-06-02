@@ -1,0 +1,115 @@
+<svg width="640" height="220" viewBox="0 0 640 220" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">OpenWorkflows animated workflow mark</title>
+  <desc id="desc">Animated nodes flow through a portable intermediate representation.</desc>
+  <style>
+    .track {
+      stroke-dasharray: 10 12;
+      animation: dash 2.8s linear infinite;
+    }
+
+    .pulse-a {
+      animation: pulse 2.4s ease-in-out infinite;
+      transform-origin: center;
+    }
+
+    .pulse-b {
+      animation: pulse 2.4s ease-in-out .45s infinite;
+      transform-origin: center;
+    }
+
+    .pulse-c {
+      animation: pulse 2.4s ease-in-out .9s infinite;
+      transform-origin: center;
+    }
+
+    .spark {
+      animation: spark 3.2s ease-in-out infinite;
+      transform-origin: center;
+    }
+
+    @keyframes dash {
+      to {
+        stroke-dashoffset: -44;
+      }
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: .72;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.08);
+      }
+    }
+
+    @keyframes spark {
+      0%, 100% {
+        opacity: .45;
+        transform: translateY(0);
+      }
+      45% {
+        opacity: 1;
+        transform: translateY(-6px);
+      }
+    }
+  </style>
+  <defs>
+    <linearGradient id="bg" x1="72" y1="16" x2="568" y2="204" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset=".48" stop-color="#1F2937"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="118" y1="60" x2="522" y2="158" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8"/>
+      <stop offset=".5" stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#34D399"/>
+    </linearGradient>
+    <filter id="glow" x="42" y="-8" width="556" height="244" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+      <feGaussianBlur stdDeviation="12" result="effect1_foregroundBlur_1_1"/>
+    </filter>
+  </defs>
+
+  <rect x="74" y="18" width="492" height="184" rx="34" fill="url(#bg)"/>
+  <rect x="75.5" y="19.5" width="489" height="181" rx="32.5" stroke="url(#flow)" stroke-opacity=".72" stroke-width="3"/>
+  <g filter="url(#glow)" opacity=".55">
+    <path d="M148 74H238C262 74 265 110 288 110H352C376 110 382 74 406 74H500" stroke="url(#flow)" stroke-width="8" stroke-linecap="round"/>
+    <path d="M148 146H238C262 146 265 110 288 110H352C376 110 382 146 406 146H500" stroke="url(#flow)" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <path class="track" d="M148 74H238C262 74 265 110 288 110H352C376 110 382 74 406 74H500" stroke="url(#flow)" stroke-width="4" stroke-linecap="round"/>
+  <path class="track" d="M148 146H238C262 146 265 110 288 110H352C376 110 382 146 406 146H500" stroke="url(#flow)" stroke-width="4" stroke-linecap="round"/>
+
+  <g class="pulse-a">
+    <rect x="112" y="50" width="76" height="48" rx="16" fill="#0EA5E9"/>
+    <rect x="112.75" y="50.75" width="74.5" height="46.5" rx="15.25" stroke="white" stroke-opacity=".45" stroke-width="1.5"/>
+    <circle cx="150" cy="74" r="10" fill="white" fill-opacity=".9"/>
+  </g>
+  <g class="pulse-b">
+    <rect x="272" y="76" width="96" height="68" rx="20" fill="#7C3AED"/>
+    <rect x="273" y="77" width="94" height="66" rx="19" stroke="white" stroke-opacity=".45" stroke-width="2"/>
+    <text x="320" y="118" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800" fill="white">IR</text>
+  </g>
+  <g class="pulse-c">
+    <rect x="452" y="50" width="76" height="48" rx="16" fill="#10B981"/>
+    <rect x="452.75" y="50.75" width="74.5" height="46.5" rx="15.25" stroke="white" stroke-opacity=".45" stroke-width="1.5"/>
+    <path d="M476 74L491 86L507 62" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g class="pulse-c">
+    <rect x="452" y="122" width="76" height="48" rx="16" fill="#F59E0B"/>
+    <rect x="452.75" y="122.75" width="74.5" height="46.5" rx="15.25" stroke="white" stroke-opacity=".45" stroke-width="1.5"/>
+    <path d="M480 146H506M493 133V159" stroke="white" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <g class="pulse-a">
+    <rect x="112" y="122" width="76" height="48" rx="16" fill="#334155"/>
+    <rect x="112.75" y="122.75" width="74.5" height="46.5" rx="15.25" stroke="white" stroke-opacity=".45" stroke-width="1.5"/>
+    <path d="M138 146H162" stroke="white" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <circle class="spark" cx="228" cy="56" r="5" fill="#38BDF8"/>
+  <circle class="spark" cx="396" cy="164" r="5" fill="#34D399"/>
+  <circle class="spark" cx="390" cy="50" r="4" fill="#A78BFA"/>
+  <text x="320" y="190" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="3" fill="#E5E7EB" fill-opacity=".82">OPENWORKFLOWS</text>
+</svg>

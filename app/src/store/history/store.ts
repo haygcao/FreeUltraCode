@@ -268,6 +268,7 @@ function sessionSummary(record: SessionRecord): SessionSummary {
     updatedAt: record.updatedAt,
     preview: preview(record.messages),
     messageCount: record.messages.length,
+    ...(record.workflow?.meta?.simple ? { simple: true } : {}),
     ...(runStatus ? { runStatus } : {}),
   };
 }

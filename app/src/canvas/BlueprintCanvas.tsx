@@ -19,17 +19,23 @@ import {
   type OnEdgesDelete,
   type Viewport,
 } from '@xyflow/react';
-import { useStore, workflowReadOnlyReason } from '@/store/useStore';
+import {
+  selectActiveScopeId,
+  useStore,
+  workflowReadOnlyReason,
+} from '@/store/useStore';
 import type { CanvasViewport } from '@/store/types';
 import { DATA, EXEC, type NodeType, type PinKind } from '@/core/ir';
-import { irToFlow, type FlowEdge, type FlowNodeData } from './irToFlow';
+import { filterScope, irToFlow, type FlowEdge, type FlowNodeData } from './irToFlow';
 import AgentNode from './nodes/AgentNode';
 import ParallelNode from './nodes/ParallelNode';
 import PipelineNode from './nodes/PipelineNode';
 import ConsensusNode from './nodes/ConsensusNode';
+import CompositeNode from './nodes/CompositeNode';
 import ContainerNode from './nodes/ContainerNode';
 import ControlNode from './nodes/ControlNode';
 import CanvasToolbar from './CanvasToolbar';
+import EdgeDefs from './EdgeDefs';
 import { t, type Locale } from '@/lib/i18n';
 
 /**
@@ -58,6 +64,7 @@ const nodeTypes: NodeTypes = {
   parallel: ParallelNode,
   pipeline: PipelineNode,
   consensus: ConsensusNode,
+  composite: CompositeNode,
   container: ContainerNode,
   control: ControlNode,
 };
@@ -123,6 +130,18 @@ const ADDABLE_NODES: {
       'ru-RU': { label: 'Консенсус' }, 'ar-SA': { label: 'إجماع' },
       'hi-IN': { label: 'आम सहमति' }, 'ja-JP': { label: '合意形成' },
       'ko-KR': { label: '합의' }, 'pt-BR': { label: 'Consenso' }, 'de-DE': { label: 'Konsens' },
+    },
+  },
+  {
+    type: 'composite',
+    label: 'Composite',
+    accent: 'var(--accent-3)',
+    translations: {
+      'zh-CN': { label: '复合节点' }, 'en-US': { label: 'Composite' },
+      'es-ES': { label: 'Compuesto' }, 'fr-FR': { label: 'Composite' },
+      'ru-RU': { label: 'Составной' }, 'ar-SA': { label: 'مركب' },
+      'hi-IN': { label: 'संयुक्त' }, 'ja-JP': { label: '複合' },
+      'ko-KR': { label: '복합' }, 'pt-BR': { label: 'Composto' }, 'de-DE': { label: 'Verbund' },
     },
   },
   {
@@ -281,6 +300,11 @@ function BlueprintCanvasInner() {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const selectNode = useStore((s) => s.selectNode);
   const setCanvasViewport = useStore((s) => s.setCanvasViewport);
+  const graphPath = useStore((s) => s.graphPath);
+  const activeScopeId = useStore(selectActiveScopeId);
+  const enterComposite = useStore((s) => s.enterComposite);
+  const exitComposite = useStore((s) => s.exitComposite);
+  const popToGraph = useStore((s) => s.popToGraph);
 
   const addNode = useStore((s) => s.addNode);
   const addEdge = useStore((s) => s.addEdge);
@@ -299,14 +323,26 @@ function BlueprintCanvasInner() {
 
   const isReadOnly = readOnlyReason !== null;
 
-  // Re-project the IR onto the canvas whenever the workflow OR runState changes.
-  // Layout coordinates are preserved by irToFlow, so a drag that wrote back via
-  // setNodePosition will land at the same spot on re-projection.
+  // Restrict the projection to the subgraph currently being viewed (top level,
+  // or the inside of a drilled-in composite). Memoized so the re-projection
+  // effect below only re-runs when the scope or workflow actually changes.
+  const scopedWorkflow = useMemo(
+    () => filterScope(workflow, activeScopeId),
+    [workflow, activeScopeId],
+  );
+
+  // Re-project the IR onto the canvas whenever the scoped workflow OR runState
+  // changes. Layout coordinates are preserved by irToFlow, so a drag that wrote
+  // back via setNodePosition will land at the same spot on re-projection.
   useEffect(() => {
-    const { nodes: flowNodes, edges: flowEdges } = irToFlow(workflow, runState, locale);
+    const { nodes: flowNodes, edges: flowEdges } = irToFlow(
+      scopedWorkflow,
+      runState,
+      locale,
+    );
     setNodes(flowNodes);
     setEdges(flowEdges);
-  }, [workflow, runState, locale, setNodes, setEdges]);
+  }, [scopedWorkflow, runState, locale, setNodes, setEdges]);
 
   // Mirror the store selection onto React Flow node `selected` flags.
   useEffect(() => {
@@ -326,6 +362,19 @@ function BlueprintCanvasInner() {
       selectNode(node.id);
     },
     [selectNode],
+  );
+
+  /** Double-clicking a composite node drills into its subgraph. */
+  const onNodeDoubleClick = useCallback<NodeMouseHandler>(
+    (_event, node) => {
+      const data = node.data as FlowNodeData | undefined;
+      if (data?.irType !== 'composite') return;
+      // Don't drill into the read-only boundary copy of the composite we're
+      // already inside — only the composites listed within this scope.
+      if (node.id === activeScopeId) return;
+      enterComposite(node.id);
+    },
+    [activeScopeId, enterComposite],
   );
 
   const onPaneClick = useCallback(() => {
@@ -462,6 +511,53 @@ function BlueprintCanvasInner() {
     );
   }, [readOnlyReason, locale]);
 
+  const breadcrumb = useMemo(() => {
+    if (graphPath.length === 0) return null;
+    const rootLabel =
+      workflow.meta.name?.trim() || t(locale, 'canvas.breadcrumbRoot');
+    const crumbClass =
+      'max-w-[160px] truncate rounded px-1.5 py-0.5 transition-colors hover:bg-panel-2 hover:text-fg';
+    return (
+      <div className="pointer-events-auto absolute left-3 top-3 z-10 flex items-center gap-1 rounded-md border border-border bg-panel/90 px-2 py-1 font-mono text-[11px] text-fg-dim shadow-lg backdrop-blur">
+        <button
+          type="button"
+          className={crumbClass}
+          onClick={() => popToGraph(0)}
+          title={rootLabel}
+        >
+          {rootLabel}
+        </button>
+        {graphPath.map((crumb, index) => (
+          <span key={crumb.nodeId} className="flex items-center gap-1">
+            <span className="text-fg-faint" aria-hidden>
+              ›
+            </span>
+            <button
+              type="button"
+              className={
+                index === graphPath.length - 1
+                  ? `${crumbClass} text-fg`
+                  : crumbClass
+              }
+              onClick={() => popToGraph(index + 1)}
+              title={crumb.label}
+            >
+              {crumb.label}
+            </button>
+          </span>
+        ))}
+        <button
+          type="button"
+          className="ml-1 rounded border border-border-soft px-1.5 py-0.5 text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          onClick={() => exitComposite()}
+          title={t(locale, 'canvas.exitComposite')}
+        >
+          ↩
+        </button>
+      </div>
+    );
+  }, [graphPath, workflow.meta.name, locale, popToGraph, exitComposite]);
+
   return (
     <div className="flex h-full w-full flex-col bg-bg">
       {/* Local-scoped keyframes used by the running pulse + status badges. */}
@@ -471,6 +567,8 @@ function BlueprintCanvasInner() {
 
       <div className="relative min-h-0 flex-1" ref={wrapperRef}>
         {readonlyBadge}
+        {breadcrumb}
+        <EdgeDefs />
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -478,6 +576,7 @@ function BlueprintCanvasInner() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
+          onNodeDoubleClick={onNodeDoubleClick}
           onPaneClick={onPaneClick}
           onConnect={onConnect}
           onNodeDragStop={onNodeDragStop}
@@ -495,7 +594,7 @@ function BlueprintCanvasInner() {
           minZoom={0.25}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
-          defaultEdgeOptions={{ type: 'smoothstep' }}
+          defaultEdgeOptions={{ type: 'default' }}
         >
           <Background
             variant={BackgroundVariant.Lines}
@@ -604,7 +703,11 @@ const KEYFRAME_CSS = `
 export default function BlueprintCanvas() {
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId);
   const activeSessionId = useStore((s) => s.activeSessionId);
-  const providerKey = `${activeWorkspaceId ?? 'workspace'}:${activeSessionId ?? 'session'}`;
+  const graphPath = useStore((s) => s.graphPath);
+  // Append the drill-down path so React Flow's internal state (selection,
+  // viewport) resets cleanly when entering/leaving a composite subgraph.
+  const scopeKey = graphPath.map((crumb) => crumb.nodeId).join('>') || 'root';
+  const providerKey = `${activeWorkspaceId ?? 'workspace'}:${activeSessionId ?? 'session'}:${scopeKey}`;
   return (
     <ReactFlowProvider key={providerKey}>
       <BlueprintCanvasInner />

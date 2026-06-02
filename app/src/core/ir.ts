@@ -33,7 +33,8 @@ export type NodeType =
   | 'log'
   | 'variable'
   | 'codeblock'
-  | 'consensus';
+  | 'consensus'
+  | 'composite';
 
 /** A single pin (input/output port) on a node. */
 export interface IRPort {
@@ -125,9 +126,11 @@ export interface IRNode {
   /** Node category. */
   type: NodeType;
   /**
-   * Id of the containing `branch`/`loop` node, or undefined for the top scope.
-   * Children of a container are emitted inside its `if`/`while` block; the
-   * canvas renders them as independent nodes connected to the control node.
+   * Id of the containing `branch`/`loop`/`composite` node, or undefined for the
+   * top scope. Children of a container are emitted inside its `if`/`while` block
+   * (branch/loop) or its local `async function` body (composite); the canvas
+   * renders them as independent nodes connected to the container node. `composite`
+   * is the 4th container kind and reuses the same flat `parent` scoping mechanism.
    */
   parent?: string;
   /** Display label. */
@@ -157,6 +160,29 @@ export interface IRNode {
    *             — fan out voters, cross-validate, then vote (see ConsensusStrategy /
    *               ConsensusOpts). voters mirror parallel.branches (each carries its
    *               own full prompt); emitted as `consensus([…thunks], { … })`.
+   *   composite:{ inputs: IRPort[], outputs: IRPort[], label? }
+   *             — a reusable container encapsulating a complete sub-workflow with
+   *               declared input/output ports. Each entry of `inputs` is
+   *               `{ id, direction:'in', kind:'data'|'exec', label? }`; each entry
+   *               of `outputs` is `{ id, direction:'out', kind:'data'|'exec', label? }`.
+   *               The body nodes are NOT nested inside params — they are ordinary
+   *               IR nodes carrying `parent = <this composite id>` (flat scoping,
+   *               same as branch/loop), enabling unlimited nesting. The composite
+   *               compiles to a local `async function` declaration plus a call site;
+   *               its declared ports bind to the body via DATA edges:
+   *
+   *               Input binding (outer → composite port):
+   *                 { from:{node:OUTER,port:'data_out'}, to:{node:COMPOSITE,port:<inputPortId>} }
+   *               Input binding (composite port → inner consumer):
+   *                 { from:{node:COMPOSITE,port:<inputPortId>}, to:{node:INNER,port:'data_in'} }
+   *               Output binding (inner producer → composite port):
+   *                 { from:{node:INNER,port:'data_out'}, to:{node:COMPOSITE,port:<outputPortId>} }
+   *               Output binding (composite port → downstream consumer):
+   *                 { from:{node:COMPOSITE,port:<outputPortId>}, to:{node:DOWNSTREAM,port:'data_in'} }
+   *
+   *               Exec spine: outer `…→COMPOSITE→next` like any value node; the
+   *               body entry edge `COMPOSITE(exec_out)→firstChild(exec_in)` crosses
+   *               into the body scope (same convention as branch/loop body entry).
    */
   params: Record<string, unknown>;
   /** Optional explicit pin definitions; otherwise derived from the registry. */
@@ -208,6 +234,13 @@ export interface IRMeta {
   description?: string;
   /** Target adapter id, e.g. "claude-code". */
   adapter?: string;
+  /**
+   * "Simple workflow" mode. When true the graph must stay a single `agent` node
+   * (no other nodes, no edges) for its entire lifetime — used for easy, one-shot
+   * questions. AI edits are constrained to a single node and hard-collapsed on
+   * commit. Set by simpleBlueprint(); ignored by emit/parse.
+   */
+  simple?: boolean;
   gateway?: {
     defaults?: GatewaySelection;
   };

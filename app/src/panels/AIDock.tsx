@@ -28,7 +28,7 @@ import {
 import { shouldRefocusComposerAfterAppend } from '@/lib/composerEntryPolicy';
 import { tauriAvailable } from '@/lib/tauri';
 import { shallow } from 'zustand/shallow';
-import { useStore } from '@/store/useStore';
+import { isActiveAiEditingSession, useStore } from '@/store/useStore';
 
 const DEFAULT_DOCK_HEIGHT = 208; // matches the former h-52
 const MIN_DOCK_HEIGHT = 120;
@@ -442,7 +442,7 @@ export default function AIDock() {
   const permissionOptions = useStore((s) => s.permissionOptions);
   const workspaceHistory = useStore((s) => s.workspaceHistory);
   const mode = useStore((s) => s.mode);
-  const aiStreaming = useStore((s) => s.aiStreaming);
+  const activeAiEditing = useStore((s) => isActiveAiEditingSession(s));
   const answerInteraction = useStore((s) => s.answerInteraction);
   const dismissInteraction = useStore((s) => s.dismissInteraction);
   const streamRef = useRef<HTMLDivElement>(null);
@@ -825,7 +825,7 @@ export default function AIDock() {
   );
 
   const submit = () => {
-    if (isReadOnly || aiStreaming) return;
+    if (isReadOnly || activeAiEditing) return;
     const text = draft.trim();
     if (!text) return;
     sendPrompt(text);
@@ -861,7 +861,7 @@ export default function AIDock() {
           <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
             {t(locale, 'dock.aiReturn')}
           </span>
-          {aiStreaming && (
+          {activeAiEditing && (
             <span className="flex items-center gap-1 font-mono text-[10px] text-accent-2">
               <span className="omc-pulse-dot" />
               {t(locale, 'dock.generating')}
@@ -1000,7 +1000,7 @@ export default function AIDock() {
                         locale={locale}
                         active={
                           (m.interactionStatus ?? 'pending') === 'pending' &&
-                          (mode === 'running' || aiStreaming)
+                          (mode === 'running' || activeAiEditing)
                         }
                         onAnswer={(answer) => answerInteraction(m.id, answer)}
                         onDismiss={() => dismissInteraction(m.id)}
@@ -1142,17 +1142,17 @@ export default function AIDock() {
             <button
               type="button"
               onClick={submit}
-              disabled={!draft.trim() || isReadOnly || aiStreaming}
+              disabled={!draft.trim() || isReadOnly || activeAiEditing}
               title={
                 isReadOnly
                   ? t(locale, 'dock.inputLockedTitle')
-                  : aiStreaming
+                  : activeAiEditing
                     ? t(locale, 'dock.aiGeneratingTitle')
                     : t(locale, 'dock.sendShortcut')
               }
               className="rounded-md bg-accent px-2.5 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {aiStreaming ? '…' : '↑'}
+              {activeAiEditing ? '…' : '↑'}
             </button>
           </div>
 
@@ -1162,7 +1162,7 @@ export default function AIDock() {
               value={composer.workspace}
               history={workspaceHistory}
               onSelect={setWorkspace}
-              disabled={aiStreaming}
+              disabled={activeAiEditing}
             />
             <span className="font-mono text-[10px] text-fg-faint">
               {isReadOnly

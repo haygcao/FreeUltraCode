@@ -22,6 +22,19 @@ const data = (from: string, to: string): IREdge => ({
   kind: DATA,
 });
 
+/** A data edge with explicit ports (for composite port-binding edges). */
+const portData = (
+  from: string,
+  fromPort: string,
+  to: string,
+  toPort: string,
+): IREdge => ({
+  id: `d_${from}_${to}`,
+  from: { node: from, port: fromPort },
+  to: { node: to, port: toPort },
+  kind: DATA,
+});
+
 const start: IRNode = { id: 'n_start', type: 'start', label: 'Start', params: {} };
 const end: IRNode = { id: 'n_end', type: 'end', label: 'End', params: {} };
 
@@ -121,6 +134,113 @@ export const nestedSample: IRGraph = {
   layout: grid(['n_start', 'n_b', 'n_l', 'n_inner', 'n_end']),
 };
 
+/**
+ * F7 — composite (single input + single output). A `topic` variable feeds the
+ * composite's `in_topic` input port; inside, two chained agents (a1 → a2) produce
+ * the result; the `out_summary` output port flows to a downstream consumer agent.
+ * Exercises: body-entry edge, inner data edge, inner input/output port bindings,
+ * outer input/output port bindings.
+ */
+export const compositeSingleSample: IRGraph = {
+  version: 1,
+  meta: { name: 'composite-single', adapter: 'claude-code' },
+  nodes: [
+    start,
+    { id: 'n_topic', type: 'variable', label: 'topic', params: { name: 'topic', value: "'缓存层'", raw: true } },
+    {
+      id: 'c1',
+      type: 'composite',
+      label: 'Composite',
+      params: {
+        inputs: [{ id: 'in_topic', direction: 'in', kind: DATA, label: 'topic' }],
+        outputs: [{ id: 'out_summary', direction: 'out', kind: DATA, label: 'summary' }],
+      },
+    },
+    { id: 'a1', type: 'agent', parent: 'c1', label: 'Research', params: { prompt: '深入研究该主题。' } },
+    { id: 'a2', type: 'agent', parent: 'c1', label: 'Summarize', params: { prompt: '总结研究发现。' } },
+    { id: 'n_consumer', type: 'agent', label: 'Consumer', params: { prompt: '基于结果撰写报告。' } },
+    end,
+  ],
+  edges: [
+    // exec spine (top scope) + body entry.
+    exec('n_start', 'c1'),
+    exec('c1', 'n_consumer'),
+    exec('n_consumer', 'n_end'),
+    exec('c1', 'a1'),
+    exec('a1', 'a2'),
+    // inner data edge.
+    data('a1', 'a2'),
+    // inner input binding: composite input port → first inner consumer.
+    portData('c1', 'in_topic', 'a1', 'data_in'),
+    // inner output binding: inner producer → composite output port.
+    portData('a2', 'data_out', 'c1', 'out_summary'),
+    // outer input binding: outer producer → composite input port.
+    portData('n_topic', 'data_out', 'c1', 'in_topic'),
+    // outer output binding: composite output port → downstream consumer.
+    portData('c1', 'out_summary', 'n_consumer', 'data_in'),
+  ],
+  layout: grid(['n_start', 'n_topic', 'c1', 'a1', 'a2', 'n_consumer', 'n_end']),
+};
+
+/**
+ * F8 — nested composite (a composite inside a composite). Verifies unlimited
+ * nesting + nested local function declarations. Outer composite `outer` has one
+ * input + one output; its body contains an inner composite `inner` (also 1-in/1-out)
+ * plus a trailing agent. Data threads outer-input → inner → trailing agent → outer-output.
+ */
+export const compositeNestedSample: IRGraph = {
+  version: 1,
+  meta: { name: 'composite-nested', adapter: 'claude-code' },
+  nodes: [
+    start,
+    { id: 'n_seed', type: 'variable', label: 'seed', params: { name: 'seed', value: "'数据'", raw: true } },
+    {
+      id: 'outer',
+      type: 'composite',
+      label: 'Outer',
+      params: {
+        inputs: [{ id: 'o_in', direction: 'in', kind: DATA, label: 'src' }],
+        outputs: [{ id: 'o_out', direction: 'out', kind: DATA, label: 'result' }],
+      },
+    },
+    {
+      id: 'inner',
+      type: 'composite',
+      parent: 'outer',
+      label: 'Inner',
+      params: {
+        inputs: [{ id: 'i_in', direction: 'in', kind: DATA, label: 'x' }],
+        outputs: [{ id: 'i_out', direction: 'out', kind: DATA, label: 'y' }],
+      },
+    },
+    { id: 'ia', type: 'agent', parent: 'inner', label: 'InnerStep', params: { prompt: '处理输入。' } },
+    { id: 'oa', type: 'agent', parent: 'outer', label: 'OuterStep', params: { prompt: '加工结果。' } },
+    end,
+  ],
+  edges: [
+    // top-scope exec spine + outer body entry.
+    exec('n_start', 'outer'),
+    exec('outer', 'n_end'),
+    exec('outer', 'inner'),
+    exec('inner', 'oa'),
+    // inner body entry.
+    exec('inner', 'ia'),
+    // outer input binding (outer): seed → outer.o_in.
+    portData('n_seed', 'data_out', 'outer', 'o_in'),
+    // outer input → inner composite input (inside outer body): outer.o_in → inner.i_in.
+    portData('outer', 'o_in', 'inner', 'i_in'),
+    // inner input → inner agent: inner.i_in → ia.
+    portData('inner', 'i_in', 'ia', 'data_in'),
+    // inner output binding: ia → inner.i_out.
+    portData('ia', 'data_out', 'inner', 'i_out'),
+    // inner output → outer trailing agent: inner.i_out → oa.
+    portData('inner', 'i_out', 'oa', 'data_in'),
+    // outer output binding: oa → outer.o_out.
+    portData('oa', 'data_out', 'outer', 'o_out'),
+  ],
+  layout: grid(['n_start', 'n_seed', 'outer', 'inner', 'ia', 'oa', 'n_end']),
+};
+
 /** Layout-only fixtures that stress the layered auto-layout. */
 export const linearSample: IRGraph = {
   version: 1,
@@ -201,6 +321,8 @@ export const roundtripFixtures: { name: string; ir: IRGraph }[] = [
   { name: 'F4 loop (data edge into body)', ir: loopSample },
   { name: 'F5 nested branch>loop>agent', ir: nestedSample },
   { name: 'F6 default blueprint', ir: defaultBlueprint() },
+  { name: 'F7 composite (single in/out)', ir: compositeSingleSample },
+  { name: 'F8 composite (nested)', ir: compositeNestedSample },
 ];
 
 export const layoutFixtures: { name: string; ir: IRGraph }[] = [

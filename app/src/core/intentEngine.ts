@@ -20,7 +20,14 @@
  * `changed: false` and a hint explaining what the engine understands.
  */
 
-import { EXEC, type IRGraph, type IRNode, type NodeType } from './ir';
+import {
+  EXEC,
+  type ConsensusStrategy,
+  type IRGraph,
+  type IRNode,
+  type NodeType,
+} from './ir';
+import { defaultConsensusLenses } from './consensusHeuristic';
 import { shortId } from '@/lib/id';
 
 export interface IntentResult {
@@ -47,6 +54,7 @@ const NODE_DEFAULTS: Record<
   variable: { label: '变量', params: { value: null } },
   codeblock: { label: '代码块', params: { code: '' } },
   consensus: { label: '共识', params: { voters: [], strategy: 'multi-lens' } },
+  composite: { label: '复合', params: { inputs: [], outputs: [] } },
 };
 
 /**
@@ -100,6 +108,15 @@ function findNode(
   const candidates = opts.allowEnds
     ? ir.nodes
     : ir.nodes.filter((n) => n.type !== 'start' && n.type !== 'end');
+
+  const numberMatch =
+    q.match(/^#?\s*(\d+)\s*(?:号)?\s*(?:节点|node)?$/i) ??
+    q.match(/(?:#|节点\s*)(\d+)/i);
+  if (numberMatch) {
+    const label = Number.parseInt(numberMatch[1], 10);
+    const byNumber = candidates.find((n) => n.numberLabel === label);
+    if (byNumber) return byNumber;
+  }
 
   // 1) exact label
   const exact = candidates.find((n) => (n.label ?? '').toLowerCase() === q);
@@ -254,6 +271,51 @@ function detectModel(text: string): 'haiku' | 'sonnet' | 'opus' | null {
   return null;
 }
 
+function detectConsensusStrategy(text: string): ConsensusStrategy {
+  if (/(adversarial|对抗|反驳|证伪)/i.test(text)) return 'adversarial';
+  if (/(tournament|竞标|择优|方案)/i.test(text)) return 'tournament';
+  if (/(self[-\s]?consistency|自一致|多次采样)/i.test(text)) {
+    return 'self-consistency';
+  }
+  return 'multi-lens';
+}
+
+function isConsensusConversionIntent(text: string): boolean {
+  return /(?:转为|转换为|升级为|改成|改为|变成|convert|turn).*(?:共识|consensus)/i.test(
+    text,
+  );
+}
+
+function extractConsensusTarget(text: string): string | null {
+  const patterns = [
+    /(?:把|将)\s*(.+?)\s*(?:转为|转换为|升级为|改成|改为|变成)\s*(?:共识|consensus)/i,
+    /(?:convert|turn)\s+(.+?)\s+(?:to|into)\s+(?:a\s+)?(?:consensus)/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+function convertNodeToConsensusInIR(
+  ir: IRGraph,
+  node: IRNode,
+  strategy: ConsensusStrategy,
+): IRGraph {
+  const next = cloneIR(ir);
+  const found = next.nodes.find((n) => n.id === node.id);
+  if (!found) return next;
+  const target = String(found.params.prompt ?? found.label ?? '');
+  found.type = 'consensus';
+  found.params = {
+    ...(found.params ?? {}),
+    voters: defaultConsensusLenses(target),
+    strategy,
+  };
+  return next;
+}
+
 /**
  * Extract "把/将 X 改成/改为/重命名为 Y" target Y label, or null.
  * Falls back to: "重命名 X 为 Y", "改名 X 为 Y".
@@ -295,7 +357,46 @@ export function applyIntent(ir: IRGraph, text: string): IntentResult {
     return { ir, changed: false, note: '空指令，未做改动。' };
   }
 
-  // 1) Parallelize a specific node: "把 X 改成并行" — change node.type to parallel.
+  // 1) Convert a specific agent node to consensus in place: "将 #3 转为共识节点".
+  if (isConsensusConversionIntent(trimmed)) {
+    const target = extractConsensusTarget(trimmed);
+    let node = target ? findNode(ir, target) : null;
+    if (!node) {
+      const agents = ir.nodes.filter((n) => n.type === 'agent');
+      if (agents.length === 1) node = agents[0];
+    }
+    if (!node) {
+      return {
+        ir,
+        changed: false,
+        note: target
+          ? `未找到名为 "${target}" 的节点。`
+          : '未找到要转为共识的节点。',
+      };
+    }
+    if (node.type === 'consensus') {
+      return {
+        ir,
+        changed: false,
+        note: `"${node.label ?? node.id}" 已经是共识节点。`,
+      };
+    }
+    if (node.type !== 'agent') {
+      return {
+        ir,
+        changed: false,
+        note: `"${node.label ?? node.id}" 不是 agent 节点，未自动转为共识。`,
+      };
+    }
+    const strategy = detectConsensusStrategy(trimmed);
+    return {
+      ir: convertNodeToConsensusInIR(ir, node, strategy),
+      changed: true,
+      note: `已将 "${node.label ?? node.id}" 原地转为共识节点，并保留连接。`,
+    };
+  }
+
+  // 2) Parallelize a specific node: "把 X 改成并行" — change node.type to parallel.
   if (isParallelizeIntent(trimmed)) {
     const target = extractParallelTarget(trimmed);
     if (target) {
@@ -328,7 +429,7 @@ export function applyIntent(ir: IRGraph, text: string): IntentResult {
     }
   }
 
-  // 2) Rename: "把 X 改成 Y" / "重命名 X 为 Y"
+  // 3) Rename: "把 X 改成 Y" / "重命名 X 为 Y"
   if (isRenameIntent(trimmed) && !isParallelizeIntent(trimmed)) {
     const ren = extractRenameTarget(trimmed);
     if (ren) {
@@ -351,7 +452,7 @@ export function applyIntent(ir: IRGraph, text: string): IntentResult {
     }
   }
 
-  // 3) Model change — applies when a model keyword is present and the text
+  // 4) Model change — applies when a model keyword is present and the text
   //    talks about "模型" / "model", e.g. "把 Scan 模型改成 opus".
   const model = detectModel(trimmed);
   if (model && /(模型|model)/i.test(trimmed)) {
@@ -388,7 +489,7 @@ export function applyIntent(ir: IRGraph, text: string): IntentResult {
     };
   }
 
-  // 4) Remove node: "删除 X" / "去掉 verify"
+  // 5) Remove node: "删除 X" / "去掉 verify"
   if (isRemoveIntent(trimmed)) {
     // Try a labeled target first (everything after the verb).
     const m = trimmed.match(
@@ -419,7 +520,7 @@ export function applyIntent(ir: IRGraph, text: string): IntentResult {
     return { ir, changed: false, note: '未找到要删除的目标节点。' };
   }
 
-  // 5) Add node: "增加一个 verify" / "加一个并行" / "add agent"
+  // 6) Add node: "增加一个 verify" / "加一个并行" / "add agent"
   if (isAddIntent(trimmed)) {
     const type = detectNodeType(trimmed);
     if (type) {

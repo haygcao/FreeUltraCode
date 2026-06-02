@@ -54,6 +54,13 @@ export interface RunSpec {
   label?: string;
   agentType?: string;
   model?: string;
+  /**
+   * Optional schema identifier (e.g. `"VERDICT"`). Names an entry in
+   * `IRGraph.meta.schemaDefs` whose literal body the run engine enforces on this
+   * spec's output: it appends a structure instruction, extracts the JSON, and
+   * validates + (bounded) retries. See `runtime/schema.ts`.
+   */
+  schema?: string;
   gateway?: NodeGatewayOverride;
 }
 
@@ -244,6 +251,47 @@ export interface RunContext {
   maxRetries: number;
   /** Default consensus fan-out samples (clamped 2..7 by the engine). */
   consensusSamples: number;
+  /**
+   * Quantity-for-quality run-time voting tunables. All OPTIONAL — when the *Max
+   * fields are absent or <= 1 the engine makes a single call (no fan-out, no
+   * extra agents), so headless / CLI / test callers that omit them are
+   * byte-for-byte unchanged. The GUI passes min=2 / max=16 by default.
+   *
+   * Each feature is a (min,max) pair: `min` is the starting sample count; on
+   * high measured disagreement the count doubles min→…→max (reusing prior
+   * samples) before the final vote. `complexityScaling` scales the STARTING
+   * count within [min,max].
+   */
+  /** Starting run-time vote samples for a complex node (default 2). */
+  runtimeVoteSamplesMin?: number;
+  /** Escalation ceiling for a complex node (<=1/undefined = voting off). */
+  runtimeVoteSamplesMax?: number;
+  /** Starting run-time vote samples for a terminal node (default 2). */
+  terminalVoteSamplesMin?: number;
+  /** Escalation ceiling for a terminal node (<=1/undefined = voting off). */
+  terminalVoteSamplesMax?: number;
+  /** Multiplier scaling the starting sample count by node complexity. 1/undefined = no scaling. */
+  complexityScaling?: number;
+  /**
+   * Run-level escalation budget: the maximum TOTAL extra samples (beyond the
+   * first per node) the divergence loop may spend across the whole run. Bounds
+   * `Σ per-node escalation` so a large graph can't multiply the per-node ceiling
+   * by node count unbounded. Undefined = unbounded (GUI sets a sane cap).
+   */
+  escalationBudget?: number;
+  /**
+   * Mutable counter of escalation samples already spent this run (the engine
+   * increments it as the divergence loop fans out extra samples). Starts at 0 /
+   * undefined; bounded by {@link escalationBudget}.
+   */
+  escalationSpent?: number;
+  /**
+   * Master switch for divergence-driven escalation. Default (GUI) ON. When
+   * false, a covered node runs its starting `min` samples and votes once but
+   * NEVER doubles on disagreement (hard cap at min). Undefined ⇒ treated as ON
+   * whenever voting is enabled at all.
+   */
+  adaptiveEscalation?: boolean;
   /** Injected host gateway capabilities. */
   gateway: RunGateway;
   /** Per-spawn CLI command override (set once a CLI route is resolved). */
@@ -260,6 +308,15 @@ export interface RunContext {
    * before.
    */
   agentChains?: Map<string, { sessionId: string; isFirst: boolean }>;
+  /**
+   * Internal: the live per-node terminal-result accumulator owned by
+   * {@link executeWorkflowDag}. Set once at run start so nested schedulers (the
+   * composite-body executor in `runtime/composite.ts`) can record their body
+   * nodes' results into the same aggregate {@link RunResult.nodeResults}. Not
+   * part of the host contract — host implementers never populate this; the engine
+   * wires it up itself. Absent ⇒ body results are simply not aggregated.
+   */
+  nodeResults?: Record<string, NodeRunResult>;
 }
 
 export type {

@@ -176,7 +176,7 @@ export const UNIFIED_SYSTEM = `你是 OpenWorkflows 的工作流编辑助手。O
 IRGraph 结构（编译为真实可运行的 workflow，请严格遵守）：
 - 外壳：{version, meta, nodes, edges, layout?}
 - meta: {name, description?, adapter?, gateway?:{defaults?:{adapter, modelClass, providerId?, channelId?}}, schemaDefs?}（schemaDefs 把 schema 标识符名映射到其 JS 对象源码）
-- node: {id, type, parent?, label?, binding?, params}；type ∈ start|end|agent|parallel|pipeline|phase|branch|loop|workflow|log|variable|codeblock|consensus；parent 为所在 branch/loop 节点 id（顶层省略）
+- node: {id, type, parent?, label?, binding?, params}；type ∈ start|end|agent|parallel|pipeline|phase|branch|loop|workflow|log|variable|codeblock|consensus|composite；parent 为所在 branch/loop/composite 节点 id（顶层省略）
 - start.params.userInputs 记录用户的需求、补充说明和澄清回答；Start 节点在画布上只展示摘要。你只读此字段作为上下文，不要新增或改写条目——客户端会自动合并新输入。
 - 输出新蓝图时原样保留已有 userInputs 数组（不要增删改），系统侧会自动追加以保证完整。
 - agent.params: {prompt, label?, agentType?, model?, gateway?, schema?, isolation?, phase?}（用 agentType 而非 agent；schema 是裸标识符名，须是 meta.schemaDefs 的键；model ∈ haiku|sonnet|opus；默认继承 meta.gateway.defaults，不要给新节点写 model:'sonnet'）
@@ -184,6 +184,11 @@ IRGraph 结构（编译为真实可运行的 workflow，请严格遵守）：
 - pipeline.params: {items, stages:[{prompt, agentType?, schema?}]}（items 是输入数组表达式名）
 - consensus.params: {voters:[{prompt, agentType?, model?, schema?, label?}], strategy, samples?, quorum?, schema?}；strategy ∈ adversarial|multi-lens|tournament|self-consistency；voters 同 parallel.branches，各自带完整 prompt；编译为自包含的 consensus() 辅助函数（多角度扇出→交叉验证→投票），导出脚本可直接在真实 Claude Code 运行
 - branch.params/loop.params: {condition}；子节点是独立 node 且 parent 指向该 branch/loop id
+- composite.params: {inputs:[{id,kind,label?}], outputs:[{id,kind,label?}], label?}；把一段"本身就是完整子工作流"的复杂步骤封装成可展开的子图——子节点是独立 node 且 parent 指向该 composite 节点 id（与 branch/loop 同理，平铺在同一张图里），编译为自包含的本地 async 函数（可无限嵌套，composite 里还能再放 composite）。端口/绑定约定（务必精确，否则数据流不通）：
+  · 输入端口：每个 inputs[].id（如 'in_topic'）。外层喂入：data 边 from:{node:上游,port:'data_out'} → to:{node:该composite,port:'in_topic'}（**to.port 必须等于某 inputs[].id**）；内部读取：data 边 from:{node:该composite,port:'in_topic'} → to:{node:内部节点,port:'data_in'}
+  · 输出端口：每个 outputs[].id（如 'out_summary'）。内部写出：data 边 from:{node:内部节点,port:'data_out'} → to:{node:该composite,port:'out_summary'}（**to.port 必须等于某 outputs[].id**）；下游读取：data 边 from:{node:该composite,port:'out_summary'} → to:{node:下游,port:'data_in'}
+  · exec：外层 …→composite→后继；体入口用一条 exec 边 from:{node:该composite,port:'exec_out'} → to:{node:首个子节点,port:'exec_in'}（同 branch/loop 体入口约定），子节点间 child→child
+  · kind ∈ data|exec，id 用短稳定串
 - variable.params:{name,value,raw?} log.params:{message} workflow.params:{name} codeblock.params:{code}
 - edges: {id, from:{node,port}, to:{node,port}, kind}，kind ∈ exec|data。start→…→end 用 exec 边连成执行流；branch/loop 用一条 exec 边连到首个子节点，子节点间 child→child；数据流用 data 边（不要在 prompt 里写 \${}）。编辑时尽量保留已有 node id。
 
@@ -195,7 +200,21 @@ IRGraph 结构（编译为真实可运行的 workflow，请严格遵守）：
 
 **共识/投票（复杂任务才用）**：对**复杂或高风险**的关键步骤（安全审计、架构决策、需要交叉验证、不容出错的结论、需要从多源/多角度核验），用 consensus 节点而非单个 agent——它"多角度探索→对抗式交叉验证→投票"，质量来自对抗而非堆量。判断"复杂"的免费信号：prompt 很长、含多个子目标、汇聚多路上游、命中 审计/安全/架构/重构/验证 等关键词。简单步骤仍用普通 agent，避免无谓的 N 倍成本。策略选择：默认 multi-lens（多视角投票）；安全/强对抗场景用 adversarial（先出结论再专门反驳）；多方案择优用 tournament（打分选胜并嫁接亮点）；同质自检用 self-consistency（同提示跑 N 次取多数）。voters 写成差异化的角度提示，并尽量配 schema（如 VERDICT）让投票可靠。
 
+**复合/嵌套（任务非常复杂才用）**：当某一步**本身就是一整个子工作流**——多目标、多阶段、可独立验收、需要自己的内部并行/分支、或单个 agent 的 prompt 已经塞不下——用 composite 节点把它**嵌套成子图**，而不是在主图里继续平铺一长串节点。判断"非常复杂"的免费信号：用户描述里反复出现"先…再…然后…"、可拆出的子任务 ≥ 4、该步需要自己的内部并行/分支结构、与主流程语义上属于不同抽象层。简单或中等复杂度仍用 agent / parallel / pipeline，**不要为了显得有层次而无谓嵌套**（嵌套有认知开销）。composite 的子节点必须 parent=该 composite 节点 id；输入/输出**只能**通过上面的端口约定与外部连接（边的 port 必须精确等于声明的 inputs[].id / outputs[].id），不要让子节点直接拉一条裸 data 边跨出 composite 边界。最小示例（composite c1：1 输入 in_x、1 输出 out_y，内含 a1→a2）：
+  nodes: [..., {id:'c1',type:'composite',params:{inputs:[{id:'in_x',kind:'data',label:'输入'}],outputs:[{id:'out_y',kind:'data',label:'结果'}]}}, {id:'a1',type:'agent',parent:'c1',params:{prompt:'…'}}, {id:'a2',type:'agent',parent:'c1',params:{prompt:'…'}}, ...]
+  edges: [..., {from:{node:'上游',port:'data_out'},to:{node:'c1',port:'in_x'},kind:'data'}, {from:{node:'c1',port:'in_x'},to:{node:'a1',port:'data_in'},kind:'data'}, {from:{node:'a2',port:'data_out'},to:{node:'c1',port:'out_y'},kind:'data'}, {from:{node:'c1',port:'out_y'},to:{node:'下游',port:'data_in'},kind:'data'}, {from:{node:'c1',port:'exec_out'},to:{node:'a1',port:'exec_in'},kind:'exec'}, {from:{node:'a1',port:'exec_out'},to:{node:'a2',port:'exec_in'},kind:'exec'}, ...]
+
 代码块里必须是**单个合法 JSON 对象**，不含多余文字或注释。`;
+
+/**
+ * System prompt for "simple workflow" mode. Here the AI dock acts like a plain
+ * CLI/chat: the user's input goes straight to the model and the answer is
+ * streamed back. No blueprint generation, no IRGraph — just a direct answer.
+ */
+export const SIMPLE_CHAT_SYSTEM = `你正在「简单 Workflow」里直接为用户服务，等价于直接用命令行/对话方式调用模型来处理简单问题。请直接根据用户输入作答或完成任务：
+- 不要生成、输出或修改 workflow 蓝图，不要输出 IRGraph 或任何 \`\`\`json 蓝图代码块。
+- 直接给出答案或结果；若处于命令行环境且任务确实需要，可在当前工作区做必要的读写/操作。
+- 回答简洁、直接、切题，不要反问或等待确认，除非信息严重不足。`;
 
 /**
  * AI 改图时为每个节点自动选模型的策略。与 store 的 ComposerSettings.modelStrategy

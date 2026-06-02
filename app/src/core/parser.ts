@@ -2,6 +2,7 @@ import { parse } from '@babel/parser';
 import type {
   CallExpression,
   Expression,
+  FunctionDeclaration,
   Node as BabelNode,
   ObjectExpression,
   Statement,
@@ -15,6 +16,7 @@ import {
   type IRGraph,
   type IRNode,
   type IRMeta,
+  type IRPort,
   type NodeGatewayOverride,
   type NodeType,
 } from './ir';
@@ -89,6 +91,15 @@ class ParseContext {
   edges: IREdge[] = [];
   /** Map of bound variable name → node id, for resolving data references. */
   bindings = new Map<string, string>();
+  /**
+   * While inside a composite function body, maps each function-parameter name to
+   * the composite node + declared input port it represents, so inner references to
+   * a parameter reconstruct an input-binding data edge
+   * `{ from:{node:composite,port}, to:{node:inner,port:'data_in'} }`.
+   */
+  paramBindings = new Map<string, { compositeId: string; portId: string }>();
+  /** Composite function name (`__composite_<var>`) → composite node id, for call-site matching. */
+  compositeByFn = new Map<string, string>();
   layout: Record<string, { x: number; y: number }> = {};
   private col = 0;
   /** Stack of scopes; index 0 is the top scope (parent === undefined). */
@@ -120,6 +131,14 @@ class ParseContext {
     if (name) this.bindings.set(name, nodeId);
   }
 
+  /**
+   * Append an already-created node (e.g. a composite, defined earlier as a
+   * function but sequenced at its call site) to the current scope's exec sequence.
+   */
+  pushExecNode(node: IRNode): void {
+    this.frame.execSeq.push(node);
+  }
+
   pushScope(parentId: string): void {
     this.frames.push({ parentId, execSeq: [] });
   }
@@ -145,14 +164,19 @@ class ParseContext {
     });
   }
 
-  addDataEdge(sourceNodeId: string, targetNodeId: string): void {
+  addDataEdge(
+    sourceNodeId: string,
+    targetNodeId: string,
+    fromPort = 'data_out',
+    toPort = 'data_in',
+  ): void {
     if (sourceNodeId === targetNodeId) return;
     const id = `d_${sourceNodeId}_${targetNodeId}`;
     if (this.edges.some((e) => e.id === id)) return;
     this.edges.push({
       id,
-      from: { node: sourceNodeId, port: 'data_out' },
-      to: { node: targetNodeId, port: 'data_in' },
+      from: { node: sourceNodeId, port: fromPort },
+      to: { node: targetNodeId, port: toPort },
       kind: DATA,
     });
   }
@@ -206,6 +230,19 @@ function handleStatement(stmt: Statement, ctx: ParseContext): void {
       applyMeta(decl.init, ctx);
       return;
     }
+    ctx.addNode(codeblockNode(stmt, ctx), { executable: true });
+    return;
+  }
+
+  // async function __composite_xxx(args) { … } annotated with `// @composite <id>`
+  // → composite definition (a local sub-workflow function).
+  if (stmt.type === 'FunctionDeclaration') {
+    const compositeId = readPrecedingAnnotation(ctx.src, stmt, 'composite');
+    if (compositeId) {
+      handleCompositeDefinition(stmt, compositeId, ctx);
+      return;
+    }
+    // A function without the `// @composite` trigger → verbatim codeblock.
     ctx.addNode(codeblockNode(stmt, ctx), { executable: true });
     return;
   }
@@ -381,6 +418,11 @@ function handleCall(
       return;
     }
     default: {
+      // const x = await __composite_xxx(args) // @node <id> → composite call site.
+      if (callee && callee.startsWith('__composite_') && ctx.compositeByFn.has(callee)) {
+        handleCompositeCall(call, stmt, callee, bindName, ctx);
+        return;
+      }
       ctx.addNode(codeblockNode(stmt, ctx), { executable: true });
       return;
     }
@@ -401,6 +443,223 @@ function finalizeCallNode(
   ctx.addNode(node, { executable: true });
   ctx.bind(bindName, node.id);
   wireDataRefs(node, call, ctx);
+}
+
+/* -------------------------------------------------------------------------- */
+/* composite (local async function ↔ encapsulated sub-workflow)               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Reads a `// @<tag> <value>` annotation from the comment line(s) immediately
+ * preceding a node's start (the emitter places `// @composite`/`// @ports` on
+ * their own lines above `async function …`). Returns the first token after the
+ * tag, or null.
+ */
+function readPrecedingAnnotation(
+  src: string,
+  node: BabelNode,
+  tag: string,
+): string | null {
+  const tokens = readPrecedingMultiAnnotation(src, node, tag);
+  return tokens && tokens.length > 0 ? tokens[0] : null;
+}
+
+/** Like {@link readPrecedingAnnotation} but returns all whitespace-separated tokens. */
+function readPrecedingMultiAnnotation(
+  src: string,
+  node: BabelNode,
+  tag: string,
+): string[] | null {
+  const start = node.start ?? 0;
+  // Scan up to a handful of lines above the node start for the annotation.
+  const re = new RegExp(`// @${escapeRe(tag)}\\s+(.+)$`, 'u');
+  let pos = start;
+  for (let i = 0; i < 6; i += 1) {
+    const lineStart = src.lastIndexOf('\n', pos - 1) + 1;
+    const line = src.slice(lineStart, src.indexOf('\n', lineStart) === -1 ? undefined : src.indexOf('\n', lineStart));
+    const m = re.exec(line);
+    if (m) return m[1].trim().split(/\s+/).filter(Boolean);
+    if (lineStart === 0) break;
+    pos = lineStart - 1;
+    // Stop scanning once we pass a non-comment, non-blank line.
+    const trimmed = line.trim();
+    if (i > 0 && trimmed && !trimmed.startsWith('//')) break;
+  }
+  return null;
+}
+
+/** Parse the `@ports in=id:label out=id:label …` token list into input/output ports. */
+function parsePortsAnnotation(tokens: string[] | null): {
+  inputs: IRPort[];
+  outputs: IRPort[];
+} {
+  const inputs: IRPort[] = [];
+  const outputs: IRPort[] = [];
+  for (const token of tokens ?? []) {
+    const eq = token.indexOf('=');
+    if (eq < 0) continue;
+    const dir = token.slice(0, eq);
+    const rest = token.slice(eq + 1);
+    const colon = rest.indexOf(':');
+    const id = colon < 0 ? rest : rest.slice(0, colon);
+    const label = colon < 0 ? undefined : rest.slice(colon + 1).replace(/_/g, ' ');
+    if (!id) continue;
+    if (dir === 'in') inputs.push({ id, direction: 'in', kind: DATA, label });
+    else if (dir === 'out') outputs.push({ id, direction: 'out', kind: DATA, label });
+  }
+  return { inputs, outputs };
+}
+
+/**
+ * Handle a composite *definition*: an `async function __composite_<var>(params)`
+ * annotated `// @composite <id>` / `// @ports …`. Creates the composite node,
+ * registers its function name for call-site matching, registers each param as a
+ * binding to its declared input port, walks the body in a pushed scope (children
+ * inherit parent === composite id), and reconstructs output-binding edges from the
+ * `return` (using `@return`/`@returns`).
+ */
+function handleCompositeDefinition(
+  fn: FunctionDeclaration,
+  compositeId: string,
+  ctx: ParseContext,
+): void {
+  const fnName = fn.id?.name ?? '';
+  const { inputs, outputs } = parsePortsAnnotation(
+    readPrecedingMultiAnnotation(ctx.src, fn, 'ports'),
+  );
+
+  const node: IRNode = {
+    id: compositeId,
+    type: 'composite',
+    label: 'Composite',
+    params: { inputs, outputs },
+  };
+  // Add to the graph but NOT to the current exec sequence: in the emitted script
+  // the function declaration precedes the call site, but in the IR exec spine the
+  // composite sits at its *call-site* position. The call site (handled later)
+  // appends it to the exec sequence at the right place.
+  ctx.addNode(node, { executable: false });
+  if (fnName) ctx.compositeByFn.set(fnName, compositeId);
+
+  // Map each function parameter (in order) to its declared input port, so inner
+  // references to the param become input-binding edges.
+  const paramNames = fn.params.map((p) =>
+    p.type === 'Identifier' ? p.name : null,
+  );
+  const savedParamBindings = ctx.paramBindings;
+  ctx.paramBindings = new Map(savedParamBindings);
+  paramNames.forEach((name, i) => {
+    const port = inputs[i];
+    if (name && port) {
+      ctx.paramBindings.set(name, { compositeId, portId: port.id });
+    }
+  });
+
+  // Walk the body in the composite's scope, capturing the return statement.
+  ctx.pushScope(compositeId);
+  let returnStmt: BabelNode | null = null;
+  for (const s of fn.body.body) {
+    if (s.type === 'ReturnStatement') {
+      returnStmt = s;
+      continue; // handled below as output bindings, not as a node
+    }
+    handleStatement(s as Statement, ctx);
+  }
+  // Reconstruct output-binding edges from the return expression + annotations.
+  if (returnStmt) wireCompositeReturn(node, returnStmt, outputs, ctx);
+  ctx.popScope();
+
+  ctx.paramBindings = savedParamBindings;
+}
+
+/**
+ * Reconstruct output-binding edges from a composite's `return`:
+ *   - single output: `return <var> // @return <portId>` → edge inner→{composite,port}
+ *   - multi output:  `return { portId: <var>, … } // @returns p1,p2`
+ */
+function wireCompositeReturn(
+  composite: IRNode,
+  returnStmt: BabelNode,
+  outputs: IRPort[],
+  ctx: ParseContext,
+): void {
+  const arg = (returnStmt as { argument?: Expression | null }).argument;
+  if (!arg) return;
+
+  const single = readAnnotation(ctx.src, returnStmt, 'return');
+  if (single && arg.type === 'Identifier') {
+    const sourceId = ctx.bindings.get(arg.name);
+    if (sourceId) ctx.addDataEdge(sourceId, composite.id, 'data_out', single);
+    return;
+  }
+
+  if (arg.type === 'ObjectExpression') {
+    for (const prop of arg.properties) {
+      if (
+        prop.type !== 'ObjectProperty' ||
+        prop.key.type !== 'Identifier' ||
+        prop.value.type !== 'Identifier'
+      ) {
+        continue;
+      }
+      const portId = prop.key.name;
+      const sourceId = ctx.bindings.get(prop.value.name);
+      if (sourceId) ctx.addDataEdge(sourceId, composite.id, 'data_out', portId);
+    }
+    return;
+  }
+
+  // Fallback: a single declared output with a non-identifier/no-annotation return.
+  if (outputs.length === 1 && arg.type === 'Identifier') {
+    const sourceId = ctx.bindings.get(arg.name);
+    if (sourceId) ctx.addDataEdge(sourceId, composite.id, 'data_out', outputs[0].id);
+  }
+}
+
+/**
+ * Handle a composite *call site*: `const x = await __composite_<var>(args) // @node
+ * <id>`. Looks up the previously-registered composite node, binds the call var,
+ * wires exec, and reconstructs input-binding edges from the call arguments
+ * (positional, by declared input-port order). Downstream references to the call
+ * var reconstruct output-binding edges via the normal identifier-scan mechanism.
+ */
+function handleCompositeCall(
+  call: CallExpression,
+  stmt: BabelNode,
+  fnName: string,
+  bindName: string | null,
+  ctx: ParseContext,
+): void {
+  const compositeId = ctx.compositeByFn.get(fnName)!;
+  const node = ctx.nodes.find((n) => n.id === compositeId);
+  if (!node) {
+    ctx.addNode(codeblockNode(stmt, ctx), { executable: true });
+    return;
+  }
+
+  // The annotated `// @node` id should match the definition's composite id; we
+  // keep the definition node as the single instance and just bind/wire it here.
+  if (bindName) node.binding = bindName;
+  ctx.bind(bindName, compositeId);
+  // Sequence the composite into the exec spine at the call-site position.
+  ctx.pushExecNode(node);
+
+  // Input-binding edges: arg[i] (an outer producer or an enclosing composite's
+  // parameter) → {composite, inputPort[i]}.
+  const inputs = (node.params.inputs as IRPort[]) ?? [];
+  call.arguments.forEach((arg, i) => {
+    const port = inputs[i];
+    if (!port || !arg || arg.type !== 'Identifier') return;
+    // An enclosing composite's parameter feeds the nested composite via that
+    // composite's output-side port (its declared input port from the outer view).
+    const param = ctx.paramBindings.get(arg.name);
+    if (param) {
+      ctx.addDataEdge(param.compositeId, compositeId, param.portId, port.id);
+      return;
+    }
+    const sourceId = ctx.bindings.get(arg.name);
+    if (sourceId) ctx.addDataEdge(sourceId, compositeId, 'data_out', port.id);
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -671,6 +930,13 @@ function wireDataRefs(node: IRNode, call: CallExpression, ctx: ParseContext): vo
   }
 
   for (const name of collectIdentifiers(call.arguments)) {
+    // A reference to a composite function parameter inside the body reconstructs
+    // an input-binding edge from the composite's declared input port.
+    const param = ctx.paramBindings.get(name);
+    if (param) {
+      ctx.addDataEdge(param.compositeId, node.id, param.portId, 'data_in');
+      continue;
+    }
     const sourceId = ctx.bindings.get(name);
     if (sourceId) ctx.addDataEdge(sourceId, node.id);
   }

@@ -180,6 +180,166 @@ export async function autosave(
   return LOCAL_STORAGE_PATH;
 }
 
+/**
+ * Export the current workflow to a user-chosen file so it can be shared or
+ * backed up. Unlike {@link saveWorkflow}, the browser fallback performs a real
+ * file download (not a localStorage write) and the per-run snapshot is stripped
+ * so the exported file is a clean, portable blueprint.
+ *
+ * @returns The path written (Tauri), the EXPORT_DOWNLOAD_PATH sentinel (browser
+ *          download), or null when the user cancelled / nothing happened.
+ */
+export async function exportWorkflowToFile(
+  ir: IRGraph,
+  title = '导出 Workflow',
+): Promise<string | null> {
+  const clean = stripRunSnapshot(ir);
+  const json = JSON.stringify(clean, null, 2);
+  const fileName = defaultFileName(clean);
+
+  if (!tauriAvailable()) {
+    return browserDownload(fileName, json) ? EXPORT_DOWNLOAD_PATH : null;
+  }
+
+  const save = await getSaveDialog();
+  const picked = await save({
+    title,
+    defaultPath: fileName,
+    filters: [{ name: 'OpenWorkflows', extensions: ['owf.json', 'json'] }],
+  });
+  if (!picked) return null;
+  const target = typeof picked === 'string' ? picked : String(picked);
+
+  try {
+    const fs = await getFs();
+    await fs.writeTextFile(target, json);
+    return target;
+  } catch {
+    return browserDownload(fileName, json) ? EXPORT_DOWNLOAD_PATH : null;
+  }
+}
+
+/**
+ * Import a workflow from a user-chosen file. Mirrors {@link exportWorkflowToFile}:
+ * the browser fallback opens a real file picker (not localStorage). Returns null
+ * when the user cancelled or the file was not a valid workflow IR.
+ */
+export async function importWorkflowFromFile(title = '导入 Workflow'): Promise<{
+  ir: IRGraph;
+  path: string | null;
+} | null> {
+  if (!tauriAvailable()) {
+    const text = await browserPickFile();
+    if (text == null) return null;
+    const ir = parseWorkflowJson(text);
+    return ir ? { ir, path: null } : null;
+  }
+
+  const open = await getOpenDialog();
+  const picked = await open({
+    title,
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'OpenWorkflows', extensions: ['owf.json', 'json'] }],
+  });
+  if (!picked) return null;
+  const target = Array.isArray(picked)
+    ? String(picked[0])
+    : typeof picked === 'string'
+      ? picked
+      : String(picked);
+
+  try {
+    const fs = await getFs();
+    const text = await fs.readTextFile(target);
+    const ir = parseWorkflowJson(text);
+    return ir ? { ir, path: target } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Sentinel path returned after a browser export triggered a file download. */
+export const EXPORT_DOWNLOAD_PATH = 'download://owf_workflow';
+
+/** Strip the per-run snapshot from the IR so exports are clean blueprints. */
+function stripRunSnapshot(ir: IRGraph): IRGraph {
+  if (!ir.meta?.run) return ir;
+  const meta = { ...ir.meta };
+  delete meta.run;
+  return { ...ir, meta };
+}
+
+/** Parse + shape-guard a workflow JSON string. Returns null when not an IR. */
+function parseWorkflowJson(text: string): IRGraph | null {
+  try {
+    const ir = JSON.parse(text) as IRGraph;
+    if (ir && Array.isArray(ir.nodes) && Array.isArray(ir.edges)) return ir;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Trigger a browser file download for the given contents. Returns success. */
+function browserDownload(fileName: string, contents: string): boolean {
+  try {
+    if (typeof document === 'undefined' || typeof URL === 'undefined') {
+      return false;
+    }
+    const blob = new Blob([contents], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on the next tick so the click has a chance to start the download.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Open a hidden <input type="file"> and resolve the selected file's text.
+ * Resolves null on error. (Picker cancellation simply never resolves — the
+ * caller treats a no-op as "nothing imported", which is the desired behaviour.)
+ */
+function browserPickFile(): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      if (typeof document === 'undefined') {
+        resolve(null);
+        return;
+      }
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,.owf.json,application/json';
+      input.style.display = 'none';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        input.remove();
+        if (!file) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () =>
+          resolve(typeof reader.result === 'string' ? reader.result : null);
+        reader.onerror = () => resolve(null);
+        reader.readAsText(file);
+      };
+      document.body.appendChild(input);
+      input.click();
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 /** Derive a sensible default file name from the IR meta. */
 function defaultFileName(ir: IRGraph): string {
   const base = (ir.meta.name ?? 'workflow')
