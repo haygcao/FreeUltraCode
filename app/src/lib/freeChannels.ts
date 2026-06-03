@@ -14,9 +14,9 @@ import { freeChannelAutoKeys, freeProxyEnsure, isTauri } from '@/lib/tauri';
  * (gatewayRouteEnv -> ANTHROPIC_BASE_URL/...) lights up unchanged.
  *
  * Storage keys (localStorage):
- *   owf_free_channel_keys_v1   -> { [id]: apiKey }
- *   owf_free_channel_models_v1 -> { [id]: modelOverride }
- *   owf_free_proxy_port_v1     -> number (default 8765)
+ *   fuc_free_channel_keys_v1   -> { [id]: apiKey }
+ *   fuc_free_channel_models_v1 -> { [id]: modelOverride }
+ *   fuc_free_proxy_port_v1     -> number (default 8765)
  *
  * Exports the UI phase relies on:
  *   FREE_CHANNELS, FREE_CHANNEL_PROVIDER_PREFIX, freeChannelById,
@@ -56,9 +56,9 @@ export const FREE_CHANNEL_PROVIDER_PREFIX = 'freecc:';
 
 const DEFAULT_FREE_PROXY_PORT = 8765;
 
-const KEYS_STORAGE = 'owf_free_channel_keys_v1';
-const MODELS_STORAGE = 'owf_free_channel_models_v1';
-const PORT_STORAGE = 'owf_free_proxy_port_v1';
+const KEYS_STORAGE = 'fuc_free_channel_keys_v1';
+const MODELS_STORAGE = 'fuc_free_channel_models_v1';
+const PORT_STORAGE = 'fuc_free_proxy_port_v1';
 
 export const FREE_CHANNELS: FreeChannel[] = [
   {
@@ -287,7 +287,7 @@ function writeRecord(key: string, value: Record<string, string>): void {
   try {
     if (!hasWindow()) return;
     window.localStorage.setItem(key, JSON.stringify(value));
-    window.dispatchEvent(new Event('owf:gateway-config-changed'));
+    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
   } catch {
     /* ignore */
   }
@@ -446,7 +446,7 @@ function setCachedFreeProxyPort(port: number): void {
     // re-read; mirror writeRecord's dispatch so they refresh. Only fire when
     // the value actually changed to avoid redundant refreshes.
     if (prev !== next) {
-      window.dispatchEvent(new Event('owf:gateway-config-changed'));
+      window.dispatchEvent(new Event('fuc:gateway-config-changed'));
     }
   } catch {
     /* ignore */

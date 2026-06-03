@@ -11,7 +11,7 @@ if "%MODEL%"=="" (
 set "EXIT_CODE=%ERRORLEVEL%"
 echo.
 if "%EXIT_CODE%"=="0" (
-  echo [OK] Local model is ready. In OpenWorkflows choose: Runtime = Claude Code, Channel = Free - Ollama (local).
+  echo [OK] Local model is ready. In FreeUltraCode choose: Runtime = Claude Code, Channel = Free - Ollama (local).
 ) else (
   echo [X] Local model setup failed. See messages above.
 )

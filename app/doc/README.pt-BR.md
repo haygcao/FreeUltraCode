@@ -1,13 +1,13 @@
-# OpenWorkflows
+# FreeUltraCode
 
 <div align="center">
   <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | Português | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
-O OpenWorkflows é um aplicativo desktop que combina chat gratuito com modelos de IA e edição visual de workflows multiagente. Converse diretamente via 17+ canais gratuitos (Gemini, DeepSeek, Groq, Ollama…) ou construa grafos de workflows multiagente na canvas, compilados em scripts executáveis para Claude Code, Codex, Gemini e outros runtimes.
+O FreeUltraCode é um aplicativo desktop que combina chat gratuito com modelos de IA e edição visual de workflows multiagente. Converse diretamente via 17+ canais gratuitos (Gemini, DeepSeek, Groq, Ollama…) ou construa grafos de workflows multiagente na canvas, compilados em scripts executáveis para Claude Code, Codex, Gemini e outros runtimes.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="Captura de tela do editor do OpenWorkflows" width="960">
+  <img src="images/0-标题使用.png" alt="Captura de tela do editor do FreeUltraCode" width="960">
 </p>
 
 ## Funcionalidades principais
@@ -36,7 +36,7 @@ O OpenWorkflows é um aplicativo desktop que combina chat gratuito com modelos d
 
 ## Tutorial de Uso
 
-- [Tutorial de uso do OpenWorkflows](claude-code-workflow-openworkflow.pt-BR.md) - passo a passo com capturas de tela, das configurações gerais e seleção de runtime na Entrada da IA até a geração do blueprint, execução e troca de aparência.
+- [Tutorial de uso do FreeUltraCode](claude-code-workflow-freeultracode.pt-BR.md) - passo a passo com capturas de tela, das configurações gerais e seleção de runtime na Entrada da IA até a geração do blueprint, execução e troca de aparência.
 
 ## Início Rápido
 
@@ -74,7 +74,7 @@ A partir da raiz do repositório, o `run.bat` inicia o aplicativo e o reconstró
 ### Modo Workflow
 
 1. Clique em **+ Novo workflow** na barra lateral.
-2. Descreva a tarefa na entrada de IA no canto inferior direito. O OpenWorkflows gera o blueprint do Workflow automaticamente.
+2. Descreva a tarefa na entrada de IA no canto inferior direito. O FreeUltraCode gera o blueprint do Workflow automaticamente.
 3. Continue refinando o blueprint digitando instruções de acompanhamento, ou clique nos prompts comuns no painel à direita.
 4. Selecione nós individuais quando precisar editar manualmente prompts, modelos, schemas ou parâmetros de execução.
 5. Escolha um adaptador de runtime como Claude Code, Codex ou Gemini.
@@ -105,7 +105,7 @@ build.bat              Build the Windows installer
 ## Mais Documentação
 
 - [README em inglês](../../README.md)
-- [Tutorial de uso em inglês](claude-code-workflow-openworkflow.en.md)
+- [Tutorial de uso em inglês](claude-code-workflow-freeultracode.en.md)
 
 ## Verificação
 

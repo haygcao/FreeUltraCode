@@ -1,5 +1,5 @@
 /**
- * Minimal, dependency-free YAML <-> IRGraph (de)serialiser for `owf convert`.
+ * Minimal, dependency-free YAML <-> IRGraph (de)serialiser for `fuc convert`.
  *
  * Scope: enough YAML to round-trip an IRGraph (the JSON data model — maps, lists,
  * strings, numbers, booleans, null). NOT a general YAML parser; anchors, tags,

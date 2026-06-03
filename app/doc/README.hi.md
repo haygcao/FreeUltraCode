@@ -1,13 +1,13 @@
-# OpenWorkflows
+# FreeUltraCode
 
 <div align="center">
   <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | हिन्दी | <a href="README.ar.md">العربية</a>
 </div>
 
-OpenWorkflows एक डेस्कटॉप एप्लिकेशन है जो मुफ्त AI मॉडल चैट और विज़ुअल मल्टी-एजेंट वर्कफ़्लो संपादन को जोड़ती है। 17+ मुफ्त चैनलों (Gemini, DeepSeek, Groq, Ollama…) के माध्यम से सीधे चैट करें, या कैनवास पर मल्टी-एजेंट वर्कफ़्लो ग्राफ़ बनाएं जो Claude Code, Codex, Gemini और अन्य रनटाइम के लिए चलाने-योग्य स्क्रिप्ट में संकलित होते हैं।
+FreeUltraCode एक डेस्कटॉप एप्लिकेशन है जो मुफ्त AI मॉडल चैट और विज़ुअल मल्टी-एजेंट वर्कफ़्लो संपादन को जोड़ती है। 17+ मुफ्त चैनलों (Gemini, DeepSeek, Groq, Ollama…) के माध्यम से सीधे चैट करें, या कैनवास पर मल्टी-एजेंट वर्कफ़्लो ग्राफ़ बनाएं जो Claude Code, Codex, Gemini और अन्य रनटाइम के लिए चलाने-योग्य स्क्रिप्ट में संकलित होते हैं।
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="OpenWorkflows एडिटर स्क्रीनशॉट" width="960">
+  <img src="images/0-标题使用.png" alt="FreeUltraCode एडिटर स्क्रीनशॉट" width="960">
 </p>
 
 ## मुख्य विशेषताएं
@@ -36,7 +36,7 @@ OpenWorkflows एक डेस्कटॉप एप्लिकेशन है
 
 ## उपयोग ट्यूटोरियल
 
-- [OpenWorkflows उपयोग ट्यूटोरियल](claude-code-workflow-openworkflow.hi.md) - सामान्य सेटिंग्स और AI इनपुट में runtime selection से लेकर blueprint generation, running और appearance switching तक स्क्रीनशॉट के साथ चरण-दर-चरण मार्गदर्शिका।
+- [FreeUltraCode उपयोग ट्यूटोरियल](claude-code-workflow-freeultracode.hi.md) - सामान्य सेटिंग्स और AI इनपुट में runtime selection से लेकर blueprint generation, running और appearance switching तक स्क्रीनशॉट के साथ चरण-दर-चरण मार्गदर्शिका।
 
 ## त्वरित शुरुआत
 
@@ -74,7 +74,7 @@ npm run package
 ### वर्कफ़्लो मोड
 
 1. साइडबार में **+ नया वर्कफ़्लो** क्लिक करें।
-2. नीचे-दाईं ओर AI इनपुट में कार्य का वर्णन करें। OpenWorkflows स्वचालित रूप से Workflow ब्लूप्रिंट तैयार करता है।
+2. नीचे-दाईं ओर AI इनपुट में कार्य का वर्णन करें। FreeUltraCode स्वचालित रूप से Workflow ब्लूप्रिंट तैयार करता है।
 3. उसी इनपुट में अनुवर्ती निर्देश टाइप करके ब्लूप्रिंट को परिष्कृत करते रहें, या दाएं पैनल पर सामान्य प्रॉम्प्ट क्लिक करें।
 4. प्रॉम्प्ट, मॉडल, schema, या निष्पादन पैरामीटर मैन्युअल रूप से संपादित करने की आवश्यकता हो तो अलग-अलग नोड चुनें।
 5. Claude Code, Codex, या Gemini जैसे रनटाइम अडैप्टर का चयन करें।
@@ -105,7 +105,7 @@ build.bat              Build the Windows installer
 ## और दस्तावेज़
 
 - [अंग्रेज़ी README](../../README.md)
-- [अंग्रेज़ी उपयोग ट्यूटोरियल](claude-code-workflow-openworkflow.en.md)
+- [अंग्रेज़ी उपयोग ट्यूटोरियल](claude-code-workflow-freeultracode.en.md)
 
 ## सत्यापन
 

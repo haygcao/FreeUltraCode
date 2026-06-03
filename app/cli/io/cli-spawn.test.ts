@@ -85,7 +85,7 @@ process.stdin.on('end', () => {
 }
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), 'owf-spawn-test-'));
+  dir = mkdtempSync(join(tmpdir(), 'fuc-spawn-test-'));
 });
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -122,7 +122,7 @@ describe('spawnCliAgent (claude stream-json)', () => {
 
     // tool_use surfaced as a structured tool sentinel; assistant text streamed.
     const joined = progress.join('');
-    expect(joined).toContain('<<OWF_TOOL>>');
+    expect(joined).toContain('<<FUC_TOOL>>');
     expect(joined).toContain('"name":"Read"');
     expect(joined).toContain('"subject":"src/ir.ts"');
     expect(joined).toContain('PROMPT[hello-prompt]');

@@ -1,13 +1,13 @@
 /**
- * `owf run <file>` — execute a workflow headlessly (spec §3.5).
+ * `fuc run <file>` — execute a workflow headlessly (spec §3.5).
  *
- * Reads .owf.json or .js (.js is parsed to IR), then drives `runBlueprint` from
+ * Reads .fuc.json or .js (.js is parsed to IR), then drives `runBlueprint` from
  * cli/runtime-host. A stderr logger consumes the structured RunEvent stream and
  * prints the `[time] ▶/●/✓` lines; the final result (or `--json`) goes to stdout.
  * `--dry-run` validates + emits without spawning. `--resume` seeds from
- * `.owf-run/<name>/last-run.json`. SIGINT once = graceful, twice = force.
+ * `.fuc-run/<name>/last-run.json`. SIGINT once = graceful, twice = force.
  *
- * IRGraph is read-only; run state is persisted under `.owf-run/<name>/`.
+ * IRGraph is read-only; run state is persisted under `.fuc-run/<name>/`.
  */
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -43,7 +43,7 @@ export async function runRun(file: string, opts: RunCommandOptions): Promise<num
   // Internal pre-validation: structural errors are a config/validation failure.
   const { exitCode: vExit } = checkGraph(graph, false);
   if (vExit === 1) {
-    process.stderr.write(c.err('Validation failed; run aborted. See `owf validate`.\n'));
+    process.stderr.write(c.err('Validation failed; run aborted. See `fuc validate`.\n'));
     return 3;
   }
 
@@ -64,14 +64,18 @@ export async function runRun(file: string, opts: RunCommandOptions): Promise<num
   for (const [k, v] of Object.entries(vars)) process.env[k] = v;
 
   const workflowName = graph.meta.name || 'workflow';
-  const runDir = join(cwd, '.owf-run', sanitize(workflowName));
+  const runDir = join(cwd, '.fuc-run', sanitize(workflowName));
 
   // --resume: seed from the last-run snapshot.
   let seedOutputs: Record<string, string> | undefined;
   let seedRunState: Record<string, IRRunStatus> | undefined;
   let resumeFromNodeId: string | null | undefined;
   if (opts.resume) {
-    const snap = readSnapshot(runDir);
+    // `.owf-run` is the pre-rebrand snapshot dir; fall back to it so runs
+    // started by an older (OpenWorkflow) build can still be resumed.
+    const snap =
+      readSnapshot(runDir) ??
+      readSnapshot(join(cwd, '.owf-run', sanitize(workflowName)));
     if (snap) {
       seedOutputs = snap.outputs;
       seedRunState = snap.nodeStates;

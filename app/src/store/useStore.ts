@@ -350,7 +350,7 @@ export interface StoreState {
   popToGraph: (depth: number) => void;
   setWorkflow: (ir: IRGraph) => void;
   openWorkflowSession: (ir: IRGraph, path?: string) => void;
-  /** Export the current workflow to a user-chosen file (.owf.json). */
+  /** Export the current workflow to a user-chosen file (.fuc.json). */
   exportWorkflow: (title?: string) => void;
   /** Export a workflow session from history to a user-chosen file. */
   exportWorkflowSession: (
@@ -1626,7 +1626,7 @@ async function createNewWorkflowSession(
   }
 }
 
-interface OpenWorkflowSessionOptions {
+interface FreeUltraCodeSessionOptions {
   workspaceId?: string | null;
   forceNewSession?: boolean;
 }
@@ -1634,7 +1634,7 @@ interface OpenWorkflowSessionOptions {
 async function openWorkflowInSession(
   ir: IRGraph,
   path?: string,
-  options: OpenWorkflowSessionOptions = {},
+  options: FreeUltraCodeSessionOptions = {},
 ): Promise<void> {
   const state = useStore.getState();
   const workflow = restoreWorkflowRunSnapshot(
@@ -2731,7 +2731,7 @@ export const useStore = create<StoreState>((set) => ({
     void openWorkflowInSession(ir, path).catch(() => {});
   },
 
-  // Export the current workflow IR to a user-chosen .owf.json file. The run
+  // Export the current workflow IR to a user-chosen .fuc.json file. The run
   // snapshot is stripped (see persist.ts) so the file is a clean, shareable
   // blueprint. Export does not touch currentFilePath — it's a "save a copy".
   exportWorkflow: (title) => {
@@ -4714,7 +4714,7 @@ function channelSnapshot(ch: RunChannel, status: IRRunStatus): IRRunSnapshot {
  * Persist the channel's shadow to its OWNING session (not the active view).
  * When the run has no history context (browser/simulator) it falls back to the
  * active-session path only while that run is the visible session. Deliberately
- * skips `.owf.json` file autosave for backgrounded runs so a background run
+ * skips `.fuc.json` file autosave for backgrounded runs so a background run
  * never overwrites the file bound to the session the user is currently editing.
  */
 async function persistChannelSnapshot(
@@ -5556,11 +5556,11 @@ function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContex
   };
 }
 
-/** Default fan-out samples for a consensus node (localStorage owf_consensus_default_samples). */
+/** Default fan-out samples for a consensus node (localStorage fuc_consensus_default_samples). */
 function defaultConsensusSamples(): number {
   try {
     if (typeof window !== 'undefined') {
-      const raw = window.localStorage.getItem('owf_consensus_default_samples');
+      const raw = window.localStorage.getItem('fuc_consensus_default_samples');
       if (raw) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(7, Math.max(2, n));
@@ -5579,16 +5579,16 @@ const DEFAULT_RUN_CONCURRENCY = 10;
  * How many runnable nodes may execute at once. Each node is a heavy `claude -p`
  * process, so this absolute cap is combined with the model-speed tier caps from
  * Settings > Consensus. Tune it per machine via localStorage
- * (`owf_run_concurrency`, clamped 1–16) or force the old strictly-sequential
- * behaviour with `owf_sequential=1`. Linear chains stay sequential regardless
+ * (`fuc_run_concurrency`, clamped 1–16) or force the old strictly-sequential
+ * behaviour with `fuc_sequential=1`. Linear chains stay sequential regardless
  * (a node still waits for its predecessors); the cap only bounds how many
  * *independent* nodes run together.
  */
 function runConcurrency(): number {
   try {
     if (typeof window !== 'undefined') {
-      if (window.localStorage.getItem('owf_sequential') === '1') return 1;
-      const raw = window.localStorage.getItem('owf_run_concurrency');
+      if (window.localStorage.getItem('fuc_sequential') === '1') return 1;
+      const raw = window.localStorage.getItem('fuc_run_concurrency');
       if (raw) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(16, Math.max(1, n));
@@ -5606,13 +5606,13 @@ const DEFAULT_RUN_MAX_RETRIES = 2;
 /**
  * How many times a failed node is automatically re-run before it is recorded as
  * failed. Only transient failures (see RETRYABLE_FAILURE_CODES) are retried.
- * Tune via localStorage (`owf_run_max_retries`, clamped 0–10); set 0 to disable
+ * Tune via localStorage (`fuc_run_max_retries`, clamped 0–10); set 0 to disable
  * auto-retry entirely.
  */
 function runMaxRetries(): number {
   try {
     if (typeof window !== 'undefined') {
-      const raw = window.localStorage.getItem('owf_run_max_retries');
+      const raw = window.localStorage.getItem('fuc_run_max_retries');
       if (raw !== null) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(10, Math.max(0, n));

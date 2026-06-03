@@ -140,8 +140,8 @@ export function applyAppearance(settings: AppearanceSettings): void {
   const stylePresetId = resolveStylePresetId(settings.stylePresetId);
   const root = document.documentElement;
 
-  root.dataset.owfStyle = stylePresetId;
+  root.dataset.fucStyle = stylePresetId;
   for (const presetId of BUILTIN_STYLE_PRESETS) {
-    root.classList.toggle(`owf-style-${presetId}`, presetId === stylePresetId);
+    root.classList.toggle(`fuc-style-${presetId}`, presetId === stylePresetId);
   }
 }

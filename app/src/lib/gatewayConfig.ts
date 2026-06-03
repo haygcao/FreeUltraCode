@@ -12,12 +12,12 @@ import {
   type GatewayTransport,
 } from '@/lib/modelGateway/types';
 
-export const GATEWAY_CONFIG_STORAGE = 'owf_model_gateway_v1';
+export const GATEWAY_CONFIG_STORAGE = 'fuc_model_gateway_v1';
 export const ACTIVE_GATEWAY_SELECTION_STORAGE =
-  'owf_active_gateway_selection_v1';
+  'fuc_active_gateway_selection_v1';
 
-const LEGACY_PROVIDERS_STORAGE = 'owf_providers';
-const LEGACY_ACTIVE_PROVIDER_STORAGE = 'owf_active_provider_id';
+const LEGACY_PROVIDERS_STORAGE = 'fuc_providers';
+const LEGACY_ACTIVE_PROVIDER_STORAGE = 'fuc_active_provider_id';
 
 interface LegacyProvider {
   id: string;
@@ -45,7 +45,7 @@ function rawSet(key: string, value: string): void {
   try {
     if (!hasWindow()) return;
     window.localStorage.setItem(key, value);
-    window.dispatchEvent(new Event('owf:gateway-config-changed'));
+    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
   } catch {
     /* ignore */
   }
@@ -55,7 +55,7 @@ function rawRemove(key: string): void {
   try {
     if (!hasWindow()) return;
     window.localStorage.removeItem(key);
-    window.dispatchEvent(new Event('owf:gateway-config-changed'));
+    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
   } catch {
     /* ignore */
   }

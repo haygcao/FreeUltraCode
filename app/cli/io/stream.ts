@@ -82,8 +82,8 @@ export function toolSubject(input: unknown): string {
 }
 
 // Inline tool-event sentinel protocol (mirrors src/components/ai/lib/toolEvent.ts).
-const TOOL_OPEN = '<<OWF_TOOL>>';
-const TOOL_CLOSE = '<<OWF_TOOL_END>>';
+const TOOL_OPEN = '<<FUC_TOOL>>';
+const TOOL_CLOSE = '<<FUC_TOOL_END>>';
 
 /** Serialise a tool-event patch into an inline sentinel block for the stream. */
 export function encodeToolPatch(patch: Record<string, unknown>): string {

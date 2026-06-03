@@ -20,14 +20,14 @@ describe('toolEvent sentinel codec', () => {
   });
 
   it('leaves an incomplete trailing sentinel in place', () => {
-    const partial = 'text <<OWF_TOOL>>{"id":"x"';
+    const partial = 'text <<FUC_TOOL>>{"id":"x"';
     const { text, patches } = extractToolSentinels(partial);
     expect(patches).toEqual([]);
-    expect(text).toContain('<<OWF_TOOL>>');
+    expect(text).toContain('<<FUC_TOOL>>');
   });
 
   it('drops a malformed sentinel body', () => {
-    const { patches } = extractToolSentinels('<<OWF_TOOL>>not json<<OWF_TOOL_END>>');
+    const { patches } = extractToolSentinels('<<FUC_TOOL>>not json<<FUC_TOOL_END>>');
     expect(patches).toEqual([]);
   });
 

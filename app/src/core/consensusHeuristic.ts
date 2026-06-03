@@ -79,11 +79,11 @@ export function generationAngles(count: number): string[] {
   return out;
 }
 
-/** Generation-time consensus is on unless disabled via localStorage owf_gen_consensus=0. */
+/** Generation-time consensus is on unless disabled via localStorage fuc_gen_consensus=0. */
 export function genConsensusEnabled(): boolean {
   try {
     if (typeof window !== 'undefined') {
-      return window.localStorage.getItem('owf_gen_consensus') !== '0';
+      return window.localStorage.getItem('fuc_gen_consensus') !== '0';
     }
   } catch {
     /* ignore */

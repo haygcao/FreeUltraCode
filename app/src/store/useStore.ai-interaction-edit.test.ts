@@ -59,10 +59,10 @@ function buildAnsweredGraph(): IRGraph {
 }
 
 function resetStore(): void {
-  window.localStorage.setItem('owf_research_angles_max', '1');
-  window.localStorage.setItem('owf_nodegen_candidates_max', '1');
-  window.localStorage.setItem('owf_runtime_vote_samples_max', '1');
-  window.localStorage.setItem('owf_terminal_vote_samples_max', '1');
+  window.localStorage.setItem('fuc_research_angles_max', '1');
+  window.localStorage.setItem('fuc_nodegen_candidates_max', '1');
+  window.localStorage.setItem('fuc_runtime_vote_samples_max', '1');
+  window.localStorage.setItem('fuc_terminal_vote_samples_max', '1');
   useStore.setState({
     workflow: cloneGraph(defaultBlueprint('Current workflow')),
     selectedNodeId: null,
@@ -124,14 +124,14 @@ describe('AI edit interactions', () => {
       requests.push({ userContent: String(request.userContent) });
       if (requests.length === 1) {
         return [
-          '<<OWF_ASK>>',
+          '<<FUC_ASK>>',
           JSON.stringify({
             type: 'select',
             prompt: '默认只落地 Pencil，还是同时落地多套可切换风格？',
             options: ['只落地 Pencil', '同时落地 Pencil 及多套可切换风格'],
             multi: false,
           }),
-          '<<OWF_ASK_END>>',
+          '<<FUC_ASK_END>>',
         ].join('\n');
       }
       return `已根据你的回答更新蓝图。\n\n\`\`\`json\n${JSON.stringify(

@@ -4,63 +4,63 @@
 
 :root {
   /* Default primitive tokens. Style presets override these on html. */
-  --owf-color-bg: #0d1117;
-  --owf-color-bg-alt: #161b22;
-  --owf-color-panel: #1c2128;
-  --owf-color-panel-2: #21262d;
-  --owf-color-border: #30363d;
-  --owf-color-border-soft: #262c34;
-  --owf-color-text: #e6edf3;
-  --owf-color-text-muted: #9da7b3;
-  --owf-color-text-faint: #6e7681;
-  --owf-color-accent: #7c8cff;
-  --owf-color-accent-2: #37c2a8;
-  --owf-color-accent-3: #e3a008;
-  --owf-color-accent-4: #f778ba;
-  --owf-status-ai-edit: #4da3ff;
-  --owf-status-ai-edit-contrast: #071421;
-  --owf-status-running: #e3a008;
-  --owf-status-running-contrast: #1a1300;
-  --owf-status-success: #37c2a8;
-  --owf-status-success-contrast: #06231d;
-  --owf-status-error: #f778ba;
-  --owf-status-error-contrast: #2a0a1a;
-  --owf-status-interrupted: #d995a6;
-  --owf-status-interrupted-contrast: #2a0a1a;
+  --fuc-color-bg: #0d1117;
+  --fuc-color-bg-alt: #161b22;
+  --fuc-color-panel: #1c2128;
+  --fuc-color-panel-2: #21262d;
+  --fuc-color-border: #30363d;
+  --fuc-color-border-soft: #262c34;
+  --fuc-color-text: #e6edf3;
+  --fuc-color-text-muted: #9da7b3;
+  --fuc-color-text-faint: #6e7681;
+  --fuc-color-accent: #7c8cff;
+  --fuc-color-accent-2: #37c2a8;
+  --fuc-color-accent-3: #e3a008;
+  --fuc-color-accent-4: #f778ba;
+  --fuc-status-ai-edit: #4da3ff;
+  --fuc-status-ai-edit-contrast: #071421;
+  --fuc-status-running: #e3a008;
+  --fuc-status-running-contrast: #1a1300;
+  --fuc-status-success: #37c2a8;
+  --fuc-status-success-contrast: #06231d;
+  --fuc-status-error: #f778ba;
+  --fuc-status-error-contrast: #2a0a1a;
+  --fuc-status-interrupted: #d995a6;
+  --fuc-status-interrupted-contrast: #2a0a1a;
 
   /* Semantic tokens consumed by Tailwind and component styles. */
-  --bg: var(--owf-color-bg);
-  --bg-alt: var(--owf-color-bg-alt);
-  --panel: var(--owf-color-panel);
-  --panel-2: var(--owf-color-panel-2);
-  --border: var(--owf-color-border);
-  --border-soft: var(--owf-color-border-soft);
-  --fg: var(--owf-color-text);
-  --fg-dim: var(--owf-color-text-muted);
-  --fg-faint: var(--owf-color-text-faint);
-  --accent: var(--owf-color-accent);
-  --accent-2: var(--owf-color-accent-2);
-  --accent-3: var(--owf-color-accent-3);
-  --accent-4: var(--owf-color-accent-4);
-  --status-ai-edit: var(--owf-status-ai-edit);
-  --status-ai-edit-contrast: var(--owf-status-ai-edit-contrast);
+  --bg: var(--fuc-color-bg);
+  --bg-alt: var(--fuc-color-bg-alt);
+  --panel: var(--fuc-color-panel);
+  --panel-2: var(--fuc-color-panel-2);
+  --border: var(--fuc-color-border);
+  --border-soft: var(--fuc-color-border-soft);
+  --fg: var(--fuc-color-text);
+  --fg-dim: var(--fuc-color-text-muted);
+  --fg-faint: var(--fuc-color-text-faint);
+  --accent: var(--fuc-color-accent);
+  --accent-2: var(--fuc-color-accent-2);
+  --accent-3: var(--fuc-color-accent-3);
+  --accent-4: var(--fuc-color-accent-4);
+  --status-ai-edit: var(--fuc-status-ai-edit);
+  --status-ai-edit-contrast: var(--fuc-status-ai-edit-contrast);
   --status-ai-edit-border: #2c6fb3;
-  --status-running: var(--owf-status-running);
-  --status-running-contrast: var(--owf-status-running-contrast);
-  --status-success: var(--owf-status-success);
-  --status-success-contrast: var(--owf-status-success-contrast);
+  --status-running: var(--fuc-status-running);
+  --status-running-contrast: var(--fuc-status-running-contrast);
+  --status-success: var(--fuc-status-success);
+  --status-success-contrast: var(--fuc-status-success-contrast);
   --status-success-border: var(--status-success);
-  --status-error: var(--owf-status-error);
-  --status-error-contrast: var(--owf-status-error-contrast);
+  --status-error: var(--fuc-status-error);
+  --status-error-contrast: var(--fuc-status-error-contrast);
   --status-error-border: var(--status-error);
-  --status-interrupted: var(--owf-status-interrupted);
-  --status-interrupted-contrast: var(--owf-status-interrupted-contrast);
+  --status-interrupted: var(--fuc-status-interrupted);
+  --status-interrupted-contrast: var(--fuc-status-interrupted-contrast);
   --status-interrupted-border: #9b6a05;
   --status-running-track: var(--border);
-  --owf-status-slot-size: 20px;
-  --owf-status-indicator-size: 14px;
-  --owf-status-spinner-ring: 2px;
-  --owf-composer-chat-border: color-mix(
+  --fuc-status-slot-size: 20px;
+  --fuc-status-indicator-size: 14px;
+  --fuc-status-spinner-ring: 2px;
+  --fuc-composer-chat-border: color-mix(
     in oklab,
     var(--border) 68%,
     var(--fg-faint)
@@ -110,116 +110,116 @@
   color-scheme: dark;
 }
 
-html[data-owf-style='pencil'],
-html.owf-style-pencil {
+html[data-fuc-style='pencil'],
+html.fuc-style-pencil {
   color-scheme: dark;
-  --owf-color-bg: #0d1117;
-  --owf-color-bg-alt: #161b22;
-  --owf-color-panel: #1c2128;
-  --owf-color-panel-2: #21262d;
-  --owf-color-border: #30363d;
-  --owf-color-border-soft: #262c34;
-  --owf-color-text: #e6edf3;
-  --owf-color-text-muted: #9da7b3;
-  --owf-color-text-faint: #6e7681;
-  --owf-color-accent: #7c8cff;
-  --owf-color-accent-2: #37c2a8;
-  --owf-color-accent-3: #e3a008;
-  --owf-color-accent-4: #f778ba;
-  --owf-status-ai-edit: #4da3ff;
-  --owf-status-ai-edit-contrast: #071421;
-  --owf-status-running: #e3a008;
-  --owf-status-running-contrast: #1a1300;
-  --owf-status-success: #37c2a8;
-  --owf-status-success-contrast: #06231d;
-  --owf-status-error: #f778ba;
-  --owf-status-error-contrast: #2a0a1a;
-  --owf-status-interrupted: #d995a6;
-  --owf-status-interrupted-contrast: #2a0a1a;
+  --fuc-color-bg: #0d1117;
+  --fuc-color-bg-alt: #161b22;
+  --fuc-color-panel: #1c2128;
+  --fuc-color-panel-2: #21262d;
+  --fuc-color-border: #30363d;
+  --fuc-color-border-soft: #262c34;
+  --fuc-color-text: #e6edf3;
+  --fuc-color-text-muted: #9da7b3;
+  --fuc-color-text-faint: #6e7681;
+  --fuc-color-accent: #7c8cff;
+  --fuc-color-accent-2: #37c2a8;
+  --fuc-color-accent-3: #e3a008;
+  --fuc-color-accent-4: #f778ba;
+  --fuc-status-ai-edit: #4da3ff;
+  --fuc-status-ai-edit-contrast: #071421;
+  --fuc-status-running: #e3a008;
+  --fuc-status-running-contrast: #1a1300;
+  --fuc-status-success: #37c2a8;
+  --fuc-status-success-contrast: #06231d;
+  --fuc-status-error: #f778ba;
+  --fuc-status-error-contrast: #2a0a1a;
+  --fuc-status-interrupted: #d995a6;
+  --fuc-status-interrupted-contrast: #2a0a1a;
 }
 
-html[data-owf-style='midnight'],
-html.owf-style-midnight {
+html[data-fuc-style='midnight'],
+html.fuc-style-midnight {
   color-scheme: dark;
-  --owf-color-bg: #0b0e1a;
-  --owf-color-bg-alt: #11152a;
-  --owf-color-panel: #171c38;
-  --owf-color-panel-2: #1f2547;
-  --owf-color-border: #2e3563;
-  --owf-color-border-soft: #222845;
-  --owf-color-text: #eef1fb;
-  --owf-color-text-muted: #a7aecb;
-  --owf-color-text-faint: #6e7699;
-  --owf-color-accent: #7c6cff;
-  --owf-color-accent-2: #2dd4d4;
-  --owf-color-accent-3: #f5b73c;
-  --owf-color-accent-4: #f062c8;
-  --owf-status-ai-edit: #4d8dff;
-  --owf-status-ai-edit-contrast: #04122b;
-  --owf-status-running: #f0a52a;
-  --owf-status-running-contrast: #2a1a00;
-  --owf-status-success: #23c08a;
-  --owf-status-success-contrast: #03200f;
-  --owf-status-error: #ff5c7a;
-  --owf-status-error-contrast: #2c0710;
-  --owf-status-interrupted: #6b7194;
-  --owf-status-interrupted-contrast: #0a0d18;
+  --fuc-color-bg: #0b0e1a;
+  --fuc-color-bg-alt: #11152a;
+  --fuc-color-panel: #171c38;
+  --fuc-color-panel-2: #1f2547;
+  --fuc-color-border: #2e3563;
+  --fuc-color-border-soft: #222845;
+  --fuc-color-text: #eef1fb;
+  --fuc-color-text-muted: #a7aecb;
+  --fuc-color-text-faint: #6e7699;
+  --fuc-color-accent: #7c6cff;
+  --fuc-color-accent-2: #2dd4d4;
+  --fuc-color-accent-3: #f5b73c;
+  --fuc-color-accent-4: #f062c8;
+  --fuc-status-ai-edit: #4d8dff;
+  --fuc-status-ai-edit-contrast: #04122b;
+  --fuc-status-running: #f0a52a;
+  --fuc-status-running-contrast: #2a1a00;
+  --fuc-status-success: #23c08a;
+  --fuc-status-success-contrast: #03200f;
+  --fuc-status-error: #ff5c7a;
+  --fuc-status-error-contrast: #2c0710;
+  --fuc-status-interrupted: #6b7194;
+  --fuc-status-interrupted-contrast: #0a0d18;
 }
 
-html[data-owf-style='aurora'],
-html.owf-style-aurora {
+html[data-fuc-style='aurora'],
+html.fuc-style-aurora {
   color-scheme: dark;
-  --owf-color-bg: #2e3440;
-  --owf-color-bg-alt: #323846;
-  --owf-color-panel: #3b4252;
-  --owf-color-panel-2: #434c5e;
-  --owf-color-border: #4c566a;
-  --owf-color-border-soft: #3b4252;
-  --owf-color-text: #eceff4;
-  --owf-color-text-muted: #c5cddb;
-  --owf-color-text-faint: #8a93a6;
-  --owf-color-accent: #88c0d0;
-  --owf-color-accent-2: #a3be8c;
-  --owf-color-accent-3: #ebcb8b;
-  --owf-color-accent-4: #b48ead;
-  --owf-status-ai-edit: #81a1c1;
-  --owf-status-ai-edit-contrast: #1c2128;
-  --owf-status-running: #ebcb8b;
-  --owf-status-running-contrast: #2e3440;
-  --owf-status-success: #a3be8c;
-  --owf-status-success-contrast: #2e3440;
-  --owf-status-error: #bf616a;
-  --owf-status-error-contrast: #fdf2f3;
-  --owf-status-interrupted: #6b7080;
-  --owf-status-interrupted-contrast: #1c2026;
+  --fuc-color-bg: #2e3440;
+  --fuc-color-bg-alt: #323846;
+  --fuc-color-panel: #3b4252;
+  --fuc-color-panel-2: #434c5e;
+  --fuc-color-border: #4c566a;
+  --fuc-color-border-soft: #3b4252;
+  --fuc-color-text: #eceff4;
+  --fuc-color-text-muted: #c5cddb;
+  --fuc-color-text-faint: #8a93a6;
+  --fuc-color-accent: #88c0d0;
+  --fuc-color-accent-2: #a3be8c;
+  --fuc-color-accent-3: #ebcb8b;
+  --fuc-color-accent-4: #b48ead;
+  --fuc-status-ai-edit: #81a1c1;
+  --fuc-status-ai-edit-contrast: #1c2128;
+  --fuc-status-running: #ebcb8b;
+  --fuc-status-running-contrast: #2e3440;
+  --fuc-status-success: #a3be8c;
+  --fuc-status-success-contrast: #2e3440;
+  --fuc-status-error: #bf616a;
+  --fuc-status-error-contrast: #fdf2f3;
+  --fuc-status-interrupted: #6b7080;
+  --fuc-status-interrupted-contrast: #1c2026;
 }
 
-html[data-owf-style='daylight'],
-html.owf-style-daylight {
+html[data-fuc-style='daylight'],
+html.fuc-style-daylight {
   color-scheme: light;
-  --owf-color-bg: #f6f7f9;
-  --owf-color-bg-alt: #eceef2;
-  --owf-color-panel: #ffffff;
-  --owf-color-panel-2: #f2f4f7;
-  --owf-color-border: #d3d8e0;
-  --owf-color-border-soft: #e5e8ee;
-  --owf-color-text: #11151c;
-  --owf-color-text-muted: #566072;
-  --owf-color-text-faint: #828b9b;
-  --owf-color-accent: #2f6fed;
-  --owf-color-accent-2: #13a07a;
-  --owf-color-accent-3: #d98a07;
-  --owf-color-accent-4: #d6489b;
-  --owf-status-ai-edit: #2f6fed;
-  --owf-status-ai-edit-contrast: #ffffff;
-  --owf-status-running: #e08a00;
-  --owf-status-running-contrast: #2a1a00;
-  --owf-status-success: #13a07a;
-  --owf-status-success-contrast: #ffffff;
-  --owf-status-error: #df3b4e;
-  --owf-status-error-contrast: #ffffff;
-  --owf-status-interrupted: #9aa3b2;
-  --owf-status-interrupted-contrast: #1a1f28;
+  --fuc-color-bg: #f6f7f9;
+  --fuc-color-bg-alt: #eceef2;
+  --fuc-color-panel: #ffffff;
+  --fuc-color-panel-2: #f2f4f7;
+  --fuc-color-border: #d3d8e0;
+  --fuc-color-border-soft: #e5e8ee;
+  --fuc-color-text: #11151c;
+  --fuc-color-text-muted: #566072;
+  --fuc-color-text-faint: #828b9b;
+  --fuc-color-accent: #2f6fed;
+  --fuc-color-accent-2: #13a07a;
+  --fuc-color-accent-3: #d98a07;
+  --fuc-color-accent-4: #d6489b;
+  --fuc-status-ai-edit: #2f6fed;
+  --fuc-status-ai-edit-contrast: #ffffff;
+  --fuc-status-running: #e08a00;
+  --fuc-status-running-contrast: #2a1a00;
+  --fuc-status-success: #13a07a;
+  --fuc-status-success-contrast: #ffffff;
+  --fuc-status-error: #df3b4e;
+  --fuc-status-error-contrast: #ffffff;
+  --fuc-status-interrupted: #9aa3b2;
+  --fuc-status-interrupted-contrast: #1a1f28;
 
   /* Canvas redesign — light-mode polarity flip (white lip, soft slate shadow,
      weak glow) so the glass/neon system degrades to flat depth on white. */
@@ -244,39 +244,39 @@ html.owf-style-daylight {
     transparent 0%,
     rgba(15, 23, 42, 0.05) 100%
   );
-  --owf-composer-chat-border: color-mix(
+  --fuc-composer-chat-border: color-mix(
     in oklab,
     var(--border) 76%,
     var(--panel)
   );
 }
 
-html[data-owf-style='ember'],
-html.owf-style-ember {
+html[data-fuc-style='ember'],
+html.fuc-style-ember {
   color-scheme: dark;
-  --owf-color-bg: #1a1411;
-  --owf-color-bg-alt: #221a15;
-  --owf-color-panel: #2b211a;
-  --owf-color-panel-2: #352920;
-  --owf-color-border: #473628;
-  --owf-color-border-soft: #352a20;
-  --owf-color-text: #f5e9dc;
-  --owf-color-text-muted: #c2a890;
-  --owf-color-text-faint: #8c7461;
-  --owf-color-accent: #ff8c42;
-  --owf-color-accent-2: #3fb8a8;
-  --owf-color-accent-3: #f0b429;
-  --owf-color-accent-4: #e06b8b;
-  --owf-status-ai-edit: #5b9bd5;
-  --owf-status-ai-edit-contrast: #0c1620;
-  --owf-status-running: #f0a830;
-  --owf-status-running-contrast: #241803;
-  --owf-status-success: #3fb8a8;
-  --owf-status-success-contrast: #06201c;
-  --owf-status-error: #e0566b;
-  --owf-status-error-contrast: #2a0810;
-  --owf-status-interrupted: #8c7461;
-  --owf-status-interrupted-contrast: #1c1510;
+  --fuc-color-bg: #1a1411;
+  --fuc-color-bg-alt: #221a15;
+  --fuc-color-panel: #2b211a;
+  --fuc-color-panel-2: #352920;
+  --fuc-color-border: #473628;
+  --fuc-color-border-soft: #352a20;
+  --fuc-color-text: #f5e9dc;
+  --fuc-color-text-muted: #c2a890;
+  --fuc-color-text-faint: #8c7461;
+  --fuc-color-accent: #ff8c42;
+  --fuc-color-accent-2: #3fb8a8;
+  --fuc-color-accent-3: #f0b429;
+  --fuc-color-accent-4: #e06b8b;
+  --fuc-status-ai-edit: #5b9bd5;
+  --fuc-status-ai-edit-contrast: #0c1620;
+  --fuc-status-running: #f0a830;
+  --fuc-status-running-contrast: #241803;
+  --fuc-status-success: #3fb8a8;
+  --fuc-status-success-contrast: #06201c;
+  --fuc-status-error: #e0566b;
+  --fuc-status-error-contrast: #2a0810;
+  --fuc-status-interrupted: #8c7461;
+  --fuc-status-interrupted-contrast: #1c1510;
 }
 
 * {
@@ -321,21 +321,21 @@ pre,
   background: var(--fg-faint);
 }
 
-.owf-ai-input {
+.fuc-ai-input {
   background: var(--bg);
   border-color: var(--border);
 }
 
-.owf-ai-input--chat {
-  border-color: var(--owf-composer-chat-border);
+.fuc-ai-input--chat {
+  border-color: var(--fuc-composer-chat-border);
 }
 
-.owf-ai-input--drop {
+.fuc-ai-input--drop {
   background: color-mix(in oklab, var(--accent) 5%, var(--bg));
   border-color: var(--accent);
 }
 
-.owf-ai-input:focus {
+.fuc-ai-input:focus {
   border-color: var(--accent);
 }
 
@@ -344,47 +344,47 @@ pre,
     animation: none !important;
   }
 
-  .owf-status-spinner {
+  .fuc-status-spinner {
     animation: none !important;
   }
 }
 
-@keyframes owf-status-spin {
+@keyframes fuc-status-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.owf-status-slot {
+.fuc-status-slot {
   contain: layout paint;
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: var(--owf-status-slot-size);
-  min-width: var(--owf-status-slot-size);
-  height: var(--owf-status-slot-size);
+  width: var(--fuc-status-slot-size);
+  min-width: var(--fuc-status-slot-size);
+  height: var(--fuc-status-slot-size);
   line-height: 0;
   pointer-events: none;
 }
 
-.owf-status-indicator {
+.fuc-status-indicator {
   box-sizing: border-box;
   display: block;
   flex: none;
-  width: var(--owf-status-indicator-size);
-  height: var(--owf-status-indicator-size);
+  width: var(--fuc-status-indicator-size);
+  height: var(--fuc-status-indicator-size);
   border: 0;
   border-radius: 9999px;
-  background: var(--owf-status-color, transparent);
+  background: var(--fuc-status-color, transparent);
 }
 
-.owf-status-spinner {
+.fuc-status-spinner {
   background: transparent;
-  border: var(--owf-status-spinner-ring) solid var(--status-running-track);
-  border-right-color: var(--owf-status-color, var(--status-running));
-  border-top-color: var(--owf-status-color, var(--status-running));
-  animation: owf-status-spin 900ms linear infinite;
+  border: var(--fuc-status-spinner-ring) solid var(--status-running-track);
+  border-right-color: var(--fuc-status-color, var(--status-running));
+  border-top-color: var(--fuc-status-color, var(--status-running));
+  animation: fuc-status-spin 900ms linear infinite;
 }
 
 /* React Flow dark theme overrides */
@@ -425,38 +425,38 @@ pre,
 }
 
 /* ── Canvas redesign: node card hover + pins + relayout transition ─────────── */
-.owf-card {
+.fuc-card {
   will-change: transform;
 }
-.react-flow__node:hover .owf-card:not(.owf-card-selected) {
+.react-flow__node:hover .fuc-card:not(.fuc-card-selected) {
   box-shadow: var(--node-shadow-hover);
   border-color: color-mix(
     in oklab,
-    var(--owf-node-accent, var(--accent)) 50%,
+    var(--fuc-node-accent, var(--accent)) 50%,
     var(--node-border)
   );
 }
 
 /* Pins — enlarge hit zone + glow on hover, pulse the active drop target. */
-.react-flow__handle.owf-pin-exec::before,
-.react-flow__handle.owf-pin-data::before {
+.react-flow__handle.fuc-pin-exec::before,
+.react-flow__handle.fuc-pin-data::before {
   content: '';
   position: absolute;
   inset: -8px;
   border-radius: 9999px;
 }
-.react-flow__handle.owf-pin-exec:hover {
+.react-flow__handle.fuc-pin-exec:hover {
   transform: scale(1.18);
   filter: drop-shadow(0 0 6px var(--pin-glow-exec));
 }
-.react-flow__handle.owf-pin-data:hover {
+.react-flow__handle.fuc-pin-data:hover {
   transform: scale(1.25);
   box-shadow: 0 0 0 2px var(--pin-data), 0 0 8px var(--pin-glow-data);
 }
 .react-flow__handle.connectingto {
-  animation: owf-pin-pulse 900ms ease-in-out infinite;
+  animation: fuc-pin-pulse 900ms ease-in-out infinite;
 }
-@keyframes owf-pin-pulse {
+@keyframes fuc-pin-pulse {
   0%,
   100% {
     transform: scale(1.1);

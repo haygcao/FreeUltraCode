@@ -17,34 +17,34 @@ const globalCss = readFileSync('src/styles/global.css', 'utf8');
 
 // The full primitive-token contract each preset CSS block must define.
 const REQUIRED_TOKENS = [
-  '--owf-color-bg',
-  '--owf-color-bg-alt',
-  '--owf-color-panel',
-  '--owf-color-panel-2',
-  '--owf-color-border',
-  '--owf-color-border-soft',
-  '--owf-color-text',
-  '--owf-color-text-muted',
-  '--owf-color-text-faint',
-  '--owf-color-accent',
-  '--owf-color-accent-2',
-  '--owf-color-accent-3',
-  '--owf-color-accent-4',
-  '--owf-status-ai-edit',
-  '--owf-status-ai-edit-contrast',
-  '--owf-status-running',
-  '--owf-status-running-contrast',
-  '--owf-status-success',
-  '--owf-status-success-contrast',
-  '--owf-status-error',
-  '--owf-status-error-contrast',
-  '--owf-status-interrupted',
-  '--owf-status-interrupted-contrast',
+  '--fuc-color-bg',
+  '--fuc-color-bg-alt',
+  '--fuc-color-panel',
+  '--fuc-color-panel-2',
+  '--fuc-color-border',
+  '--fuc-color-border-soft',
+  '--fuc-color-text',
+  '--fuc-color-text-muted',
+  '--fuc-color-text-faint',
+  '--fuc-color-accent',
+  '--fuc-color-accent-2',
+  '--fuc-color-accent-3',
+  '--fuc-color-accent-4',
+  '--fuc-status-ai-edit',
+  '--fuc-status-ai-edit-contrast',
+  '--fuc-status-running',
+  '--fuc-status-running-contrast',
+  '--fuc-status-success',
+  '--fuc-status-success-contrast',
+  '--fuc-status-error',
+  '--fuc-status-error-contrast',
+  '--fuc-status-interrupted',
+  '--fuc-status-interrupted-contrast',
 ] as const;
 
-/** Extract the body of `html.owf-style-<id> { ... }` from global.css. */
+/** Extract the body of `html.fuc-style-<id> { ... }` from global.css. */
 function presetCssBlock(id: string): string {
-  const marker = `html.owf-style-${id} {`;
+  const marker = `html.fuc-style-${id} {`;
   const start = globalCss.indexOf(marker);
   if (start === -1) return '';
   const open = globalCss.indexOf('{', start);
@@ -54,7 +54,7 @@ function presetCssBlock(id: string): string {
 
 afterEach(() => {
   document.documentElement.className = '';
-  delete document.documentElement.dataset.owfStyle;
+  delete document.documentElement.dataset.fucStyle;
 });
 
 describe('appearance presets', () => {
@@ -126,12 +126,12 @@ describe('appearance presets', () => {
     (id) => {
       applyAppearance({ stylePresetId: id });
       const root = document.documentElement;
-      expect(root.dataset.owfStyle).toBe(id);
-      expect(root.classList.contains(`owf-style-${id}`)).toBe(true);
+      expect(root.dataset.fucStyle).toBe(id);
+      expect(root.classList.contains(`fuc-style-${id}`)).toBe(true);
       // Only the active preset class is present.
       for (const other of BUILTIN_STYLE_PRESETS) {
         if (other === id) continue;
-        expect(root.classList.contains(`owf-style-${other}`)).toBe(false);
+        expect(root.classList.contains(`fuc-style-${other}`)).toBe(false);
       }
     },
   );

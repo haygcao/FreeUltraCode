@@ -12,13 +12,13 @@ import { uniqueWorkspaceHistory } from '@/lib/workspaceHistory';
  * non-browser contexts and never throws.
  */
 
-const COMPOSER_KEY = 'openworkflow.composer.v1';
-const DOCK_HEIGHT_KEY = 'openworkflow.dockHeight.v1';
-const PROMPT_GROUPS_KEY = 'openworkflow.promptGroups.v1';
-const LOCALE_KEY = 'openworkflow.locale.v1';
-const PROMPT_AUTO_TRANSLATE_KEY = 'openworkflow.promptAutoTranslate.v1';
+const COMPOSER_KEY = 'freeultracode.composer.v1';
+const DOCK_HEIGHT_KEY = 'freeultracode.dockHeight.v1';
+const PROMPT_GROUPS_KEY = 'freeultracode.promptGroups.v1';
+const LOCALE_KEY = 'freeultracode.locale.v1';
+const PROMPT_AUTO_TRANSLATE_KEY = 'freeultracode.promptAutoTranslate.v1';
 /** Tracks which PROMPT_DEFAULTS_VERSION the persisted library was migrated to. */
-const PROMPT_GROUPS_VERSION_KEY = 'openworkflow.promptGroups.version.v1';
+const PROMPT_GROUPS_VERSION_KEY = 'freeultracode.promptGroups.version.v1';
 
 export interface PersistedComposer {
   composer: ComposerSettings;

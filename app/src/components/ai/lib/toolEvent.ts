@@ -4,9 +4,9 @@
  * The CLI runtime can no longer convey tool status/duration/args/result through
  * a flat `🔧 name: detail` text line. Instead it emits inline sentinel blocks:
  *
- *   <<OWF_TOOL>>{ ...json ToolEventPatch... }<<OWF_TOOL_END>>
+ *   <<FUC_TOOL>>{ ...json ToolEventPatch... }<<FUC_TOOL_END>>
  *
- * woven into the normal text stream (the same approach as the `<<OWF_ASK>>`
+ * woven into the normal text stream (the same approach as the `<<FUC_ASK>>`
  * interaction sentinel). Each block is a *patch* keyed by `id`: a `running`
  * patch when the call starts, then a `done`/`error` patch (with `durationMs`
  * and `result`) when it finishes. The renderer's segmenter accumulates patches
@@ -41,8 +41,8 @@ export interface ToolEvent {
 /** A partial update to a {@link ToolEvent}; `id` is required, rest optional. */
 export type ToolEventPatch = Partial<ToolEvent> & { id: string };
 
-export const TOOL_OPEN = '<<OWF_TOOL>>';
-export const TOOL_CLOSE = '<<OWF_TOOL_END>>';
+export const TOOL_OPEN = '<<FUC_TOOL>>';
+export const TOOL_CLOSE = '<<FUC_TOOL_END>>';
 
 /** Serialise a patch into an inline sentinel block for the text stream. */
 export function encodeToolPatch(patch: ToolEventPatch): string {
@@ -68,7 +68,7 @@ export interface ToolSentinelSplit {
 }
 
 /**
- * Pull every `<<OWF_TOOL>>…<<OWF_TOOL_END>>` block out of `text`, returning the
+ * Pull every `<<FUC_TOOL>>…<<FUC_TOOL_END>>` block out of `text`, returning the
  * cleaned text, the decoded patches, and an ordered parts list that preserves
  * each sentinel's position relative to the surrounding prose. Malformed or
  * incomplete blocks (e.g. a half-streamed sentinel with no close yet) are left

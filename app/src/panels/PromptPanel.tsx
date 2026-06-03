@@ -68,7 +68,7 @@ export default function PromptPanel() {
     setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const { width, onResizeStart } = useResizableWidth({
-    storageKey: 'openworkflow.panelWidth.v1',
+    storageKey: 'freeultracode.panelWidth.v1',
     defaultWidth: 288,
     min: 220,
     max: 560,

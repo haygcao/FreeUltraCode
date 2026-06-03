@@ -1,5 +1,5 @@
 /**
- * Headless OpenWorkflows run engine. Pure with respect to its host — see
+ * Headless FreeUltraCode run engine. Pure with respect to its host — see
  * runtime/types.ts for the {@link RunCallbacks} / {@link RunContext} /
  * {@link RunGateway} contract the desktop GUI and the Node CLI both implement.
  */

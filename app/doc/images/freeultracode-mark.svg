@@ -1,5 +1,5 @@
 <svg width="640" height="220" viewBox="0 0 640 220" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">OpenWorkflows animated workflow mark</title>
+  <title id="title">FreeUltraCode animated workflow mark</title>
   <desc id="desc">Animated nodes flow through a portable intermediate representation.</desc>
   <style>
     .track {
@@ -111,5 +111,5 @@
   <circle class="spark" cx="228" cy="56" r="5" fill="#38BDF8"/>
   <circle class="spark" cx="396" cy="164" r="5" fill="#34D399"/>
   <circle class="spark" cx="390" cy="50" r="4" fill="#A78BFA"/>
-  <text x="320" y="190" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="3" fill="#E5E7EB" fill-opacity=".82">OPENWORKFLOWS</text>
+  <text x="320" y="190" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="3" fill="#E5E7EB" fill-opacity=".82">FREEULTRACODE</text>
 </svg>

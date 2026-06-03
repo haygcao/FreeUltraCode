@@ -1,4 +1,4 @@
-/** Canonical filesystem root for OpenWorkflows history data. */
+/** Canonical filesystem root for FreeUltraCode history data. */
 export const HISTORY_ROOT_DIR = 'C:\\Users\\FW\\.worktree';
 
 /** Alias used by code that talks about the physical worktree root. */

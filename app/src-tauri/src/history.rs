@@ -184,7 +184,7 @@ fn replace_file(src: &Path, dest: &Path) -> Result<(), String> {
 }
 
 fn worktree_root() -> Result<PathBuf, String> {
-    let root = if let Ok(env) = std::env::var("OWF_HOME") {
+    let root = if let Ok(env) = std::env::var("FUC_HOME") {
         if !env.trim().is_empty() {
             PathBuf::from(env)
         } else {

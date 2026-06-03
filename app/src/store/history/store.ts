@@ -1,6 +1,6 @@
 import type { IRGraph } from '@/core/ir';
 import { loadComposer } from '@/lib/composerStorage';
-import { OWF_STORAGE_KEY } from '@/lib/persist';
+import { FUC_STORAGE_KEY } from '@/lib/persist';
 import { tauriAvailable } from '@/lib/tauri';
 import type { Message } from '@/store/types';
 import {
@@ -60,7 +60,7 @@ export interface HistoryStore {
 
 const CONFIG_PATH = 'config.json';
 const WORKSPACES_INDEX = 'workspaces/index.json';
-const FALLBACK_PREFIX = 'openworkflow.history.v1:';
+const FALLBACK_PREFIX = 'freeultracode.history.v1:';
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -491,7 +491,7 @@ async function migrateLocalWorkflowInternal(): Promise<void> {
   const config = await getConfigInternal();
   if (config.migratedFromLocalStorage) return;
 
-  const raw = localGet(OWF_STORAGE_KEY);
+  const raw = localGet(FUC_STORAGE_KEY);
   let migrated = false;
   if (raw) {
     try {
@@ -550,7 +550,7 @@ export const historyStore: HistoryStore = {
     if (tauriAvailable()) {
       return command<string>('history_root');
     }
-    return 'localStorage://openworkflow.history.v1';
+    return 'localStorage://freeultracode.history.v1';
   },
 
   getConfig() {

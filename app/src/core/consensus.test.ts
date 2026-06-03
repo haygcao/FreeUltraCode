@@ -62,7 +62,7 @@ describe('consensus node emission', () => {
     // Self-contained helper so the export runs in real Claude Code, annotated so
     // the parser skips it.
     expect(script).toContain('async function consensus(voters, opts)');
-    expect(script).toContain('// @owf:runtime consensus');
+    expect(script).toContain('// @fuc:runtime consensus');
     // The call site uses fixed-key-order options and a bare schema identifier.
     expect(script).toContain('await consensus([');
     expect(script).toContain("strategy: 'multi-lens'");
@@ -93,7 +93,7 @@ describe('consensus node emission', () => {
       ],
       edges: [],
     };
-    expect(emitClaudeScript(noConsensus)).not.toContain('@owf:runtime');
+    expect(emitClaudeScript(noConsensus)).not.toContain('@fuc:runtime');
   });
 });
 

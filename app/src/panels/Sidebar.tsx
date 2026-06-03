@@ -63,11 +63,11 @@ type SidebarLiveState = {
   chattingSessions: WorkflowSessionKey[];
 };
 type WorkspaceToneStyle = CSSProperties & {
-  '--owf-workspace-bg': string;
-  '--owf-workspace-bg-hover': string;
-  '--owf-workspace-bg-active': string;
-  '--owf-workspace-chip-bg': string;
-  '--owf-workspace-mark': string;
+  '--fuc-workspace-bg': string;
+  '--fuc-workspace-bg-hover': string;
+  '--fuc-workspace-bg-active': string;
+  '--fuc-workspace-chip-bg': string;
+  '--fuc-workspace-mark': string;
 };
 
 const WORKSPACE_TONE_HUES = [44, 86, 136, 168, 198, 224, 252, 278];
@@ -86,11 +86,11 @@ function workspaceToneStyle(workspaceId: string): WorkspaceToneStyle {
   const saturation = 24 + (Math.floor(hash / 8) % 4) * 2;
   const lightness = 42 + (Math.floor(hash / 32) % 3) * 3;
   return {
-    '--owf-workspace-bg': `hsl(${hue} ${saturation}% ${lightness}% / 0.12)`,
-    '--owf-workspace-bg-hover': `hsl(${hue} ${saturation}% ${lightness}% / 0.17)`,
-    '--owf-workspace-bg-active': `hsl(${hue} ${saturation + 3}% ${lightness + 2}% / 0.22)`,
-    '--owf-workspace-chip-bg': `hsl(${hue} ${saturation + 3}% ${lightness + 2}% / 0.15)`,
-    '--owf-workspace-mark': `hsl(${hue} ${saturation + 14}% ${lightness + 18}% / 0.82)`,
+    '--fuc-workspace-bg': `hsl(${hue} ${saturation}% ${lightness}% / 0.12)`,
+    '--fuc-workspace-bg-hover': `hsl(${hue} ${saturation}% ${lightness}% / 0.17)`,
+    '--fuc-workspace-bg-active': `hsl(${hue} ${saturation + 3}% ${lightness + 2}% / 0.22)`,
+    '--fuc-workspace-chip-bg': `hsl(${hue} ${saturation + 3}% ${lightness + 2}% / 0.15)`,
+    '--fuc-workspace-mark': `hsl(${hue} ${saturation + 14}% ${lightness + 18}% / 0.82)`,
   };
 }
 
@@ -725,7 +725,7 @@ export default function Sidebar() {
   );
 
   const { width, onResizeStart } = useResizableWidth({
-    storageKey: 'openworkflow.sidebarWidth.v1',
+    storageKey: 'freeultracode.sidebarWidth.v1',
     defaultWidth: 240,
     min: 180,
     max: 480,
@@ -750,7 +750,7 @@ export default function Sidebar() {
       <div className="flex items-center gap-2 border-b border-border-soft px-4 py-3.5">
         <span className="text-accent-2">◆</span>
         <span className="text-sm font-semibold tracking-tight text-fg">
-          OpenWorkflows
+          FreeUltraCode
         </span>
       </div>
 
@@ -908,8 +908,8 @@ export default function Sidebar() {
                       className={
                         'rounded-md px-2.5 py-1.5 transition-colors ' +
                         (workspaceActive
-                          ? 'bg-[var(--owf-workspace-bg-active)]'
-                          : 'bg-[var(--owf-workspace-bg)] hover:bg-[var(--owf-workspace-bg-hover)]')
+                          ? 'bg-[var(--fuc-workspace-bg-active)]'
+                          : 'bg-[var(--fuc-workspace-bg)] hover:bg-[var(--fuc-workspace-bg-hover)]')
                       }
                       style={workspaceToneStyle(workspace.id)}
                       onContextMenu={(e) =>
@@ -917,13 +917,13 @@ export default function Sidebar() {
                       }
                     >
                       <div className="flex items-center gap-1.5 text-[11px] font-semibold text-fg">
-                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-[var(--owf-workspace-chip-bg)] text-[var(--owf-workspace-mark)]">
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-[var(--fuc-workspace-chip-bg)] text-[var(--fuc-workspace-mark)]">
                           ▾
                         </span>
                         <span className="min-w-0 flex-1 truncate" title={workspace.path}>
                           {workspace.name}
                         </span>
-                        <span className="rounded bg-[var(--owf-workspace-chip-bg)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-dim">
+                        <span className="rounded bg-[var(--fuc-workspace-chip-bg)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-dim">
                           {activeTab === 'favorites'
                             ? fullList.length
                             : workspace.sessionCount}
@@ -986,7 +986,7 @@ export default function Sidebar() {
                                       : 'text-fg-dim hover:bg-border-soft hover:text-fg')
                                   }
                                 >
-                                  <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--owf-status-slot-size)] items-center gap-1.5">
+                                  <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
                                     <SessionKindBadge
                                       isWorkflow={session.isWorkflow}
                                       simple={session.simple === true}
@@ -1080,7 +1080,7 @@ export default function Sidebar() {
                                     ' disabled:cursor-not-allowed disabled:opacity-50'
                                   }
                                 >
-                                  <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--owf-status-slot-size)] items-center gap-1.5">
+                                  <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
                                     <SessionKindBadge
                                       isWorkflow={session.isWorkflow}
                                       simple={session.simple === true}
@@ -1176,7 +1176,7 @@ export default function Sidebar() {
                             : 'text-fg-dim hover:bg-border-soft hover:text-fg')
                         }
                       >
-                        <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--owf-status-slot-size)] items-center gap-1.5">
+                        <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
                           <SessionKindBadge
                             isWorkflow={session.isWorkflow}
                             simple={session.simple === true}
@@ -1259,7 +1259,7 @@ export default function Sidebar() {
                           ' disabled:cursor-not-allowed disabled:opacity-50'
                         }
                       >
-                        <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--owf-status-slot-size)] items-center gap-1.5">
+                        <span className="grid w-full grid-cols-[auto_minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
                           <SessionKindBadge
                             isWorkflow={session.isWorkflow}
                             simple={session.simple === true}

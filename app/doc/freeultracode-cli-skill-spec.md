@@ -1,8 +1,8 @@
-# `/openworkflows` Skill & CLI 完整规格
+# `/freeultracode` Skill & CLI 完整规格
 
 > 版本：v0.1.0-draft  
 > 状态：可据以实现（Ready for Implementation）  
-> 依赖上游结论：OpenWorkflows 纯 CLI 模式技术上完全可行，Node.js CLI 先行，Rust 渐进跟进。
+> 依赖上游结论：FreeUltraCode 纯 CLI 模式技术上完全可行，Node.js CLI 先行，Rust 渐进跟进。
 
 ---
 
@@ -10,10 +10,10 @@
 
 ### 1.1 问题定义
 
-OpenWorkflows 当前是一个**可视化设计时工具**（Vite + React + Tauri 桌面应用）。用户通过画布设计 workflow，然后运行或导出脚本。但存在以下空白：
+FreeUltraCode 当前是一个**可视化设计时工具**（Vite + React + Tauri 桌面应用）。用户通过画布设计 workflow，然后运行或导出脚本。但存在以下空白：
 
 - **CI/CD 集成**：无法在无头环境中运行已设计的 workflow。
-- **脚本化使用**：无法从命令行直接 `run` 一个 `.owf.json` 文件。
+- **脚本化使用**：无法从命令行直接 `run` 一个 `.fuc.json` 文件。
 - **编辑器集成**：无法与 VS Code / Vim / Emacs 等编辑器打通（如一键运行当前 workflow）。
 - **批量处理**：无法批量 `emit`/`parse`/`validate` 多个 workflow 文件。
 
@@ -21,7 +21,7 @@ OpenWorkflows 当前是一个**可视化设计时工具**（Vite + React + Tauri
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 3: Claude Code Skill (/openworkflows)                 │
+│  Layer 3: Claude Code Skill (/freeultracode)                 │
 │  ── 薄触发层，SKILL.md 驱动，负责参数解析和 CLI 调用调度       │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: Node.js CLI (app/cli/)                             │
@@ -54,20 +54,20 @@ OpenWorkflows 当前是一个**可视化设计时工具**（Vite + React + Tauri
 
 ```
 # 项目级（推荐，随仓库分发）
-.claude/skills/openworkflows/SKILL.md
+.claude/skills/freeultracode/SKILL.md
 
 # 用户级（个人全局安装）
-~/.claude/skills/openworkflows/SKILL.md
+~/.claude/skills/freeultracode/SKILL.md
 ```
 
 ### 2.2 Frontmatter
 
 ```yaml
 ---
-name: openworkflows
+name: freeultracode
 description: >
-  OpenWorkflows CLI skill — compile, validate, and run AI agent workflows
-  from the command line. Works with .owf.json blueprints and .js workflow scripts.
+  FreeUltraCode CLI skill — compile, validate, and run AI agent workflows
+  from the command line. Works with .fuc.json blueprints and .js workflow scripts.
   Supports Claude Code, Codex, and Gemini adapters.
 version: "0.1.0"
 argument-hint: "<subcommand> [options] [args]"
@@ -84,7 +84,7 @@ context: inline
 
 | 字段 | 取值 | 理由 |
 |------|------|------|
-| `name` | `openworkflows` | 用户输入 `/openworkflows` 触发 |
+| `name` | `freeultracode` | 用户输入 `/freeultracode` 触发 |
 | `description` | 多行描述 | Claude 自动触发时判断相关性 |
 | `argument-hint` | `<subcommand> [options] [args]` | 提示用户 skill 的用法 |
 | `allowed-tools` | Bash, Read, Write, AskUserQuestion | CLI 需要执行命令、读写配置文件 |
@@ -108,45 +108,45 @@ arguments: [subcommand, args]
 
 | 变量 | 含义 | 示例 |
 |------|------|------|
-| `$ARGUMENTS` | 用户输入的完整参数字符串 | `"run workflow.owf.json --model sonnet"` |
+| `$ARGUMENTS` | 用户输入的完整参数字符串 | `"run workflow.fuc.json --model sonnet"` |
 | `$0` | 子命令 | `run`, `emit`, `parse` 等 |
-| `$1` | 第一个位置参数（通常是文件路径） | `workflow.owf.json` |
+| `$1` | 第一个位置参数（通常是文件路径） | `workflow.fuc.json` |
 | `$2...` | 后续参数 | `--model`, `sonnet` |
 
 **示例交互**：
 ```
-User: /openworkflows run my-flow.owf.json --adapter claude-code --var "input=./src"
-Skill 接收: $0=run, $1=my-flow.owf.json, $2...=--adapter claude-code --var "input=./src"
-Skill 执行: npx owf run my-flow.owf.json --adapter claude-code --var "input=./src"
+User: /freeultracode run my-flow.fuc.json --adapter claude-code --var "input=./src"
+Skill 接收: $0=run, $1=my-flow.fuc.json, $2...=--adapter claude-code --var "input=./src"
+Skill 执行: npx fuc run my-flow.fuc.json --adapter claude-code --var "input=./src"
 ```
 
 ### 2.4 SKILL.md 主体指令
 
 ```markdown
-# /openworkflows
+# /freeultracode
 
-You are the OpenWorkflows CLI skill. Your job is to translate user requests
-into `owf` CLI commands and present the results.
+You are the FreeUltraCode CLI skill. Your job is to translate user requests
+into `fuc` CLI commands and present the results.
 
 ## Core behavior
 
 1. **Parse the subcommand** from `$0`. Supported: `init`, `emit`, `parse`, `validate`, `run`, `list`, `convert`, `diff`, `info`, `help`.
 2. **Delegate to the local CLI** via Bash:
    ```bash
-   npx owf $ARGUMENTS
+   npx fuc $ARGUMENTS
    ```
-   If `owf` is not installed globally or via npx, guide the user to run:
+   If `fuc` is not installed globally or via npx, guide the user to run:
    ```bash
    cd app && npm install && npm run cli:build
    ```
 3. **Stream output back** to the user. Do not summarize unless the output exceeds 200 lines.
-4. **For `run` with `--interactive`**: if the CLI process emits an interaction sentinel (`<<OWF_ASK>>...<<OWF_ASK_END>>`), pause and use `AskUserQuestion` to collect the answer, then write it back to the CLI's stdin.
-5. **For errors**: if the CLI exits non-zero, report the error message and suggest the next step (e.g., `owf validate <file>` for validation errors).
+4. **For `run` with `--interactive`**: if the CLI process emits an interaction sentinel (`<<FUC_ASK>>...<<FUC_ASK_END>>`), pause and use `AskUserQuestion` to collect the answer, then write it back to the CLI's stdin.
+5. **For errors**: if the CLI exits non-zero, report the error message and suggest the next step (e.g., `fuc validate <file>` for validation errors).
 
 ## File path resolution
 
 - If `$1` is a relative path, resolve it from the current working directory.
-- If `$1` ends with `.owf.json`, treat as blueprint.
+- If `$1` ends with `.fuc.json`, treat as blueprint.
 - If `$1` ends with `.js`, treat as workflow script.
 - If `$1` is `-` or `--stdin`, read from stdin.
 
@@ -159,8 +159,8 @@ into `owf` CLI commands and present the results.
 ## Safety rules
 
 - Do not write API keys to disk.
-- Do not execute arbitrary code from workflow files — only emit/parse/validate/run through the `owf` CLI.
-- If a workflow file is untrusted, suggest `owf validate --strict` first.
+- Do not execute arbitrary code from workflow files — only emit/parse/validate/run through the `fuc` CLI.
+- If a workflow file is untrusted, suggest `fuc validate --strict` first.
 ```
 
 ---
@@ -171,7 +171,7 @@ into `owf` CLI commands and present the results.
 
 ```
 Options:
-  -c, --config <path>     指定配置文件路径（默认：~/.owf/config.json）
+  -c, --config <path>     指定配置文件路径（默认：~/.fuc/config.json）
   -j, --json              所有输出为 JSON 格式（机器可读）
   -v, --verbose           详细日志（调试级别）
   -q, --quiet             静默模式（仅错误输出）
@@ -181,17 +181,17 @@ Options:
 
 ---
 
-### 3.1 `owf init [name]` — 新建蓝图
+### 3.1 `fuc init [name]` — 新建蓝图
 
 **用途**：创建最小合法的 IRGraph 文件。
 
 ```
-Usage: owf init [name] [options]
+Usage: fuc init [name] [options]
 
 Options:
   -t, --template <name>   使用内置模板（blank, agent-pipeline, code-review, parallel-scan）
   -f, --from <script>     从现有 .js 脚本反向导入（parse → 初始化）
-  -o, --output <path>     输出路径（默认：<name>.owf.json）
+  -o, --output <path>     输出路径（默认：<name>.fuc.json）
   --stdout                输出到 stdout（不写入文件）
   --adapter <adapter>     设置默认适配器（默认：claude-code）
 
@@ -199,7 +199,7 @@ Arguments:
   name                    工作流名称（用于 meta.name 和文件名）
 ```
 
-**输出格式**（`.owf.json`）：
+**输出格式**（`.fuc.json`）：
 ```json
 {
   "version": 1,
@@ -220,7 +220,7 @@ Arguments:
 **行为边界**：
 - 创建最小合法 IRGraph（必须含 `start` + `end` 哨兵）。
 - `--from` 时，先调用 `parseClaudeScript(src)`，然后注入 `meta.name`。
-- 模板读取顺序：`~/.owf/templates/<name>.owf.json` → 内置模板 → 错误退出。
+- 模板读取顺序：`~/.fuc/templates/<name>.fuc.json` → 内置模板 → 错误退出。
 - 不运行、不验证逻辑正确性（`validate` 负责）。
 
 **错误码**：
@@ -230,12 +230,12 @@ Arguments:
 
 ---
 
-### 3.2 `owf emit <file>` — 蓝图 → 可运行脚本
+### 3.2 `fuc emit <file>` — 蓝图 → 可运行脚本
 
-**用途**：将 `.owf.json` 编译为可运行的 Claude Code workflow 脚本。
+**用途**：将 `.fuc.json` 编译为可运行的 Claude Code workflow 脚本。
 
 ```
-Usage: owf emit <file> [options]
+Usage: fuc emit <file> [options]
 
 Options:
   -o, --output <path>     输出路径（默认：stdout）
@@ -246,7 +246,7 @@ Options:
   --dry-run               验证可 emit，不输出
 
 Arguments:
-  file                    输入 .owf.json 路径，或 - 表示 stdin
+  file                    输入 .fuc.json 路径，或 - 表示 stdin
 ```
 
 **输出格式**（`.js`）：
@@ -276,16 +276,16 @@ const review = await agent('Review findings...', { from: [scan] }) // @node n_re
 
 ---
 
-### 3.3 `owf parse <file>` — 脚本 → 蓝图
+### 3.3 `fuc parse <file>` — 脚本 → 蓝图
 
-**用途**：将现有 `.js` workflow 脚本反向解析为 `.owf.json`。
+**用途**：将现有 `.js` workflow 脚本反向解析为 `.fuc.json`。
 
 ```
-Usage: owf parse <file> [options]
+Usage: fuc parse <file> [options]
 
 Options:
   -o, --output <path>     输出路径（默认：stdout）
-  -p, --preserve-layout <file>  从现有 .owf.json 复用 layout 字段
+  -p, --preserve-layout <file>  从现有 .fuc.json 复用 layout 字段
   --annotate              在 stderr 输出解析统计（节点数、边数、问题）
 
 Arguments:
@@ -294,7 +294,7 @@ Arguments:
 
 **行为边界**：
 - 调用 `parseClaudeScript(src)` 进行解析。
-- `--preserve-layout` 读取旧 `.owf.json` 的 `layout` 字段，合并到输出中（保持画布坐标）。
+- `--preserve-layout` 读取旧 `.fuc.json` 的 `layout` 字段，合并到输出中（保持画布坐标）。
 - `--annotate` 在 stderr 输出：
   ```
   Parsed: 8 nodes, 7 edges (5 exec, 2 data)
@@ -310,15 +310,15 @@ Arguments:
 
 ---
 
-### 3.4 `owf validate <file>` — 验证
+### 3.4 `fuc validate <file>` — 验证
 
 **用途**：验证蓝图或脚本的结构与语义正确性。
 
 ```
-Usage: owf validate <file> [options]
+Usage: fuc validate <file> [options]
 
 Options:
-  -f, --format <format>   输入格式：auto | owf | js（默认：auto，按扩展名推断）
+  -f, --format <format>   输入格式：auto | fuc | js（默认：auto，按扩展名推断）
   --strict                严格模式：要求所有 data edges 无悬空引用、所有 agent 节点必须有 exec 出边
   --json                  诊断报告为 JSON（与全局 --json 叠加）
 
@@ -354,12 +354,12 @@ Arguments:
 
 ---
 
-### 3.5 `owf run <file>` — 执行工作流
+### 3.5 `fuc run <file>` — 执行工作流
 
 **用途**：执行蓝图或脚本。
 
 ```
-Usage: owf run <file> [options]
+Usage: fuc run <file> [options]
 
 Options:
   -a, --adapter <adapter> 指定适配器（覆盖文件中的配置）
@@ -377,13 +377,13 @@ Options:
   --no-color              禁用 ANSI 颜色输出
 
 Arguments:
-  file                    .owf.json 或 .js 路径，或 - 表示 stdin
+  file                    .fuc.json 或 .js 路径，或 - 表示 stdin
 ```
 
 **执行流程**：
 ```
 1. 读取输入文件
-2. 如果是 .owf.json → emitClaudeScript(ir) → 临时 .js
+2. 如果是 .fuc.json → emitClaudeScript(ir) → 临时 .js
    如果是 .js → 直接使用
 3. 调用 validate（内部，不输出）
 4. 构建 DAG 依赖图
@@ -427,7 +427,7 @@ Arguments:
   ```
 
 **交互模式**（`--interactive`）：
-- 当节点输出包含 `<<OWF_ASK>>...<<OWF_ASK_END>>` 哨兵块时：
+- 当节点输出包含 `<<FUC_ASK>>...<<FUC_ASK_END>>` 哨兵块时：
   1. 暂停该节点的执行。
   2. 在终端渲染交互提示（`select`/`input`/`confirm`）。
   3. 用户回答后，将答案格式化为协议文本追加到节点 prompt。
@@ -435,7 +435,7 @@ Arguments:
 - 实现：复用 `core/interaction.ts` 的 `parseInteraction()` + `formatAnswerForPrompt()`，CLI 侧用 `readline` 驱动。
 
 **恢复模式**（`--resume`）：
-- 读取 `.owf-run/<workflow-name>/last-run.json` 中的状态快照。
+- 读取 `.fuc-run/<workflow-name>/last-run.json` 中的状态快照。
 - 从 `failedNodeId` 开始重新执行，已成功的节点跳过（复用 `seedOutputs`）。
 
 **运行时状态目录**：
@@ -464,12 +464,12 @@ Arguments:
 
 ---
 
-### 3.6 `owf list <resource>` — 列出可用资源
+### 3.6 `fuc list <resource>` — 列出可用资源
 
 **用途**：查询环境能力。
 
 ```
-Usage: owf list <resource> [options]
+Usage: fuc list <resource> [options]
 
 Resources:
   adapters                列出已安装的适配器 CLI
@@ -483,13 +483,13 @@ Options:
 
 **输出示例**：
 ```bash
-$ owf list adapters
+$ fuc list adapters
 ADAPTER      PATH                    VERSION
 claude-code  /usr/local/bin/claude   2.1.112
 codex        /usr/local/bin/codex    0.7.2
 gemini       /usr/local/bin/gemini   1.2.0
 
-$ owf list models --adapter claude-code
+$ fuc list models --adapter claude-code
 MODEL              CLASS    DESCRIPTION
 claude-opus-4-8    opus     Most capable
 claude-sonnet-4-6  sonnet   Balanced
@@ -499,21 +499,21 @@ claude-haiku-4-5   haiku    Fastest
 **行为边界**：
 - `adapters`：扫描 `PATH` 找 `claude`/`codex`/`gemini` 可执行文件，复用 `cli_runtime.rs` 的扫描逻辑。
 - `models`：调用适配器 CLI 的模型列表能力（若支持），否则返回内置列表。
-- `templates`：读取 `~/.owf/templates/` + 内置模板目录。
+- `templates`：读取 `~/.fuc/templates/` + 内置模板目录。
 - 纯查询，不修改状态。
 
 ---
 
-### 3.7 `owf convert` — 格式互转
+### 3.7 `fuc convert` — 格式互转
 
 **用途**：在不同格式间转换 workflow。
 
 ```
-Usage: owf convert <file> [options]
+Usage: fuc convert <file> [options]
 
 Options:
-  --from <format>         源格式：auto | owf | js | yaml（默认：auto）
-  --to <format>           目标格式：owf | js | yaml（默认：owf）
+  --from <format>         源格式：auto | fuc | js | yaml（默认：auto）
+  --to <format>           目标格式：fuc | js | yaml（默认：fuc）
   -o, --output <path>     输出路径（默认：stdout）
   --strip-layout          去掉 layout 坐标（适合版本控制）
   --strip-run             去掉运行状态快照
@@ -524,9 +524,9 @@ Arguments:
 
 **支持矩阵**：
 
-| From \ To | `.owf.json` | `.js` | `.yaml` |
+| From \ To | `.fuc.json` | `.js` | `.yaml` |
 |-----------|-------------|-------|---------|
-| `.owf.json` | ✓ (noop) | emit | 序列化 |
+| `.fuc.json` | ✓ (noop) | emit | 序列化 |
 | `.js` | parse | ✓ (noop) | parse → yaml |
 | `.yaml` | 反序列化 | 反序列化 → emit | ✓ (noop) |
 
@@ -537,12 +537,12 @@ Arguments:
 
 ---
 
-### 3.8 `owf diff <fileA> <fileB>` — 比较
+### 3.8 `fuc diff <fileA> <fileB>` — 比较
 
 **用途**：结构级比较两个 workflow。
 
 ```
-Usage: owf diff <fileA> <fileB> [options]
+Usage: fuc diff <fileA> <fileB> [options]
 
 Options:
   --ignore-layout         忽略坐标差异
@@ -550,13 +550,13 @@ Options:
   --json                  JSON diff 输出
 
 Arguments:
-  fileA, fileB            两个输入文件（支持混合 .owf.json / .js）
+  fileA, fileB            两个输入文件（支持混合 .fuc.json / .js）
 ```
 
 **输出格式**（默认）：
 ```diff
---- workflow-v1.owf.json
-+++ workflow-v2.owf.json
+--- workflow-v1.fuc.json
++++ workflow-v2.fuc.json
 @@ meta @@
   name: security-audit
 - description: Automated security review
@@ -580,18 +580,18 @@ Arguments:
 
 ---
 
-### 3.9 `owf info <file>` — 显示元数据
+### 3.9 `fuc info <file>` — 显示元数据
 
 **用途**：快速了解工作流内容。
 
 ```
-Usage: owf info <file> [options]
+Usage: fuc info <file> [options]
 
 Options:
   --json                  JSON 输出
 
 Arguments:
-  file                    .owf.json 或 .js 路径
+  file                    .fuc.json 或 .js 路径
 ```
 
 **输出格式**（默认）：
@@ -621,18 +621,18 @@ Size:        4.2 KB
 | 模块 | 导入路径 | 用途 |
 |------|----------|------|
 | `IRGraph` 类型系统 | `core/ir.ts` | 类型定义、常量 |
-| `emitClaudeScript` | `core/emitter.ts` | `owf emit` |
-| `parseClaudeScript` | `core/parser.ts` | `owf parse`, `owf validate` |
-| `roundtrip` | `core/roundtrip.ts` | `owf validate --roundtrip`（可选） |
-| `topoOrderExec` | `core/topo.ts` | `owf run` DAG 排序 |
-| `isRunnable` | `core/topo.ts` | `owf run` 节点可运行性判断 |
-| `parseInteraction` | `core/interaction.ts` | `owf run --interactive` |
-| `stripInteraction` | `core/interaction.ts` | `owf run --interactive` |
+| `emitClaudeScript` | `core/emitter.ts` | `fuc emit` |
+| `parseClaudeScript` | `core/parser.ts` | `fuc parse`, `fuc validate` |
+| `roundtrip` | `core/roundtrip.ts` | `fuc validate --roundtrip`（可选） |
+| `topoOrderExec` | `core/topo.ts` | `fuc run` DAG 排序 |
+| `isRunnable` | `core/topo.ts` | `fuc run` 节点可运行性判断 |
+| `parseInteraction` | `core/interaction.ts` | `fuc run --interactive` |
+| `stripInteraction` | `core/interaction.ts` | `fuc run --interactive` |
 | `INTERACTION_PROTOCOL` | `core/interaction.ts` | 交互协议常量 |
 | `assessConsensusFit` | `core/consensusHeuristic.ts` | `runConsensus` 策略选择 |
 | `readStartUserInputs` | `core/startInputs.ts` | `start` 节点用户输入处理 |
-| `defaultBlueprint` | `core/defaultBlueprint.ts` | `owf init` 默认模板 |
-| `isEmptyWorkflow` | `core/isEmptyWorkflow.ts` | `owf validate` 空图检查 |
+| `defaultBlueprint` | `core/defaultBlueprint.ts` | `fuc init` 默认模板 |
+| `isEmptyWorkflow` | `core/isEmptyWorkflow.ts` | `fuc validate` 空图检查 |
 
 ### 4.2 需抽象后复用的运行时模块
 
@@ -794,7 +794,7 @@ app/src/panels/                    ← UI 面板
 
 ```
 app/cli/                           ← 新增：Node.js CLI 入口
-├── bin/owf.ts                     ← CLI 入口（commander）
+├── bin/fuc.ts                     ← CLI 入口（commander）
 ├── commands/
 │   ├── init.ts
 │   ├── emit.ts
@@ -831,12 +831,12 @@ app/
 │   └── ...                ← 现有 GUI 代码
 ├── cli/                   ← 新增
 │   ├── bin/
-│   │   └── owf.ts         ← shebang + commander 入口
+│   │   └── fuc.ts         ← shebang + commander 入口
 │   ├── commands/          ← 各子命令实现
 │   ├── io/                ← CLI IO 层
 │   ├── config/            ← CLI 配置管理
 │   └── utils/             ← 辅助函数
-├── package.json           ← 添加 "bin": { "owf": "./cli/bin/owf.ts" }
+├── package.json           ← 添加 "bin": { "fuc": "./cli/bin/fuc.ts" }
 └── tsconfig.cli.json      ← CLI 专用 tsconfig
 ```
 
@@ -844,14 +844,14 @@ app/
 
 ```json
 {
-  "name": "@openworkflows/cli",
+  "name": "@freeultracode/cli",
   "version": "0.1.0",
   "bin": {
-    "owf": "./cli/dist/bin/owf.js"
+    "fuc": "./cli/dist/bin/fuc.js"
   },
   "scripts": {
     "cli:build": "tsc -p tsconfig.cli.json",
-    "cli:dev": "tsx cli/bin/owf.ts",
+    "cli:dev": "tsx cli/bin/fuc.ts",
     "cli:test": "vitest run cli/"
   },
   "dependencies": {
@@ -867,14 +867,14 @@ app/
 ```bash
 # 开发（直接运行 TS）
 cd app
-npx tsx cli/bin/owf.ts run workflow.owf.json
+npx tsx cli/bin/fuc.ts run workflow.fuc.json
 
 # 构建（编译到 cli/dist/）
 npm run cli:build
 
 # 本地链接
 npm link
-owf --version
+fuc --version
 
 # 发布到 npm
 npm publish --access public
@@ -999,7 +999,7 @@ await executeWorkflowDag(ir, guiCallbacks, context, options);
 
 1. `npm run typecheck` — 全量类型检查通过。
 2. 在浏览器中打开应用，运行一个 sample workflow，确认行为与解耦前一致。
-3. 在 dev console 执行 `OpenWorkflow.roundtrip()`，确认 emit/parse 无损。
+3. 在 dev console 执行 `FreeUltraCode.roundtrip()`，确认 emit/parse 无损。
 
 ---
 
@@ -1008,14 +1008,14 @@ await executeWorkflowDag(ir, guiCallbacks, context, options);
 ### 9.1 用户请求 → Skill → CLI 的完整链路
 
 ```
-User: /openworkflows run my-flow.owf.json --model sonnet --interactive
+User: /freeultracode run my-flow.fuc.json --model sonnet --interactive
 
 Claude (Skill):
-  1. 解析 $0=run, $1=my-flow.owf.json
-  2. 检查 owf CLI 是否可用（which owf 或 npx owf --version）
-  3. 执行：npx owf run my-flow.owf.json --model sonnet --interactive
+  1. 解析 $0=run, $1=my-flow.fuc.json
+  2. 检查 fuc CLI 是否可用（which fuc 或 npx fuc --version）
+  3. 执行：npx fuc run my-flow.fuc.json --model sonnet --interactive
   4. 流式读取 stdout/stderr，实时展示给用户
-  5. 如果 stdout 中出现 <<OWF_ASK>>...<<OWF_ASK_END>>：
+  5. 如果 stdout 中出现 <<FUC_ASK>>...<<FUC_ASK_END>>：
      a. 解析为 InteractionRequest
      b. 调用 AskUserQuestion 向用户提问
      c. 将回答格式化为协议文本
@@ -1029,7 +1029,7 @@ Claude (Skill):
 |------|------|
 | **薄触发层** | Skill 不做任何业务逻辑，只负责参数透传和结果展示。 |
 | **不内嵌 IR** | Skill 不直接操作 IRGraph JSON，所有图操作委托给 CLI。 |
-| **状态外置** | Skill 不维护运行状态，状态由 CLI 的 `.owf-run/` 目录管理。 |
+| **状态外置** | Skill 不维护运行状态，状态由 CLI 的 `.fuc-run/` 目录管理。 |
 | **交互代理** | Skill 是 CLI `promptInteraction` 的一个实现端（通过 `AskUserQuestion`）。 |
 
 ---
@@ -1040,13 +1040,13 @@ Claude (Skill):
 
 ```
 1. 命令行 flag（--adapter, --model, --concurrency 等）
-2. 环境变量（ANTHROPIC_API_KEY, OPENAI_API_KEY, OWF_RUN_CONCURRENCY 等）
-3. 项目级配置文件（./.owf.json 或 ./.owf/config.json）
-4. 用户级配置文件（~/.owf/config.json）
+2. 环境变量（ANTHROPIC_API_KEY, OPENAI_API_KEY, FUC_RUN_CONCURRENCY 等）
+3. 项目级配置文件（./.fuc.json 或 ./.fuc/config.json）
+4. 用户级配置文件（~/.fuc/config.json）
 5. 内置默认值
 ```
 
-### 10.2 配置文件格式（`~/.owf/config.json`）
+### 10.2 配置文件格式（`~/.fuc/config.json`）
 
 ```json
 {
@@ -1067,7 +1067,7 @@ Claude (Skill):
       "providerId": "openai-default"
     }
   },
-  "templatesDir": "~/.owf/templates"
+  "templatesDir": "~/.fuc/templates"
 }
 ```
 
@@ -1095,11 +1095,11 @@ Claude (Skill):
 
 | 场景 | 命令 | 断言 |
 |------|------|------|
-| 完整 round-trip | `owf emit X.owf.json \| owf parse --stdin` | 输出 IRGraph 与输入同构 |
-| validate 通过 | `owf validate valid.owf.json` | exit 0 |
-| validate 失败 | `owf validate broken.owf.json` | exit 1 + 错误信息 |
-| dry-run | `owf run workflow.owf.json --dry-run` | exit 0，不 spawn CLI |
-| 空图 init | `owf init test && owf validate test.owf.json` | exit 0 |
+| 完整 round-trip | `fuc emit X.fuc.json \| fuc parse --stdin` | 输出 IRGraph 与输入同构 |
+| validate 通过 | `fuc validate valid.fuc.json` | exit 0 |
+| validate 失败 | `fuc validate broken.fuc.json` | exit 1 + 错误信息 |
+| dry-run | `fuc run workflow.fuc.json --dry-run` | exit 0，不 spawn CLI |
+| 空图 init | `fuc init test && fuc validate test.fuc.json` | exit 0 |
 
 ### 11.3 端到端测试
 
@@ -1126,12 +1126,12 @@ Claude (Skill):
 
 | 术语 | 定义 |
 |------|------|
-| **IRGraph** | OpenWorkflows 中间表示图，workflow 的单一数据源。 |
-| **蓝图** | `.owf.json` 文件，IRGraph 的 JSON 序列化。 |
+| **IRGraph** | FreeUltraCode 中间表示图，workflow 的单一数据源。 |
+| **蓝图** | `.fuc.json` 文件，IRGraph 的 JSON 序列化。 |
 | **脚本** | `.js` 文件，Claude Code workflow script，由 `emitClaudeScript` 生成。 |
 | **适配器** | 底层 AI CLI（`claude-code`, `codex`, `gemini`）。 |
 | **Gateway** | 模型路由层，决定用哪个适配器/模型/ provider 执行节点。 |
-| **哨兵块** | `<<OWF_ASK>>...<<OWF_ASK_END>>` 协议文本，用于节点向用户请求交互。 |
+| **哨兵块** | `<<FUC_ASK>>...<<FUC_ASK_END>>` 协议文本，用于节点向用户请求交互。 |
 | **exec spine** | 执行流脊柱，由 `exec` 边连接的控制流拓扑路径。 |
 
 ### 13.2 参考文件
@@ -1143,7 +1143,7 @@ Claude (Skill):
 | `app/src/core/parser.ts` | `parseClaudeScript` 实现 |
 | `app/src/store/useStore.ts` | 现有运行时引擎（待解耦） |
 | `app/src-tauri/src/cli_runtime.rs` | Rust CLI 运行时基础设施 |
-| `.claude/skills/openworkflows/SKILL.md` | Claude Code Skill 定义 |
+| `.claude/skills/freeultracode/SKILL.md` | Claude Code Skill 定义 |
 
 ### 13.3 相关 Memory
 

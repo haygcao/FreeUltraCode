@@ -416,7 +416,7 @@ describe('model gateway compatibility', () => {
         },
       ],
     };
-    window.localStorage.setItem('owf_model_gateway_v1', JSON.stringify(config));
+    window.localStorage.setItem('fuc_model_gateway_v1', JSON.stringify(config));
 
     const workflow = buildWorkflow([]);
     workflow.meta.gateway = {

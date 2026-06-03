@@ -3031,7 +3031,7 @@ function AboutSettings({ locale }: { locale: Locale }) {
             <Sparkles size={20} strokeWidth={2.2} />
           </span>
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-fg">OpenWorkflows</div>
+            <div className="text-sm font-semibold text-fg">FreeUltraCode</div>
             <span className="mt-1 inline-block rounded-md border border-border bg-panel-2 px-2 py-0.5 font-mono text-[11px] text-fg-dim">
               {t(locale, 'settings.aboutVersion')} v{APP_VERSION}
             </span>

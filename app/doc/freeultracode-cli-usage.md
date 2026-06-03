@@ -1,9 +1,9 @@
-# OpenWorkflows CLI 使用指南
+# FreeUltraCode CLI 使用指南
 
-OpenWorkflows 的命令行只有 **两个** 面向用户的命令：
+FreeUltraCode 的命令行只有 **两个** 面向用户的命令：
 
-- **`owf gen`** —— 用自然语言**生成**或**修改**一个 workflow。
-- **`owf run`** —— **运行**一个 workflow。
+- **`fuc gen`** —— 用自然语言**生成**或**修改**一个 workflow。
+- **`fuc run`** —— **运行**一个 workflow。
 
 对你而言，**workflow 就是一个 `.js` 脚本**。你写需求，`gen` 生成 `.js`；你提修改意见，
 `gen` 改写这个 `.js`；`run` 运行它。其余（蓝图 / 中间结构 / 校验等）都是隐藏的内部过程，
@@ -17,7 +17,7 @@ API key**。前置条件只有一个：
 1. 安装 `claude` CLI；
 2. 执行 `claude login` 完成登录。
 
-如果没装或没登录，`owf gen` 会报错并提示（退出码 4）。也可以用环境变量 `OWF_CLAUDE_PATH`
+如果没装或没登录，`fuc gen` 会报错并提示（退出码 4）。也可以用环境变量 `FUC_CLAUDE_PATH`
 指定 `claude` 可执行文件的路径。
 
 ## 运行 CLI
@@ -25,10 +25,10 @@ API key**。前置条件只有一个：
 目前没有全局安装，用 Node 跑仓库里打包好的 CLI：
 
 ```bash
-node app/cli/dist/owf.mjs <gen|run> [options] [args]
+node app/cli/dist/fuc.mjs <gen|run> [options] [args]
 ```
 
-第一次使用前若 `app/cli/dist/owf.mjs` 不存在，先构建一次：
+第一次使用前若 `app/cli/dist/fuc.mjs` 不存在，先构建一次：
 
 ```bash
 cd app && npm install && npm run cli:build
@@ -39,7 +39,7 @@ cd app && npm install && npm run cli:build
 ### 1. 生成
 
 ```bash
-node app/cli/dist/owf.mjs gen "做一个代码审查流程：先理解改动，再审查，最后给结论" -o review.js
+node app/cli/dist/fuc.mjs gen "做一个代码审查流程：先理解改动，再审查，最后给结论" -o review.js
 ```
 
 完成后会打印 `✓ 已生成 review.js（N 节点 / M 边）`。
@@ -57,25 +57,25 @@ cat review.js
 把第一个参数换成已有脚本，第二个参数写修改意图，文件会被**原地改写**：
 
 ```bash
-node app/cli/dist/owf.mjs gen review.js "在审查后加一个验证节点，校验结论是否成立"
+node app/cli/dist/fuc.mjs gen review.js "在审查后加一个验证节点，校验结论是否成立"
 ```
 
 ### 4. 运行
 
 ```bash
 # 先干跑校验（不真正调用模型）
-node app/cli/dist/owf.mjs run review.js --dry-run
+node app/cli/dist/fuc.mjs run review.js --dry-run
 
 # 真正运行
-node app/cli/dist/owf.mjs run review.js
+node app/cli/dist/fuc.mjs run review.js
 ```
 
 运行日志写到 stderr（`[time] ▶/●/✓` 形式），最终结果写到 stdout。运行状态保存在
-`.owf-run/<workflow>/` 下，**绝不回写你的脚本**。
+`.fuc-run/<workflow>/` 下，**绝不回写你的脚本**。
 
 ## 常用选项
 
-### owf gen
+### fuc gen
 
 | 选项 | 说明 |
 |------|------|
@@ -85,7 +85,7 @@ node app/cli/dist/owf.mjs run review.js
 | `--cli <path>` | 显式指定 CLI 可执行文件路径/名称 |
 | `--json` | stdout 输出结构化结果（mode / output / nodes / edges） |
 
-### owf run
+### fuc run
 
 | 选项 | 说明 |
 |------|------|
@@ -109,5 +109,5 @@ node app/cli/dist/owf.mjs run review.js
 ## 高级 / 内部（一般不需要）
 
 CLI 内部仍保留 `init` / `emit` / `parse` / `validate` / `convert` / `diff` / `info` /
-`list` 等步骤，被 `gen` / `run` 在内部复用，但它们**不出现在 `owf --help`** 里，正常使用
+`list` 等步骤，被 `gen` / `run` 在内部复用，但它们**不出现在 `fuc --help`** 里，正常使用
 完全不需要直接调用它们。

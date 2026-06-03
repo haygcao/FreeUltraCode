@@ -41,7 +41,7 @@ describe('WorkspaceSelect', () => {
       history: [
         'E:\\Game',
         'e:/Game/',
-        'E:\\OpenWorkflows',
+        'E:\\FreeUltraCode',
         'E:\\Game\\',
       ],
     });
@@ -60,7 +60,7 @@ describe('WorkspaceSelect', () => {
       expect(options).toHaveLength(2);
       expect(options.map((item) => item.textContent?.trim())).toEqual([
         '●Game',
-        '●OpenWorkflows',
+        '●FreeUltraCode',
       ]);
     } finally {
       await view.cleanup();

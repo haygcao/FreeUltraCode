@@ -46,7 +46,7 @@ interface StoredSpeed {
 
 type StoredSpeedMap = Record<string, StoredSpeed>;
 
-const STORAGE_KEY = 'owf_model_speed_v1';
+const STORAGE_KEY = 'fuc_model_speed_v1';
 const EWMA_ALPHA = 0.35;
 const FAST_MS = 90_000;
 const SLOW_MS = 210_000;

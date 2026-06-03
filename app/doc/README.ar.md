@@ -1,13 +1,13 @@
-# OpenWorkflows
+# FreeUltraCode
 
 <div align="center">
   <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | العربية
 </div>
 
-تطبيق OpenWorkflows لل سطح المكتب يجمع بين المحادثة المجانية مع النماذج الكبيرة والتحرير البصري لسير العمل متعدد الوكلاء. يمكنك التحدث مباشرة عبر 17+ قناة مجانية (Gemini، DeepSeek، Groq، Ollama…)، أو بناء رسوم بيانية لسير العمل على اللوحة وتحويلها إلى نصوص قابلة للتشغيل على Claude Code وCodex وGemini وبيئات تشغيل أخرى.
+تطبيق FreeUltraCode لل سطح المكتب يجمع بين المحادثة المجانية مع النماذج الكبيرة والتحرير البصري لسير العمل متعدد الوكلاء. يمكنك التحدث مباشرة عبر 17+ قناة مجانية (Gemini، DeepSeek، Groq، Ollama…)، أو بناء رسوم بيانية لسير العمل على اللوحة وتحويلها إلى نصوص قابلة للتشغيل على Claude Code وCodex وGemini وبيئات تشغيل أخرى.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="لقطة شاشة لمحرّر OpenWorkflows" width="960">
+  <img src="images/0-标题使用.png" alt="لقطة شاشة لمحرّر FreeUltraCode" width="960">
 </p>
 
 ## الميزات الرئيسية
@@ -36,7 +36,7 @@
 
 ## دليل الاستخدام
 
-- [دليل استخدام OpenWorkflows](claude-code-workflow-openworkflow.ar.md) - شرح تفصيلي بالصور من الإعدادات العامة واختيار runtime في إدخال AI إلى إنشاء المخطط والتشغيل وتبديل المظهر.
+- [دليل استخدام FreeUltraCode](claude-code-workflow-freeultracode.ar.md) - شرح تفصيلي بالصور من الإعدادات العامة واختيار runtime في إدخال AI إلى إنشاء المخطط والتشغيل وتبديل المظهر.
 
 ## البدء السريع
 
@@ -74,7 +74,7 @@ npm run package
 ### وضع سير العمل
 
 1. انقر **+ سير عمل جديد** في الشريط الجانبي.
-2. صِف المهمة في حقل إدخال الذكاء الاصطناعي أسفل اليمين. يولّد OpenWorkflows مخطط Workflow تلقائيًا.
+2. صِف المهمة في حقل إدخال الذكاء الاصطناعي أسفل اليمين. يولّد FreeUltraCode مخطط Workflow تلقائيًا.
 3. واصل تحسين المخطط بكتابة تعليمات متابعة في الحقل نفسه، أو انقر المُوجّهات الشائعة في اللوحة اليمنى للتعديلات المتعلقة بالبنية، والاكتمال، والتكلفة، والموثوقية، والتراجع.
 4. حدّد عقدًا فردية عندما تحتاج إلى تحرير المُوجّهات أو النماذج أو schemas أو معاملات التنفيذ يدويًا.
 5. اختر محوّل نظام تشغيل مثل Claude Code أو Codex أو Gemini.
@@ -105,7 +105,7 @@ build.bat              Build the Windows installer
 ## مزيد من الوثائق
 
 - [README بالإنجليزية](../../README.md)
-- [دليل الاستخدام بالإنجليزية](claude-code-workflow-openworkflow.en.md)
+- [دليل الاستخدام بالإنجليزية](claude-code-workflow-freeultracode.en.md)
 
 ## التحقق
 

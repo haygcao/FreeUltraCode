@@ -8,8 +8,8 @@ import { tauriAvailable } from './tauri';
  *       In Tauri: writes JSON to `path` (or prompts user for a path via
  *       @tauri-apps/plugin-dialog save dialog when omitted). Returns the
  *       absolute path written, or null if the user cancelled the dialog.
- *       In the browser: writes to localStorage under OWF_STORAGE_KEY and
- *       returns the synthetic 'localStorage://owf_workflow' sentinel so the
+ *       In the browser: writes to localStorage under FUC_STORAGE_KEY and
+ *       returns the synthetic 'localStorage://fuc_workflow' sentinel so the
  *       caller can treat it as a stable identifier.
  *
  *   openWorkflow() -> Promise<{ ir: IRGraph; path: string | null } | null>
@@ -22,14 +22,14 @@ import { tauriAvailable } from './tauri';
  *       writes to `path` if provided; otherwise it falls back to localStorage
  *       so a fresh, never-saved graph still survives a reload.
  *
- * The .owf.json extension is the canonical OpenWorkflows file extension. The
+ * The .fuc.json extension is the canonical FreeUltraCode file extension. The
  * IR is serialised with stable 2-space JSON so diffs are human-readable.
  */
 
 /** localStorage key used as the no-backend autosave fallback. */
-export const OWF_STORAGE_KEY = 'owf_workflow';
+export const FUC_STORAGE_KEY = 'fuc_workflow';
 /** Sentinel returned by saveWorkflow/autosave when only localStorage was written. */
-export const LOCAL_STORAGE_PATH = 'localStorage://owf_workflow';
+export const LOCAL_STORAGE_PATH = 'localStorage://fuc_workflow';
 
 /** Dynamically load the plugin-dialog save dialog (Tauri-only). */
 async function getSaveDialog() {
@@ -81,7 +81,7 @@ export async function saveWorkflow(
   const json = JSON.stringify(ir, null, 2);
 
   if (!tauriAvailable()) {
-    safeLocalSet(OWF_STORAGE_KEY, json);
+    safeLocalSet(FUC_STORAGE_KEY, json);
     return LOCAL_STORAGE_PATH;
   }
 
@@ -92,7 +92,7 @@ export async function saveWorkflow(
       title,
       defaultPath: defaultFileName(ir),
       filters: [
-        { name: 'OpenWorkflows', extensions: ['owf.json', 'json'] },
+        { name: 'FreeUltraCode', extensions: ['fuc.json', 'json'] },
       ],
     });
     if (!picked) return null;
@@ -107,7 +107,7 @@ export async function saveWorkflow(
     // If the fs plugin isn't registered, fall back to localStorage so the
     // user still loses no work. The toolbar will keep showing "已保存"
     // because we return a non-null path.
-    safeLocalSet(OWF_STORAGE_KEY, json);
+    safeLocalSet(FUC_STORAGE_KEY, json);
     return LOCAL_STORAGE_PATH;
   }
 }
@@ -121,7 +121,7 @@ export async function openWorkflow(title = '打开 Workflow'): Promise<{
   path: string | null;
 } | null> {
   if (!tauriAvailable()) {
-    const raw = safeLocalGet(OWF_STORAGE_KEY);
+    const raw = safeLocalGet(FUC_STORAGE_KEY);
     if (!raw) return null;
     try {
       const ir = JSON.parse(raw) as IRGraph;
@@ -136,7 +136,7 @@ export async function openWorkflow(title = '打开 Workflow'): Promise<{
     title,
     multiple: false,
     directory: false,
-    filters: [{ name: 'OpenWorkflows', extensions: ['owf.json', 'json'] }],
+    filters: [{ name: 'FreeUltraCode', extensions: ['fuc.json', 'json'] }],
   });
   if (!picked) return null;
   const target = Array.isArray(picked)
@@ -176,7 +176,7 @@ export async function autosave(
     }
   }
 
-  safeLocalSet(OWF_STORAGE_KEY, json);
+  safeLocalSet(FUC_STORAGE_KEY, json);
   return LOCAL_STORAGE_PATH;
 }
 
@@ -205,7 +205,7 @@ export async function exportWorkflowToFile(
   const picked = await save({
     title,
     defaultPath: fileName,
-    filters: [{ name: 'OpenWorkflows', extensions: ['owf.json', 'json'] }],
+    filters: [{ name: 'FreeUltraCode', extensions: ['fuc.json', 'json'] }],
   });
   if (!picked) return null;
   const target = typeof picked === 'string' ? picked : String(picked);
@@ -240,7 +240,7 @@ export async function importWorkflowFromFile(title = '导入 Workflow'): Promise
     title,
     multiple: false,
     directory: false,
-    filters: [{ name: 'OpenWorkflows', extensions: ['owf.json', 'json'] }],
+    filters: [{ name: 'FreeUltraCode', extensions: ['fuc.json', 'json'] }],
   });
   if (!picked) return null;
   const target = Array.isArray(picked)
@@ -260,7 +260,7 @@ export async function importWorkflowFromFile(title = '导入 Workflow'): Promise
 }
 
 /** Sentinel path returned after a browser export triggered a file download. */
-export const EXPORT_DOWNLOAD_PATH = 'download://owf_workflow';
+export const EXPORT_DOWNLOAD_PATH = 'download://fuc_workflow';
 
 /** Strip the per-run snapshot from the IR so exports are clean blueprints. */
 function stripRunSnapshot(ir: IRGraph): IRGraph {
@@ -317,7 +317,7 @@ function browserPickFile(): Promise<string | null> {
       }
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.json,.owf.json,application/json';
+      input.accept = '.json,.fuc.json,application/json';
       input.style.display = 'none';
       input.onchange = () => {
         const file = input.files?.[0];
@@ -347,7 +347,7 @@ function defaultFileName(ir: IRGraph): string {
     .replace(/[\\/:*?"<>|]+/g, '-')
     .replace(/\s+/g, '-')
     .toLowerCase();
-  return `${base || 'workflow'}.owf.json`;
+  return `${base || 'workflow'}.fuc.json`;
 }
 
 /**
@@ -358,7 +358,7 @@ function defaultFileName(ir: IRGraph): string {
  * Returns null when there is nothing stored or the payload is corrupt.
  */
 export function loadLocalWorkflow(): IRGraph | null {
-  const raw = safeLocalGet(OWF_STORAGE_KEY);
+  const raw = safeLocalGet(FUC_STORAGE_KEY);
   if (!raw) return null;
   try {
     const ir = JSON.parse(raw) as IRGraph;

@@ -1,5 +1,5 @@
 /**
- * `owf validate <file>` — syntax + structural + (optional --strict) semantic
+ * `fuc validate <file>` — syntax + structural + (optional --strict) semantic
  * validation of a blueprint or script (spec §3.4).
  *
  * Exit codes: 0 pass, 1 error (syntax/structure), 2 warning (strict semantics).
@@ -9,7 +9,7 @@ import { readInput, errMsg } from '../utils/fs';
 import { loadGraph, c, type GlobalOptions } from '../utils/format';
 
 export interface ValidateOptions extends GlobalOptions {
-  format?: 'auto' | 'owf' | 'js';
+  format?: 'auto' | 'fuc' | 'js';
   strict?: boolean;
 }
 

@@ -1,9 +1,9 @@
 /**
- * `owf init [name]` — create a minimal, legal IRGraph (spec §3.1).
+ * `fuc init [name]` — create a minimal, legal IRGraph (spec §3.1).
  *
  * Templates: blank / agent-pipeline / code-review / parallel-scan (built-in) plus
- * any `~/.owf/templates/<name>.owf.json`. `--from <script>` reverse-imports a .js
- * via parseClaudeScript. Output to `<name>.owf.json` or `--stdout`.
+ * any `~/.fuc/templates/<name>.fuc.json`. `--from <script>` reverse-imports a .js
+ * via parseClaudeScript. Output to `<name>.fuc.json` or `--stdout`.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -53,7 +53,7 @@ export async function runInit(name: string | undefined, opts: InitOptions): Prom
   if (opts.stdout) {
     process.stdout.write(json.endsWith('\n') ? json : `${json}\n`);
   } else {
-    const out = opts.output || `${workflowName}.owf.json`;
+    const out = opts.output || `${workflowName}.fuc.json`;
     writeOutput(json, out);
     if (!opts.quiet) process.stderr.write(`Created ${out}\n`);
   }
@@ -62,7 +62,7 @@ export async function runInit(name: string | undefined, opts: InitOptions): Prom
 
 function loadTemplate(template: string, name: string): IRGraph {
   // User template wins.
-  const userPath = join(homedir(), '.owf', 'templates', `${template}.owf.json`);
+  const userPath = join(homedir(), '.fuc', 'templates', `${template}.fuc.json`);
   if (existsSync(userPath)) {
     try {
       const g = JSON.parse(readFileSync(userPath, 'utf8')) as unknown;

@@ -1,6 +1,6 @@
 {
   "version": "0.2.2",
-  "url": "https://github.com/wellingfeng/OpenWorkflows/releases/download/v0.2.2/OpenWorkflows_0.2.2_x64-setup.exe",
-  "notes": "OpenWorkflows v0.2.2",
+  "url": "https://github.com/wellingfeng/FreeUltraCode/releases/download/v0.2.2/FreeUltraCode_0.2.2_x64-setup.exe",
+  "notes": "FreeUltraCode v0.2.2",
   "pubDate": "2026-06-03"
 }

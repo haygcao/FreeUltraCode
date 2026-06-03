@@ -30,7 +30,7 @@ export default defineConfig({
       // a packaged build as the runner; see SELF-DEV.md.)
       ignored: [
         '**/.omc/**',
-        '**/*.owf.json',
+        '**/*.fuc.json',
         '**/src-tauri/target/**',
         '**/dist/**',
       ],

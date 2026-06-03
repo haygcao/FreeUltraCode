@@ -1,6 +1,6 @@
 /**
- * `owf parse <file>` — reverse a .js workflow script into an IRGraph (spec §3.3).
- * `--preserve-layout <file>` reuses an existing .owf.json's layout; `--annotate`
+ * `fuc parse <file>` — reverse a .js workflow script into an IRGraph (spec §3.3).
+ * `--preserve-layout <file>` reuses an existing .fuc.json's layout; `--annotate`
  * prints parse stats to stderr.
  */
 import { existsSync, readFileSync } from 'node:fs';

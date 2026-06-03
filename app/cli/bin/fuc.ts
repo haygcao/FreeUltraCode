@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `owf` — the OpenWorkflows command-line interface (spec §5.3 / §6.1).
+ * `fuc` — the FreeUltraCode command-line interface (spec §5.3 / §6.1).
  *
  * Thin commander dispatcher: parses the global options + subcommand, then hands
  * off to the pure command implementations in cli/commands/*. Every command
@@ -24,21 +24,21 @@ import { runConvert, type ConvertOptions } from '../commands/convert';
 import { runDiff, type DiffOptions } from '../commands/diff';
 import { runInfo, type InfoOptions } from '../commands/info';
 
-declare const __OWF_CLI_VERSION__: string;
-const VERSION = typeof __OWF_CLI_VERSION__ !== 'undefined' ? __OWF_CLI_VERSION__ : '0.1.0';
+declare const __FUC_CLI_VERSION__: string;
+const VERSION = typeof __FUC_CLI_VERSION__ !== 'undefined' ? __FUC_CLI_VERSION__ : '0.1.0';
 
 const program = new Command();
 
 program
-  .name('owf')
+  .name('fuc')
   .description(
-    'OpenWorkflows CLI — 用自然语言生成 workflow 脚本，并运行它。\n\n' +
-      '  owf gen "<需求>" -o flow.js     用自然语言生成 workflow（零配置，复用本地 claude 登录态）\n' +
-      '  owf gen flow.js "<修改意图>"     修改已有 workflow 脚本\n' +
-      '  owf run flow.js                 运行 workflow 脚本',
+    'FreeUltraCode CLI — 用自然语言生成 workflow 脚本，并运行它。\n\n' +
+      '  fuc gen "<需求>" -o flow.js     用自然语言生成 workflow（零配置，复用本地 claude 登录态）\n' +
+      '  fuc gen flow.js "<修改意图>"     修改已有 workflow 脚本\n' +
+      '  fuc run flow.js                 运行 workflow 脚本',
   )
   .version(VERSION, '--version', 'show version number')
-  .option('-c, --config <path>', 'config file path (default ~/.owf/config.json)')
+  .option('-c, --config <path>', 'config file path (default ~/.fuc/config.json)')
   .option('-j, --json', 'machine-readable JSON output')
   .option('-v, --verbose', 'verbose (debug) logging')
   .option('-q, --quiet', 'quiet mode (errors only)')
@@ -67,16 +67,16 @@ function dispatch(fn: () => Promise<number>): void {
     })
     .catch((err) => {
       if (err instanceof CliError) {
-        process.stderr.write(`owf: ${err.message}\n`);
+        process.stderr.write(`fuc: ${err.message}\n`);
         process.exitCode = err.exitCode;
       } else {
-        process.stderr.write(`owf: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+        process.stderr.write(`fuc: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
         process.exitCode = 1;
       }
     });
 }
 
-// --- User-facing commands (only these two appear in `owf --help`) ---
+// --- User-facing commands (only these two appear in `fuc --help`) ---
 
 program
   .command('gen [request] [output]')
@@ -119,7 +119,7 @@ program
   .description('create a minimal IRGraph blueprint')
   .option('-t, --template <name>', 'use a built-in template (blank, agent-pipeline, code-review, parallel-scan)')
   .option('-f, --from <script>', 'reverse-import an existing .js script')
-  .option('-o, --output <path>', 'output path (default <name>.owf.json)')
+  .option('-o, --output <path>', 'output path (default <name>.fuc.json)')
   .option('--stdout', 'write to stdout instead of a file')
   .option('--adapter <adapter>', 'default adapter (default claude-code)')
   .action((name: string | undefined, local: InitOptions) => dispatch(() => runInit(name, withGlobals(local))));
@@ -139,14 +139,14 @@ program
   .command('parse <file>', { noHelp: true })
   .description('reverse a .js workflow script into a blueprint')
   .option('-o, --output <path>', 'output path (default stdout)')
-  .option('-p, --preserve-layout <file>', 'reuse layout from an existing .owf.json')
+  .option('-p, --preserve-layout <file>', 'reuse layout from an existing .fuc.json')
   .option('--annotate', 'print parse stats to stderr')
   .action((file: string, local: ParseOptions) => dispatch(() => runParse(file, withGlobals(local))));
 
 program
   .command('validate <file>', { noHelp: true })
   .description('validate a blueprint or script')
-  .option('-f, --format <format>', 'input format: auto | owf | js', 'auto')
+  .option('-f, --format <format>', 'input format: auto | fuc | js', 'auto')
   .option('--strict', 'strict semantic validation')
   .action((file: string, local: ValidateOptions) => dispatch(() => runValidate(file, withGlobals(local))));
 
@@ -158,9 +158,9 @@ program
 
 program
   .command('convert <file>', { noHelp: true })
-  .description('convert between owf / js / yaml')
-  .option('--from <format>', 'source format: auto | owf | js | yaml', 'auto')
-  .option('--to <format>', 'target format: owf | js | yaml', 'owf')
+  .description('convert between fuc / js / yaml')
+  .option('--from <format>', 'source format: auto | fuc | js | yaml', 'auto')
+  .option('--to <format>', 'target format: fuc | js | yaml', 'fuc')
   .option('-o, --output <path>', 'output path (default stdout)')
   .option('--strip-layout', 'drop layout coordinates')
   .option('--strip-run', 'drop the run-state snapshot')
@@ -186,6 +186,6 @@ function collect(value: string, previous: string[]): string[] {
 }
 
 program.parseAsync(process.argv).catch((err) => {
-  process.stderr.write(`owf: ${err instanceof Error ? err.message : String(err)}\n`);
+  process.stderr.write(`fuc: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exitCode = 1;
 });

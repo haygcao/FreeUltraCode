@@ -83,16 +83,19 @@ export function writeOutput(text: string, outPath?: string): void {
 export function detectFormat(
   file: string,
   hint?: string,
-): 'owf' | 'js' | 'yaml' {
+): 'fuc' | 'js' | 'yaml' {
   if (hint && hint !== 'auto') {
-    if (hint === 'owf' || hint === 'js' || hint === 'yaml') return hint;
+    if (hint === 'fuc' || hint === 'js' || hint === 'yaml') return hint;
+    if (hint === 'owf') return 'fuc'; // pre-rebrand format hint
   }
   const lower = file.toLowerCase();
-  if (lower.endsWith('.owf.json') || lower.endsWith('.json')) return 'owf';
+  // `.owf.json` is the pre-rebrand extension; treat it as the `fuc` format.
+  if (lower.endsWith('.fuc.json') || lower.endsWith('.owf.json') || lower.endsWith('.json'))
+    return 'fuc';
   if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'yaml';
   if (lower.endsWith('.js') || lower.endsWith('.mjs') || lower.endsWith('.ts'))
     return 'js';
-  return 'owf';
+  return 'fuc';
 }
 
 /** A CLI error carrying the process exit code to use. */

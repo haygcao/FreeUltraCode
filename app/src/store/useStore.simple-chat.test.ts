@@ -49,8 +49,8 @@ function cloneGraph(graph: IRGraph): IRGraph {
 }
 
 function resetStore(workflow: IRGraph): void {
-  window.localStorage.setItem('owf_research_angles_max', '1');
-  window.localStorage.setItem('owf_nodegen_candidates_max', '1');
+  window.localStorage.setItem('fuc_research_angles_max', '1');
+  window.localStorage.setItem('fuc_nodegen_candidates_max', '1');
   useStore.setState({
     workflow: cloneGraph(workflow),
     selectedNodeId: null,

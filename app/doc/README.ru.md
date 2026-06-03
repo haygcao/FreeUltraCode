@@ -1,13 +1,13 @@
-# OpenWorkflows
+# FreeUltraCode
 
 <div align="center">
   <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | Русский | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
-OpenWorkflows — это десктопное приложение, объединяющее бесплатный чат с ИИ-моделями и визуальный редактор многоагентных рабочих процессов. общайтесь напрямую через 17+ бесплатных каналов (Gemini, DeepSeek, Groq, Ollama…) или строите графы многоагентных workflows на холсте, компилируемые в исполняемые скрипты для Claude Code, Codex, Gemini и других сред выполнения.
+FreeUltraCode — это десктопное приложение, объединяющее бесплатный чат с ИИ-моделями и визуальный редактор многоагентных рабочих процессов. общайтесь напрямую через 17+ бесплатных каналов (Gemini, DeepSeek, Groq, Ollama…) или строите графы многоагентных workflows на холсте, компилируемые в исполняемые скрипты для Claude Code, Codex, Gemini и других сред выполнения.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="Снимок экрана редактора OpenWorkflows" width="960">
+  <img src="images/0-标题使用.png" alt="Снимок экрана редактора FreeUltraCode" width="960">
 </p>
 
 ## Ключевые возможности
@@ -36,7 +36,7 @@ OpenWorkflows — это десктопное приложение, объеди
 
 ## Учебное руководство
 
-- [Руководство по использованию OpenWorkflows](claude-code-workflow-openworkflow.ru.md) — пошаговое руководство со снимками экрана от общих настроек и выбора runtime в AI-вводе до генерации чертежа, запуска и переключения оформления.
+- [Руководство по использованию FreeUltraCode](claude-code-workflow-freeultracode.ru.md) — пошаговое руководство со снимками экрана от общих настроек и выбора runtime в AI-вводе до генерации чертежа, запуска и переключения оформления.
 
 ## Быстрый старт
 
@@ -74,7 +74,7 @@ npm run package
 ### Режим workflow
 
 1. Нажмите **+ Новый workflow** в боковой панели.
-2. Опишите задачу в поле AI-ввода в правом нижнем углу. OpenWorkflows автоматически сгенерирует чертёж Workflow.
+2. Опишите задачу в поле AI-ввода в правом нижнем углу. FreeUltraCode автоматически сгенерирует чертёж Workflow.
 3. Продолжайте дорабатывать чертёж, вводя последующие инструкции, или щёлкайте распространённые промпты на правой панели.
 4. Выбирайте отдельные узлы, когда нужно вручную отредактировать промпты, модели, schema или параметры выполнения.
 5. Выберите адаптер среды выполнения, например Claude Code, Codex или Gemini.
@@ -105,7 +105,7 @@ build.bat              Build the Windows installer
 ## Дополнительная документация
 
 - [README на английском](../../README.md)
-- [Руководство по использованию на английском](claude-code-workflow-openworkflow.en.md)
+- [Руководство по использованию на английском](claude-code-workflow-freeultracode.en.md)
 
 ## Проверка
 

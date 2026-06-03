@@ -1,7 +1,7 @@
 /**
  * CLI-side provider / gateway resolution. Replaces the GUI's localStorage-backed
  * `gatewayConfig` / `apiConfig` / `cliConfig` with environment variables + an
- * `~/.owf/config.json` / `./.owf/config.json` file (spec §10.2).
+ * `~/.fuc/config.json` / `./.fuc/config.json` file (spec §10.2).
  *
  * Credentials only ever live in `process.env` or in-memory route objects — they
  * are NEVER written to disk or logged by this module. The config FILE carries
@@ -136,7 +136,7 @@ export function applyOverride(
 }
 
 /** The CLI config-file shape (spec §10.2). All fields optional; secrets excluded. */
-interface OwfConfigFile {
+interface FucConfigFile {
   version?: number;
   defaults?: {
     adapter?: string;
@@ -161,25 +161,34 @@ interface OwfConfigFile {
   adapters?: Record<string, { path?: string }>;
 }
 
-let cachedConfig: OwfConfigFile | null = null;
+let cachedConfig: FucConfigFile | null = null;
 let cachedConfigLoaded = false;
 
-/** Load + merge `~/.owf/config.json` then `./.owf/config.json` (project wins). */
-export function loadOwfConfig(cwd: string = process.cwd()): OwfConfigFile {
+/**
+ * Load + merge `~/.fuc/config.json` then `./.fuc/config.json` (project wins).
+ * Pre-rebrand `.owf/` and `.owf.json` paths are read as lower-priority fallbacks.
+ */
+export function loadFucConfig(cwd: string = process.cwd()): FucConfigFile {
   if (cachedConfigLoaded) return cachedConfig ?? {};
   cachedConfigLoaded = true;
   const home = homedir();
+  // `.owf` paths are the pre-rebrand locations, kept as lower-priority
+  // fallbacks so existing configs keep working; `.fuc` paths override them.
   const candidates = [
     join(home, '.owf', 'config.json'),
     join(home, '.owf.json'),
+    join(home, '.fuc', 'config.json'),
+    join(home, '.fuc.json'),
     join(cwd, '.owf', 'config.json'),
     join(cwd, '.owf.json'),
+    join(cwd, '.fuc', 'config.json'),
+    join(cwd, '.fuc.json'),
   ];
-  let merged: OwfConfigFile = {};
+  let merged: FucConfigFile = {};
   for (const path of candidates) {
     if (!existsSync(path)) continue;
     try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as OwfConfigFile;
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as FucConfigFile;
       merged = {
         ...merged,
         ...parsed,
@@ -196,7 +205,7 @@ export function loadOwfConfig(cwd: string = process.cwd()): OwfConfigFile {
 }
 
 /** Reset the memoised config (testing seam). */
-export function resetOwfConfigCache(): void {
+export function resetFucConfigCache(): void {
   cachedConfig = null;
   cachedConfigLoaded = false;
 }
@@ -243,7 +252,7 @@ export function cliRouteEnv(route: ResolvedRoute): Record<string, string> | unde
 
 /**
  * Resolve the run's default {@link GatewaySelection} from flags + config + env.
- * `flags` come from `owf run --adapter/--model/--provider`.
+ * `flags` come from `fuc run --adapter/--model/--provider`.
  */
 export function resolveSelection(flags: {
   adapter?: string;
@@ -251,7 +260,7 @@ export function resolveSelection(flags: {
   providerId?: string;
   cwd?: string;
 } = {}): GatewaySelection {
-  const config = loadOwfConfig(flags.cwd);
+  const config = loadFucConfig(flags.cwd);
   const adapter = normalizeAdapter(
     flags.adapter ?? config.defaults?.adapter ?? DEFAULT_SELECTION.adapter,
   );
@@ -279,7 +288,7 @@ export function resolveDirectRoute(
   selection: GatewaySelection,
   cwd?: string,
 ): ResolvedRoute | null {
-  const config = loadOwfConfig(cwd);
+  const config = loadFucConfig(cwd);
   const adapter = normalizeAdapter(selection.adapter);
   const provider = config.providers?.[adapter] ?? config.providers?.[selection.adapter];
   const transport = provider?.transport;
@@ -309,7 +318,7 @@ export function resolveCliRoute(
   selection: GatewaySelection,
   cwd?: string,
 ): ResolvedRoute {
-  const config = loadOwfConfig(cwd);
+  const config = loadFucConfig(cwd);
   const adapter = normalizeAdapter(selection.adapter);
   const provider = config.providers?.[adapter] ?? config.providers?.[selection.adapter];
   const model = resolveModel(adapter, selection.modelClass, provider, 'cli');
@@ -329,7 +338,7 @@ export function resolveCliRoute(
 }
 
 /** Resolve the concrete model id/flag for a route (mirror of resolveChannelModel + cliFallbackRoute). */
-type ProviderEntry = NonNullable<OwfConfigFile['providers']>[string];
+type ProviderEntry = NonNullable<FucConfigFile['providers']>[string];
 
 function resolveModel(
   adapter: string,

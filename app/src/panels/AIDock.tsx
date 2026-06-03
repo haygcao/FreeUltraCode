@@ -71,7 +71,7 @@ const MIN_DOCK_HEIGHT = 120;
 const CHAT_INPUT_HEIGHT = 232;
 
 /** localStorage key + bounds for the AI-input pane width (right column). */
-const INPUT_WIDTH_KEY = 'openworkflow.aiInputWidth.v1';
+const INPUT_WIDTH_KEY = 'freeultracode.aiInputWidth.v1';
 const DEFAULT_INPUT_WIDTH = 384; // matches the former w-96
 const MIN_INPUT_WIDTH = 280;
 const MIN_RETURN_WIDTH = 240; // keep the AI-return pane usable
@@ -79,7 +79,7 @@ const NARROW_INPUT_MIN_WIDTH = 120;
 const NARROW_INPUT_WIDTH_RATIO = 0.4;
 
 /** localStorage key + bounds for the bottom input area height in 'chat' layout. */
-const CHAT_INPUT_HEIGHT_KEY = 'openworkflow.chatInputHeight.v1';
+const CHAT_INPUT_HEIGHT_KEY = 'freeultracode.chatInputHeight.v1';
 const MIN_CHAT_INPUT_HEIGHT = 140;
 const MIN_CHAT_RETURN_HEIGHT = 160; // keep the chat return area usable
 
@@ -120,7 +120,7 @@ function normalizeSearchQuery(value: string): string {
 }
 
 /**
- * Strip inline tool sentinels (`<<OWF_TOOL>>…`) from a message's text so the
+ * Strip inline tool sentinels (`<<FUC_TOOL>>…`) from a message's text so the
  * search index and the search-active plain-text fallback never see/show raw
  * protocol JSON that the rich renderer would otherwise turn into tool cards.
  */
@@ -630,8 +630,8 @@ export default function AIDock({
   const [freeChannelRevision, setFreeChannelRevision] = useState(0);
   useEffect(() => {
     const refresh = () => setFreeChannelRevision((n) => n + 1);
-    window.addEventListener('owf:gateway-config-changed', refresh);
-    return () => window.removeEventListener('owf:gateway-config-changed', refresh);
+    window.addEventListener('fuc:gateway-config-changed', refresh);
+    return () => window.removeEventListener('fuc:gateway-config-changed', refresh);
   }, []);
   const [localRuntimeStatuses, setLocalRuntimeStatuses] = useState<
     Record<string, LocalModelRuntimeStatus | undefined>
@@ -1660,11 +1660,11 @@ export default function AIDock({
                 : t(locale, 'dock.placeholder')
             }
             className={
-              'owf-ai-input min-h-0 flex-1 resize-none rounded-md border bg-bg p-2.5 text-sm leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent ' +
+              'fuc-ai-input min-h-0 flex-1 resize-none rounded-md border bg-bg p-2.5 text-sm leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent ' +
               (dropActive
-                ? 'owf-ai-input--drop border-accent '
+                ? 'fuc-ai-input--drop border-accent '
                 : isChat
-                  ? 'owf-ai-input--chat border-border '
+                  ? 'fuc-ai-input--chat border-border '
                   : 'border-border ') +
               (isReadOnly ? 'cursor-not-allowed opacity-60' : '')
             }

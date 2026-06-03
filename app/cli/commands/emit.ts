@@ -1,5 +1,5 @@
 /**
- * `owf emit <file>` — compile an IRGraph (.owf.json) into a runnable Claude Code
+ * `fuc emit <file>` — compile an IRGraph (.fuc.json) into a runnable Claude Code
  * workflow script (spec §3.2). Overrides adapter/schema, format pretty|minified,
  * optional `--strip-annotations`, `--dry-run`.
  */
@@ -19,7 +19,7 @@ export interface EmitOptions extends GlobalOptions {
 
 export async function runEmit(file: string, opts: EmitOptions): Promise<number> {
   const { text, source } = await readInput(file);
-  const graph = loadGraph(text, file === '-' ? source : file, 'owf');
+  const graph = loadGraph(text, file === '-' ? source : file, 'fuc');
 
   if (opts.adapter) graph.meta = { ...graph.meta, adapter: opts.adapter };
   if (opts.schema && opts.schema.length > 0) {

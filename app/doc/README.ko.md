@@ -1,13 +1,13 @@
-# OpenWorkflows
+# FreeUltraCode
 
 <div align="center">
   <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | 한국어 | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
-OpenWorkflows는 무료 AI 모델 채팅과 시각적 멀티 에이전트 워크플로우 편집을 결합한 데스크톱 앱입니다. 17+ 무료 채널(Gemini, DeepSeek, Groq, Ollama…)으로 직접 채팅하거나, 캔버스에서 멀티 에이전트 워크플로우 그래프를 구축하여 Claude Code, Codex, Gemini 등 런타임용 실행 스크립트로 컴파일할 수 있습니다.
+FreeUltraCode는 무료 AI 모델 채팅과 시각적 멀티 에이전트 워크플로우 편집을 결합한 데스크톱 앱입니다. 17+ 무료 채널(Gemini, DeepSeek, Groq, Ollama…)으로 직접 채팅하거나, 캔버스에서 멀티 에이전트 워크플로우 그래프를 구축하여 Claude Code, Codex, Gemini 등 런타임용 실행 스크립트로 컴파일할 수 있습니다.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="OpenWorkflows 편집기 스크린샷" width="960">
+  <img src="images/0-标题使用.png" alt="FreeUltraCode 편집기 스크린샷" width="960">
 </p>
 
 ## 주요 기능
@@ -36,7 +36,7 @@ OpenWorkflows는 무료 AI 모델 채팅과 시각적 멀티 에이전트 워크
 
 ## 사용 튜토리얼
 
-- [OpenWorkflows 사용 튜토리얼](claude-code-workflow-openworkflow.ko.md) - 일반 설정과 AI 입력창의 런타임 선택부터 블루프린트 생성, 실행, 외관 전환까지 스크린샷과 함께 단계별로 안내합니다.
+- [FreeUltraCode 사용 튜토리얼](claude-code-workflow-freeultracode.ko.md) - 일반 설정과 AI 입력창의 런타임 선택부터 블루프린트 생성, 실행, 외관 전환까지 스크린샷과 함께 단계별로 안내합니다.
 
 ## 빠른 시작
 
@@ -74,7 +74,7 @@ npm run package
 ### 워크플로우 모드
 
 1. 사이드바에서 **+ 새 워크플로우** 클릭.
-2. 오른쪽 하단 AI 입력창에 작업을 설명. OpenWorkflows가 Workflow 블루프린트를 자동 생성.
+2. 오른쪽 하단 AI 입력창에 작업을 설명. FreeUltraCode가 Workflow 블루프린트를 자동 생성.
 3. 동일한 입력창에 후속 지침을 입력하여 블루프린트를 다듬거나, 오른쪽 패널의 일반 프롬프트를 클릭.
 4. 프롬프트, 모델, 스키마 또는 실행 매개변수를 수동으로 편집해야 할 때는 개별 노드를 선택.
 5. Claude Code, Codex, Gemini 등의 런타임 어댑터를 선택.
@@ -105,7 +105,7 @@ build.bat              Windows 설치 프로그램 패키징
 ## 추가 문서
 
 - [영어 README](../../README.md)
-- [영어 사용 튜토리얼](claude-code-workflow-openworkflow.en.md)
+- [영어 사용 튜토리얼](claude-code-workflow-freeultracode.en.md)
 
 ## 검증
 

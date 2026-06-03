@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="app/doc/images/openworkflows-mark.svg" alt="OpenWorkflows animated workflow mark" width="560">
+  <img src="app/doc/images/freeultracode-mark.svg" alt="FreeUltraCode animated workflow mark" width="560">
 </p>
 
-<h1 align="center">OpenWorkflows</h1>
+<h1 align="center">FreeUltraCode</h1>
 
 <h3 align="center">Use free and low-cost models as dynamic coding workflows.</h3>
 
 <p align="center">
-  OpenWorkflows is a local desktop coding tool that combines free-model routing with editable Dynamic Workflows. It turns cheap and free models into multi-agent flows that research, generate, challenge, vote, and retry so difficult programming tasks can get higher accuracy without sending every step to the most expensive model.
+  FreeUltraCode is a local desktop coding tool that combines free-model routing with editable Dynamic Workflows. It turns cheap and free models into multi-agent flows that research, generate, challenge, vote, and retry so difficult programming tasks can get higher accuracy without sending every step to the most expensive model.
 </p>
 
 <p align="center">
@@ -49,17 +49,17 @@
 </p>
 
 <p align="center">
-  <img src="app/doc/images/0-标题使用.png" alt="OpenWorkflows editor screenshot" width="960">
+  <img src="app/doc/images/0-标题使用.png" alt="FreeUltraCode editor screenshot" width="960">
 </p>
 
 > [!IMPORTANT]
-> **Community · 加入社区** — join the OpenWorkflows Discord or QQ group for setup help, workflow examples, feature ideas, and contributor coordination. Discord: <https://discord.gg/2C9ptSEFG> · QQ Group: `149523963`
+> **Community · 加入社区** — join the FreeUltraCode Discord or QQ group for setup help, workflow examples, feature ideas, and contributor coordination. Discord: <https://discord.gg/2C9ptSEFG> · QQ Group: `149523963`
 
-## Why OpenWorkflows
+## Why FreeUltraCode
 
 Modern coding agents become much more reliable when they do not answer once and stop. Dynamic Workflows improve output quality by splitting a request into multiple agents, exploring from different angles, validating adversarially, and voting over competing answers. The tradeoff is cost: a serious workflow can burn through premium-model quota quickly.
 
-OpenWorkflows makes that pattern visible, editable, and cheaper:
+FreeUltraCode makes that pattern visible, editable, and cheaper:
 
 - Use free or low-cost channels such as Gemini, DeepSeek, Kimi, Groq, OpenRouter, NVIDIA NIM, Z.ai, Ollama, LM Studio, and llama.cpp.
 - Fan out only the steps that need extra certainty; keep simple steps as single-pass calls.
@@ -67,7 +67,7 @@ OpenWorkflows makes that pattern visible, editable, and cheaper:
 - Route different nodes to different runtimes and model tiers, so expensive models are reserved for judgment, review, or high-risk steps.
 - Keep the whole workflow graph local, inspectable, exportable, and reusable.
 
-OpenWorkflows is not just a chat UI. It is a way to turn a collection of cheap models into a structured programming workflow.
+FreeUltraCode is not just a chat UI. It is a way to turn a collection of cheap models into a structured programming workflow.
 
 ## What It Can Do
 
@@ -83,11 +83,11 @@ OpenWorkflows is not just a chat UI. It is a way to turn a collection of cheap m
 - Build agent steps, parallel branches, pipelines, loops, branches, consensus nodes, and reusable composite workflows on a React Flow canvas.
 - Compile the graph into runnable Claude Code-style workflow scripts, then parse scripts back into the same graph model.
 - Run workflows from the desktop app while tracking node-level execution state.
-- Export and import workflow graphs as portable `.owf.json` files.
+- Export and import workflow graphs as portable `.fuc.json` files.
 
 ### Multi-Round Accuracy Loop
 
-OpenWorkflows supports the quality patterns that make Dynamic Workflows useful for programming:
+FreeUltraCode supports the quality patterns that make Dynamic Workflows useful for programming:
 
 | Pattern | Use it for | What happens |
 | --- | --- | --- |
@@ -108,7 +108,7 @@ OpenWorkflows supports the quality patterns that make Dynamic Workflows useful f
 
 - Sessions, favorites, history, API keys, and workflow files are stored locally.
 - Chat sessions and workflow sessions are both preserved in the sidebar history.
-- No hosted OpenWorkflows server is required.
+- No hosted FreeUltraCode server is required.
 
 ## Quick Start
 
@@ -152,7 +152,7 @@ From the repository root, `run.bat` rebuilds when needed and launches the Window
 
 1. Click **+ New Workflow**.
 2. Describe the programming task in the AI input: code review, migration, refactor plan, bug investigation, test generation, architecture audit, or implementation plan.
-3. Let OpenWorkflows generate a blueprint, then refine it with follow-up instructions or right-panel prompt shortcuts for structure, completeness, cost, reliability, and rollback.
+3. Let FreeUltraCode generate a blueprint, then refine it with follow-up instructions or right-panel prompt shortcuts for structure, completeness, cost, reliability, and rollback.
 4. Select important nodes and configure prompt text, schema, model tier, provider, or execution parameters.
 5. Convert high-risk nodes to **Consensus** when they need adversarial checking or voting.
 6. Click **Run** and watch node-level status updates.
@@ -161,10 +161,10 @@ From the repository root, `run.bat` rebuilds when needed and launches the Window
 
 The CLI exposes two user-facing commands:
 
-- `owf gen` generates or modifies a workflow script from natural language.
-- `owf run` runs a workflow script, with dry-run and resume support.
+- `fuc gen` generates or modifies a workflow script from natural language.
+- `fuc run` runs a workflow script, with dry-run and resume support.
 
-Build it first if `app/cli/dist/owf.mjs` does not exist:
+Build it first if `app/cli/dist/fuc.mjs` does not exist:
 
 ```bash
 cd app
@@ -174,11 +174,11 @@ npm run cli:build
 Then run it from the repository root:
 
 ```bash
-node app/cli/dist/owf.mjs gen "Create a code-review workflow" -o review.js
-node app/cli/dist/owf.mjs run review.js --dry-run
+node app/cli/dist/fuc.mjs gen "Create a code-review workflow" -o review.js
+node app/cli/dist/fuc.mjs run review.js --dry-run
 ```
 
-See [OpenWorkflows CLI usage](app/doc/openworkflows-cli-usage.md) and the [CLI skill spec](app/doc/openworkflows-cli-skill-spec.md) for details.
+See [FreeUltraCode CLI usage](app/doc/freeultracode-cli-usage.md) and the [CLI skill spec](app/doc/freeultracode-cli-skill-spec.md) for details.
 
 ## How It Works
 
@@ -245,10 +245,10 @@ pencil/                Pencil design files
 
 ## Documentation
 
-- [Usage tutorial](app/doc/claude-code-workflow-openworkflow.en.md) - walkthrough from settings and AI input to blueprint generation, running, and appearance switching.
-- [Chinese usage tutorial](app/doc/claude-code-workflow-openworkflow.md)
-- [OpenWorkflows CLI usage](app/doc/openworkflows-cli-usage.md)
-- [OpenWorkflows CLI skill spec](app/doc/openworkflows-cli-skill-spec.md)
+- [Usage tutorial](app/doc/claude-code-workflow-freeultracode.en.md) - walkthrough from settings and AI input to blueprint generation, running, and appearance switching.
+- [Chinese usage tutorial](app/doc/claude-code-workflow-freeultracode.md)
+- [FreeUltraCode CLI usage](app/doc/freeultracode-cli-usage.md)
+- [FreeUltraCode CLI skill spec](app/doc/freeultracode-cli-skill-spec.md)
 - [Chinese README](app/doc/README.zh-CN.md)
 - [Workflow syntax reference](docs/workflow-syntax-reference.html)
 
@@ -265,19 +265,19 @@ npm run desktop    # Tauri development mode
 npm run package    # Production Tauri build
 ```
 
-For parser, emitter, or IR changes, run the app and use the browser console helpers exposed on `window.OpenWorkflow`, especially:
+For parser, emitter, or IR changes, run the app and use the browser console helpers exposed on `window.FreeUltraCode`, especially:
 
 ```js
-OpenWorkflow.roundtrip()
-OpenWorkflow.roundtripAll()
+FreeUltraCode.roundtrip()
+FreeUltraCode.roundtripAll()
 ```
 
 ## Community
 
 - Discord: <https://discord.gg/2C9ptSEFG>
 - QQ Group: `149523963`
-- Issues: <https://github.com/wellingfeng/OpenWorkflows/issues>
-- Repository: <https://github.com/wellingfeng/OpenWorkflows>
+- Issues: <https://github.com/wellingfeng/FreeUltraCode/issues>
+- Repository: <https://github.com/wellingfeng/FreeUltraCode>
 
 Pull requests should describe the behavior change, list verification commands, link related issues, and include screenshots or short recordings for UI changes.
 

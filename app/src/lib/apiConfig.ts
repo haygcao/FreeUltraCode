@@ -38,7 +38,7 @@ export interface Provider {
   /** Optional custom base URL ('' = default api.anthropic.com). */
   baseUrl: string;
   /**
-   * How OpenWorkflows should execute this provider. Manual Anthropic entries
+   * How FreeUltraCode should execute this provider. Manual Anthropic entries
    * default to browser-direct API calls; cc-switch imports default to CLI
    * because they are copied from local agent environment config.
    */
@@ -59,25 +59,25 @@ export interface ProviderRuntimeInfo {
 }
 
 /** localStorage key holding the JSON array of providers. */
-export const PROVIDERS_STORAGE = 'owf_providers';
+export const PROVIDERS_STORAGE = 'fuc_providers';
 /**
  * @deprecated Legacy single-active-provider key. Still written as a mirror of
  * the anthropic (Claude Code) default so the gateway's "inherit global"
  * fallback keeps working; superseded by {@link ACTIVE_PROVIDER_BY_KIND_STORAGE}.
  */
-export const ACTIVE_PROVIDER_STORAGE = 'owf_active_provider_id';
+export const ACTIVE_PROVIDER_STORAGE = 'fuc_active_provider_id';
 /**
  * localStorage key holding the active/default provider id PER category
  * (`{ anthropic, codex, gemini }`). Each runtime family has its own default,
  * so activating a Codex channel never changes the Claude Code default.
  */
-export const ACTIVE_PROVIDER_BY_KIND_STORAGE = 'owf_active_provider_by_kind_v1';
+export const ACTIVE_PROVIDER_BY_KIND_STORAGE = 'fuc_active_provider_by_kind_v1';
 
 /* --- legacy single-key storage (read once for migration, never removed) --- */
 /** @deprecated legacy single-key storage; kept for migration + rollback. */
-export const API_KEY_STORAGE = 'owf_anthropic_key';
+export const API_KEY_STORAGE = 'fuc_anthropic_key';
 /** @deprecated legacy single-base-url storage; kept for migration + rollback. */
-export const BASE_URL_STORAGE = 'owf_anthropic_base_url';
+export const BASE_URL_STORAGE = 'fuc_anthropic_base_url';
 
 const hasWindow = (): boolean => typeof window !== 'undefined';
 
@@ -114,7 +114,7 @@ function rawSet(key: string, value: string): void {
 function notifyProviderConfigChanged(): void {
   try {
     if (!hasWindow()) return;
-    window.dispatchEvent(new Event('owf:gateway-config-changed'));
+    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
   } catch {
     /* ignore */
   }

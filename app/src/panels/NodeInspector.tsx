@@ -189,12 +189,12 @@ function useGatewayRunOptions(): GatewayRunOption[] {
     );
     const onGatewayConfigChanged = () =>
       setGatewayRevision((revision) => revision + 1);
-    window.addEventListener('owf:gateway-config-changed', onGatewayConfigChanged);
+    window.addEventListener('fuc:gateway-config-changed', onGatewayConfigChanged);
     return () => {
       mounted = false;
       unsubscribeCli();
       window.removeEventListener(
-        'owf:gateway-config-changed',
+        'fuc:gateway-config-changed',
         onGatewayConfigChanged,
       );
     };

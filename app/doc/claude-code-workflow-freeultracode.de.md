@@ -1,4 +1,4 @@
-# Claude Code hat Dynamic Workflows. Was ist mit anderen Modellen? Eine Open-Source-Alternative: OpenWorkflows
+# Claude Code hat Dynamic Workflows. Was ist mit anderen Modellen? Eine Open-Source-Alternative: FreeUltraCode
 
 ## In letzter Zeit beschäftige ich mich mit den neuen dynamic workflows von Claude Code. Im Vergleich zu MCP, Skill und Hooks sprechen noch wenige über diese neue Funktion. Im Folgenden nenne ich sie einfach workflows.
 
@@ -10,35 +10,35 @@ Außerdem bringen workflows mehrere Perspektiven, adversariale Prüfung und Abst
 
 Wenn das so allgemein nützlich ist, warum sollte es an ein bestimmtes Modell oder eine bestimmte CLI gebunden sein?
 
-Aus diesem Gedanken heraus habe ich OpenWorkflows entwickelt, genauer gesagt hat die KI es entwickelt. OpenWorkflows macht Claude-Code-artige workflows zu einer visuellen Leinwand und versucht, denselben Ablauf auf Claude Code, Codex, Gemini und weitere lokale oder Cloud-Runtimes auszurichten.
+Aus diesem Gedanken heraus habe ich FreeUltraCode entwickelt, genauer gesagt hat die KI es entwickelt. FreeUltraCode macht Claude-Code-artige workflows zu einer visuellen Leinwand und versucht, denselben Ablauf auf Claude Code, Codex, Gemini und weitere lokale oder Cloud-Runtimes auszurichten.
 
-Diesmal geht es nicht um abstrakte Konzepte. Ich gehe direkt anhand der Screenshots durch ein Beispiel: OpenWorkflows soll mehrere Oberflächenstile unterstützen, standardmäßig Pencil verwenden und den Wechsel unter Einstellungen / Erscheinungsbild erlauben.
+Diesmal geht es nicht um abstrakte Konzepte. Ich gehe direkt anhand der Screenshots durch ein Beispiel: FreeUltraCode soll mehrere Oberflächenstile unterstützen, standardmäßig Pencil verwenden und den Wechsel unter Einstellungen / Erscheinungsbild erlauben.
 
-Während der Entwicklung habe ich versucht, so viel wie möglich in OpenWorkflows selbst zu erledigen, damit es sich selbst bootstrappen kann.
+Während der Entwicklung habe ich versucht, so viel wie möglich in FreeUltraCode selbst zu erledigen, damit es sich selbst bootstrappen kann.
 
 Der folgende Prozess verwendet CodeX als Standardmodell für die Entwicklung.
 
 ### 0. Zuerst die fertige Oberfläche
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="OpenWorkflows Hauptoberfläche" width="960">
+  <img src="images/0-标题使用.png" alt="FreeUltraCode Hauptoberfläche" width="960">
 </p>
 
-In der Hauptoberfläche von OpenWorkflows liegt der workflows-Blueprint in der Mitte, die Knoteneigenschaften sind rechts, und unten befinden sich KI-Eingabe und Ausgabe.
+In der Hauptoberfläche von FreeUltraCode liegt der workflows-Blueprint in der Mitte, die Knoteneigenschaften sind rechts, und unten befinden sich KI-Eingabe und Ausgabe.
 
 Die Oberfläche besteht grob aus vier Teilen: workflows-Verlauf links, visuelle Leinwand in der Mitte, Knoteneigenschaften und häufige Prompts rechts sowie KI-Eingabe und Antworten unten.
 
-### 1. OpenWorkflows herunterladen
+### 1. FreeUltraCode herunterladen
 
 <p align="center">
-  <img src="images/1-下载.png" alt="OpenWorkflows GitHub Releases" width="840">
+  <img src="images/1-下载.png" alt="FreeUltraCode GitHub Releases" width="840">
 </p>
 
 Die neueste Version findet man rechts auf der GitHub-Projektseite unter Releases.
 
 ### 2. Zuerst das Modell konfigurieren
 
-Standardmäßig startet OpenWorkflows über die im System konfigurierte CLI. Tools wie CC-Switch können dafür verwendet werden.
+Standardmäßig startet FreeUltraCode über die im System konfigurierte CLI. Tools wie CC-Switch können dafür verwendet werden.
 
 ### 3. Neue workflows erstellen und die Anforderung eingeben
 
@@ -51,12 +51,12 @@ Nach der Modellkonfiguration klickt man links auf "Neue workflows". Auf der Lein
 Man muss die Knoten nicht wirklich von Hand zeichnen. Der Einstieg ist das KI-Eingabefeld unten rechts. In diesem Beispiel gebe ich ein:
 
 ```text
-Ich möchte, dass OpenWorkflows mehrere Oberflächenstile unterstützt,
+Ich möchte, dass FreeUltraCode mehrere Oberflächenstile unterstützt,
 standardmäßig Pencil verwendet
 und unter Einstellungen / Erscheinungsbild umschalten kann.
 ```
 
-Danach kann man Ctrl+Enter drücken oder rechts unten auf Senden klicken. OpenWorkflows verwandelt diese natürliche Sprache in einen editierbaren workflows-Blueprint.
+Danach kann man Ctrl+Enter drücken oder rechts unten auf Senden klicken. FreeUltraCode verwandelt diese natürliche Sprache in einen editierbaren workflows-Blueprint.
 
 ### 4-1. Workflows-Blueprint generieren
 
@@ -64,7 +64,7 @@ Danach kann man Ctrl+Enter drücken oder rechts unten auf Senden klicken. OpenWo
   <img src="images/4-1生成workflow蓝图.png" alt="Generierter workflows-Blueprint" width="960">
 </p>
 
-Nach dem Absenden erweitert OpenWorkflows den aktuellen Schritt zuerst zu einem vollständigen workflow.
+Nach dem Absenden erweitert FreeUltraCode den aktuellen Schritt zuerst zu einem vollständigen workflow.
 
 Der Blueprint im Screenshot sieht ungefähr so aus:
 
@@ -94,7 +94,7 @@ Oben gibt es einen Eintrag "Script". Nach dem Öffnen sieht man das Script, das 
 
 Im Screenshot erkennt man Strukturen wie parallel(...) und agent(...). Parallele Knoten werden zu gleichzeitig ausgeführten Zweigen, normale Knoten zu einzelnen Agent-Aufrufen.
 
-Das zeigt auch: OpenWorkflows zeichnet nicht nur Kästen. Hinter der Leinwand steht eine einheitliche workflows-Struktur, die später an unterschiedliche Runtimes angebunden werden kann.
+Das zeigt auch: FreeUltraCode zeichnet nicht nur Kästen. Hinter der Leinwand steht eine einheitliche workflows-Struktur, die später an unterschiedliche Runtimes angebunden werden kann.
 
 ### 5. Mit häufigen Prompts rechts weiter ändern
 
@@ -152,13 +152,13 @@ Auf der Leinwand sieht man den Knotenstatus. Im Screenshot ist Start abgeschloss
   <img src="images/9-切换风格.png" alt="Oberflächenstil wechseln" width="840">
 </p>
 
-Nachdem OpenWorkflows die Entwicklung abgeschlossen hat, startet man das Programm neu und wechselt unter Einstellungen / Erscheinungsbild zwischen verschiedenen Stilen.
+Nachdem FreeUltraCode die Entwicklung abgeschlossen hat, startet man das Programm neu und wechselt unter Einstellungen / Erscheinungsbild zwischen verschiedenen Stilen.
 
 Im Screenshot sieht man Stil-Karten wie Pencil, Deep Night, Aurora, Daylight und Ember. Die Auswahl beeinflusst globalen Hintergrund, Panels, Rahmen und Farben für Laufzustände.
 
 ### Was ich wirklich nützlich finde
 
-Der größte Wert von OpenWorkflows liegt nicht darin, einen Prompt mit einer UI zu verpacken.
+Der größte Wert von FreeUltraCode liegt nicht darin, einen Prompt mit einer UI zu verpacken.
 
 Es verbindet "Anforderung -> Blueprint -> Script -> Ausführen -> Verlauf prüfen". Man kann zuerst mit natürlicher Sprache einen Ablauf erzeugen, dann die Struktur auf der Leinwand prüfen, bei Bedarf mit häufigen Prompts Grenzen ergänzen und erst danach ausführen.
 
@@ -168,7 +168,7 @@ Für komplexe KI-Coding-Aufgaben ist diese Zerlegung leichter zu pflegen als ein
 
 ### Noch früh, aber die Richtung ist interessant
 
-Das ganze Konzept workflows ist noch früh, und OpenWorkflows selbst steht ebenfalls am Anfang. Runtime-Adapter, Knotenmöglichkeiten und Script-Ökosystem werden sich weiter verändern.
+Das ganze Konzept workflows ist noch früh, und FreeUltraCode selbst steht ebenfalls am Anfang. Runtime-Adapter, Knotenmöglichkeiten und Script-Ökosystem werden sich weiter verändern.
 
 Die Richtung ist aber klar: KI-Coding wird nicht dauerhaft bei "Chatfenster öffnen und jeden Schritt manuell weiterschieben" bleiben.
 
@@ -176,23 +176,23 @@ Komplexe Aufgaben werden am Ende zu workflows, weil sie sichtbar, editierbar, mi
 
 ### Ergänzung: Keine Lust auf die UI? Zwei Kommandos auf der Kommandozeile reichen
 
-Alles bisher Beschriebene betraf die grafische Oberfläche. Aber in vielen Szenarien braucht man die Leinwand gar nicht — etwa wenn man einen Ablauf in eine CI-Pipeline einhängen, in ein Skript einbauen oder headless auf einem Server laufen lassen will. Deshalb gibt es von OpenWorkflows auch eine Kommandozeilen-Variante, die zugehörige Skill heißt `/openworkflows`.
+Alles bisher Beschriebene betraf die grafische Oberfläche. Aber in vielen Szenarien braucht man die Leinwand gar nicht — etwa wenn man einen Ablauf in eine CI-Pipeline einhängen, in ein Skript einbauen oder headless auf einem Server laufen lassen will. Deshalb gibt es von FreeUltraCode auch eine Kommandozeilen-Variante, die zugehörige Skill heißt `/freeultracode`.
 
 Beim Design habe ich sie bewusst sehr zurückhaltend gehalten: **auf der Anwenderseite gibt es nur zwei Kommandos**. Denn auf der Kommandozeile musst du dich nicht um Blueprints, IRGraph oder Kompilierung kümmern — **ein workflow ist für dich einfach ein `.js`-Skript**, alle Umwandlungen dazwischen passieren automatisch.
 
 ```bash
-owf gen "Erstelle einen Code-Review-Ablauf" -o review.js   # workflow-Skript aus einem Satz generieren
-owf gen review.js "Füge noch einen Security-Review-Knoten hinzu"      # bestehendes Skript per Satz anpassen
-owf run review.js                          # das Skript ausführen
+fuc gen "Erstelle einen Code-Review-Ablauf" -o review.js   # workflow-Skript aus einem Satz generieren
+fuc gen review.js "Füge noch einen Security-Review-Knoten hinzu"      # bestehendes Skript per Satz anpassen
+fuc run review.js                          # das Skript ausführen
 ```
 
 Mehr Verwendungsarten gibt es nicht (eigentlich sind es nur die beiden Kommandos `gen` und `run`).
 
-**`owf gen`** erzeugt oder ändert einen workflow per natürlicher Sprache. Es ist dieselbe Fähigkeit wie das AI-Eingabefeld am unteren Rand der Oberfläche: du beschreibst, was du willst, und es generiert das Skript; du zeigst auf ein bestehendes Skript und sagst, wie es geändert werden soll, und es ändert es für dich.
+**`fuc gen`** erzeugt oder ändert einen workflow per natürlicher Sprache. Es ist dieselbe Fähigkeit wie das AI-Eingabefeld am unteren Rand der Oberfläche: du beschreibst, was du willst, und es generiert das Skript; du zeigst auf ein bestehendes Skript und sagst, wie es geändert werden soll, und es ändert es für dich.
 
-Ein wichtiger Punkt: **es läuft ohne Konfiguration, du musst keinen API Key eintragen**. Denn es benutzt einfach die `claude`-CLI, die auf deinem Rechner bereits eingeloggt ist (denselben Weg wie die Runtime). Sobald claude installiert und eingeloggt ist, kannst du `owf gen` direkt verwenden. Andernfalls weist es dich darauf hin, zuerst `claude login` auszuführen.
+Ein wichtiger Punkt: **es läuft ohne Konfiguration, du musst keinen API Key eintragen**. Denn es benutzt einfach die `claude`-CLI, die auf deinem Rechner bereits eingeloggt ist (denselben Weg wie die Runtime). Sobald claude installiert und eingeloggt ist, kannst du `fuc gen` direkt verwenden. Andernfalls weist es dich darauf hin, zuerst `claude login` auszuführen.
 
-**`owf run`** führt das Skript aus, Knoten für Knoten, und gibt den Fortschritt live im Terminal aus:
+**`fuc run`** führt das Skript aus, Knoten für Knoten, und gibt den Fortschritt live im Terminal aus:
 
 ```text
 [14:32:02] ▶ agent n_scan
@@ -212,7 +212,7 @@ QQ-Gruppe: 149523963
 
 Projekt:
 
-https://github.com/wellingfeng/OpenWorkflows
+https://github.com/wellingfeng/FreeUltraCode
 
 Referenz:
 

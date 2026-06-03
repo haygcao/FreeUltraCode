@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "OpenWorkflows",
+  "productName": "FreeUltraCode",
   "version": "0.2.2",
-  "identifier": "com.openworkflows.app",
+  "identifier": "com.freeultracode.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "OpenWorkflows",
+        "title": "FreeUltraCode",
         "width": 1440,
         "height": 900,
         "minWidth": 1100,

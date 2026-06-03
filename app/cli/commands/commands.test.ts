@@ -32,7 +32,7 @@ beforeEach(() => {
   errBuf = '';
   outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(sink((s) => (outBuf += s)));
   errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(sink((s) => (errBuf += s)));
-  dir = mkdtempSync(join(tmpdir(), 'owf-cmd-'));
+  dir = mkdtempSync(join(tmpdir(), 'fuc-cmd-'));
 });
 
 afterEach(() => {
@@ -42,12 +42,12 @@ afterEach(() => {
 });
 
 function writeSample(): string {
-  const file = join(dir, 'sample.owf.json');
+  const file = join(dir, 'sample.fuc.json');
   writeFileSync(file, JSON.stringify(sampleWorkflow, null, 2));
   return file;
 }
 
-describe('owf init', () => {
+describe('fuc init', () => {
   it('emits a minimal legal IRGraph to stdout (exit 0)', async () => {
     const code = await runInit('demo', { stdout: true });
     expect(code).toBe(0);
@@ -76,7 +76,7 @@ describe('owf init', () => {
   });
 });
 
-describe('owf emit', () => {
+describe('fuc emit', () => {
   it('compiles a blueprint to a script (exit 0)', async () => {
     const file = writeSample();
     const code = await runEmit(file, {});
@@ -99,11 +99,11 @@ describe('owf emit', () => {
   });
 
   it('errors on a missing file (exit 1)', async () => {
-    await expect(runEmit(join(dir, 'nope.owf.json'), {})).rejects.toMatchObject({ exitCode: 1 });
+    await expect(runEmit(join(dir, 'nope.fuc.json'), {})).rejects.toMatchObject({ exitCode: 1 });
   });
 });
 
-describe('owf parse', () => {
+describe('fuc parse', () => {
   it('round-trips emit -> parse preserving structure', async () => {
     const file = writeSample();
     await runEmit(file, {});
@@ -119,7 +119,7 @@ describe('owf parse', () => {
   });
 });
 
-describe('owf validate', () => {
+describe('fuc validate', () => {
   it('passes a valid blueprint (exit 0)', async () => {
     const file = writeSample();
     const code = await runValidate(file, {});
@@ -128,7 +128,7 @@ describe('owf validate', () => {
 
   it('fails a structurally broken blueprint (exit 1)', async () => {
     const broken = { version: 1, meta: {}, nodes: [], edges: [] };
-    const file = join(dir, 'broken.owf.json');
+    const file = join(dir, 'broken.fuc.json');
     writeFileSync(file, JSON.stringify(broken));
     const code = await runValidate(file, {});
     expect(code).toBe(1);
@@ -143,7 +143,7 @@ describe('owf validate', () => {
   });
 });
 
-describe('owf info', () => {
+describe('fuc info', () => {
   it('reports node/edge counts (exit 0)', async () => {
     const file = writeSample();
     const code = await runInfo(file, {});
@@ -162,7 +162,7 @@ describe('owf info', () => {
   });
 });
 
-describe('owf run --dry-run', () => {
+describe('fuc run --dry-run', () => {
   it('validates + emits without spawning (exit 0, quiet = no stderr)', async () => {
     const file = writeSample();
     const code = await runRun(file, { dryRun: true, quiet: true });
@@ -172,7 +172,7 @@ describe('owf run --dry-run', () => {
 
   it('returns 3 when the graph is structurally invalid', async () => {
     const broken = { version: 1, meta: {}, nodes: [], edges: [] };
-    const file = join(dir, 'broken.owf.json');
+    const file = join(dir, 'broken.fuc.json');
     writeFileSync(file, JSON.stringify(broken));
     const code = await runRun(file, { dryRun: true, quiet: true });
     expect(code).toBe(3);

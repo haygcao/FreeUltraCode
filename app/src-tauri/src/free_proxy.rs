@@ -1,4 +1,4 @@
-//! Built-in local HTTP translation proxy for OpenWorkflow "free channels".
+//! Built-in local HTTP translation proxy for FreeUltraCode "free channels".
 //!
 //! When the user picks the `claude-code` runtime with a free channel, the
 //! `claude` CLI is pointed at `http://127.0.0.1:<port>/ch/<channelId>`
@@ -131,7 +131,7 @@ fn start_server() -> Result<u16, String> {
         .ok_or_else(|| "free proxy: no free port in 8765..8799 to bind on 127.0.0.1".to_string())?;
 
     std::thread::Builder::new()
-        .name("owf-free-proxy".to_string())
+        .name("fuc-free-proxy".to_string())
         .spawn(move || {
             for request in server.incoming_requests() {
                 // One worker thread per request so a long-lived stream does not
@@ -816,8 +816,8 @@ fn handle_openai_translate(request: Request, cfg: &FreeChannelCfg, anthropic_bod
         }
         if cfg.id == "open_router" {
             req = req
-                .set("HTTP-Referer", "https://openworkflows.local")
-                .set("X-Title", "OpenWorkflows");
+                .set("HTTP-Referer", "https://freeultracode.local")
+                .set("X-Title", "FreeUltraCode");
         }
         let resp = req.send_string(&openai_body.to_string());
 

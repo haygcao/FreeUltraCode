@@ -23,7 +23,7 @@ use std::time::Duration;
 
 #[derive(Serialize)]
 struct ImportedProvider {
-    /// Provider runtime family, mapped to OpenWorkflows' `ProviderKind`.
+    /// Provider runtime family, mapped to FreeUltraCode's `ProviderKind`.
     kind: String,
     name: String,
     #[serde(rename = "apiKey")]

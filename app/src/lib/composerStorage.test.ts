@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { defaultComposer } from '@/store/sampleSessions';
 import { loadComposer, saveComposer } from '@/lib/composerStorage';
 
-const COMPOSER_KEY = 'openworkflow.composer.v1';
+const COMPOSER_KEY = 'freeultracode.composer.v1';
 
 afterEach(() => {
   window.localStorage.clear();
@@ -17,7 +17,7 @@ describe('composer workspace history persistence', () => {
         workspaceHistory: [
           'E:\\Game',
           'e:/Game/',
-          'E:\\OpenWorkflows',
+          'E:\\FreeUltraCode',
           'E:\\Game\\',
         ],
       }),
@@ -25,7 +25,7 @@ describe('composer workspace history persistence', () => {
 
     expect(loadComposer()?.workspaceHistory).toEqual([
       'E:\\Game',
-      'E:\\OpenWorkflows',
+      'E:\\FreeUltraCode',
     ]);
   });
 
@@ -33,14 +33,14 @@ describe('composer workspace history persistence', () => {
     saveComposer({
       composer: defaultComposer,
       composerBySession: {},
-      workspaceHistory: ['E:\\Game', 'e:/Game/', 'E:\\OpenWorkflows'],
+      workspaceHistory: ['E:\\Game', 'e:/Game/', 'E:\\FreeUltraCode'],
     });
 
     const raw = window.localStorage.getItem(COMPOSER_KEY);
     expect(raw).toBeTruthy();
     expect(JSON.parse(raw!).workspaceHistory).toEqual([
       'E:\\Game',
-      'E:\\OpenWorkflows',
+      'E:\\FreeUltraCode',
     ]);
   });
 });

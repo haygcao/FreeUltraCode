@@ -1,5 +1,5 @@
 /**
- * `owf info <file>` — display workflow metadata + node/edge stats (spec §3.9).
+ * `fuc info <file>` — display workflow metadata + node/edge stats (spec §3.9).
  * `.js` inputs are parsed first. `--json` for machine output.
  */
 import { DATA, EXEC, type IRGraph, type NodeType } from '../../src/core/ir';

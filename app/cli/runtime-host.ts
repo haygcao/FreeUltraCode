@@ -39,7 +39,7 @@ import {
 import {
   applyOverride as applyGatewayOverride,
   cliRouteEnv,
-  loadOwfConfig,
+  loadFucConfig,
   modelClassFromModelId,
   resolveCliRoute,
   resolveDirectRoute,
@@ -184,8 +184,8 @@ function resolveChatEndpoint(baseUrl?: string): string {
 
 /** Per-call timeout policy (mirrors GUI timeoutPolicyForSelection's intent). */
 function nodeTimeoutPolicy(): RunTimeoutPolicy {
-  const t = Number(process.env.OPENWORKFLOW_AI_CLI_TIMEOUT_SECS);
-  const i = Number(process.env.OPENWORKFLOW_AI_CLI_IDLE_TIMEOUT_SECS);
+  const t = Number(process.env.FREEULTRACODE_AI_CLI_TIMEOUT_SECS);
+  const i = Number(process.env.FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS);
   return {
     timeoutSeconds: Number.isFinite(t) && t >= 60 ? Math.floor(t) : 1800,
     idleTimeoutSeconds: Number.isFinite(i) && (i === 0 || i >= 30) ? Math.floor(i) : 300,
@@ -345,7 +345,7 @@ function buildNodeCallbacks(
  */
 export async function runBlueprint(ir: IRGraph, opts: RunOptions = {}): Promise<RunResult> {
   const cwd = opts.cwd ?? process.cwd();
-  loadOwfConfig(cwd);
+  loadFucConfig(cwd);
 
   const selection =
     opts.selection ??

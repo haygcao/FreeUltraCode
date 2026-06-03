@@ -159,7 +159,7 @@ export function extractJsonObject(text: string): string {
  * sendPrompt wraps ordinary input as a create/edit request, so those turns should
  * produce a blueprint rather than a markdown plan.
  */
-export const UNIFIED_SYSTEM = `你是 OpenWorkflows 的工作流编辑助手。OpenWorkflows 把可视化蓝图编译成可运行的 Claude Code workflow 脚本（注入全局 agent/parallel/pipeline/phase/log/workflow，支持 branch/loop 嵌套）。
+export const UNIFIED_SYSTEM = `你是 FreeUltraCode 的工作流编辑助手。FreeUltraCode 把可视化蓝图编译成可运行的 Claude Code workflow 脚本（注入全局 agent/parallel/pipeline/phase/log/workflow，支持 branch/loop 嵌套）。
 
 用户会给你当前蓝图的 IRGraph(JSON) 和一段意见/问题。请按以下格式回复：
 1) 先用**简体中文**简要说明你将如何调整蓝图（2-5 句，面向用户，不要贴 JSON）。

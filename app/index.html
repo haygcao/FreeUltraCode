@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <title>OpenWorkflows</title>
+    <title>FreeUltraCode</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,21 +19,23 @@
         const fallback = 'pencil';
         const supported = new Set([fallback]);
         try {
-          const raw = localStorage.getItem('openworkflow.appearance.v1');
+          const raw =
+            localStorage.getItem('freeultracode.appearance.v1') ??
+            localStorage.getItem('openworkflow.appearance.v1');
           const parsed = raw ? JSON.parse(raw) : null;
           const storedId =
             parsed && typeof parsed.stylePresetId === 'string'
               ? parsed.stylePresetId
               : fallback;
           const id = supported.has(storedId) ? storedId : fallback;
-          document.documentElement.dataset.owfStyle = id;
+          document.documentElement.dataset.fucStyle = id;
           document.documentElement.classList.toggle(
-            'owf-style-pencil',
+            'fuc-style-pencil',
             id === 'pencil',
           );
         } catch {
-          document.documentElement.dataset.owfStyle = fallback;
-          document.documentElement.classList.add('owf-style-pencil');
+          document.documentElement.dataset.fucStyle = fallback;
+          document.documentElement.classList.add('fuc-style-pencil');
         }
       })();
     </script>

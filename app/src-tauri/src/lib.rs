@@ -215,7 +215,7 @@ fn read_free_channel_key_file(path: PathBuf) -> HashMap<String, String> {
 
 fn free_channel_key_file_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Ok(path) = std::env::var("OPENWORKFLOWS_FREE_CHANNELS_CONFIG") {
+    if let Ok(path) = std::env::var("FREEULTRACODE_FREE_CHANNELS_CONFIG") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             out.push(PathBuf::from(trimmed));
@@ -323,7 +323,7 @@ fn write_temp_script(script: &str) -> Result<std::path::PathBuf, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    path.push(format!("openworkflow-{stamp}.sh"));
+    path.push(format!("freeultracode-{stamp}.sh"));
     let mut file = std::fs::File::create(&path).map_err(|e| format!("无法创建临时脚本: {e}"))?;
     file.write_all(script.as_bytes())
         .map_err(|e| format!("写入临时脚本失败: {e}"))?;
@@ -445,7 +445,7 @@ fn build_launch_command(binary: &str, args: &[String], shell: &Option<ShellSpec>
                         hide_console(&mut cmd);
                         cmd.arg("-lc")
                             .arg(r#"exec "$@""#)
-                            .arg("owf-shell")
+                            .arg("fuc-shell")
                             .arg(binary);
                         for a in args {
                             cmd.arg(a);
@@ -926,7 +926,7 @@ fn setup_local_model(model: String) -> Result<(), String> {
         return Err("本地模型一键配置目前只支持 Windows + Ollama。".to_string());
     }
     let model = validate_ollama_model_id(&model)?;
-    let script_path = std::env::temp_dir().join("openworkflows-setup-local-model.ps1");
+    let script_path = std::env::temp_dir().join("freeultracode-setup-local-model.ps1");
     std::fs::write(&script_path, LOCAL_MODEL_SETUP_PS1.as_bytes())
         .map_err(|e| format!("写入本地模型安装脚本失败: {e}"))?;
 
@@ -1019,7 +1019,7 @@ async fn run_workflow(
 
 /// System prompt steering the model to emit a pure IRGraph JSON object that maps
 /// onto a *runnable* Claude Code workflow (the injected-globals DSL).
-const AI_EDIT_SYSTEM: &str = "You are a workflow graph editor for OpenWorkflows. You receive the current workflow as an IRGraph JSON object plus a natural-language instruction (in Chinese or English). Return ONLY a single valid IRGraph JSON object (no markdown, no prose).
+const AI_EDIT_SYSTEM: &str = "You are a workflow graph editor for FreeUltraCode. You receive the current workflow as an IRGraph JSON object plus a natural-language instruction (in Chinese or English). Return ONLY a single valid IRGraph JSON object (no markdown, no prose).
 
 The IRGraph compiles to a real Claude Code workflow script, so use these exact node shapes:
 - Envelope: {version, meta, nodes, edges, layout?}.
@@ -1132,7 +1132,7 @@ const AI_CLI_HEARTBEAT_SECS: u64 = 12;
 /// longer default so legitimate long-running workflows are less likely to be
 /// killed too early.
 fn configured_ai_cli_timeout_secs() -> u64 {
-    std::env::var("OPENWORKFLOW_AI_CLI_TIMEOUT_SECS")
+    std::env::var("FREEULTRACODE_AI_CLI_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|secs| *secs >= 60)
@@ -1147,10 +1147,10 @@ fn ai_cli_timeout_secs(override_secs: Option<u64>) -> u64 {
 
 /// Whether to load the machine's global MCP servers for each workflow node.
 /// Off by default (each cold `claude -p` spawn skips MCP init, saving ~2-4s of
-/// startup per node); set OPENWORKFLOW_ENABLE_MCP=1 to opt back in for
+/// startup per node); set FREEULTRACODE_ENABLE_MCP=1 to opt back in for
 /// workflows whose nodes actually call an MCP tool.
 fn mcp_enabled() -> bool {
-    std::env::var("OPENWORKFLOW_ENABLE_MCP")
+    std::env::var("FREEULTRACODE_ENABLE_MCP")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             v == "1" || v == "true" || v == "yes"
@@ -1159,7 +1159,7 @@ fn mcp_enabled() -> bool {
 }
 
 fn claude_bare_mode_disabled() -> bool {
-    std::env::var("OPENWORKFLOW_DISABLE_CLAUDE_BARE")
+    std::env::var("FREEULTRACODE_DISABLE_CLAUDE_BARE")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             v == "1" || v == "true" || v == "yes"
@@ -1289,9 +1289,9 @@ fn should_run_claude_bare_with_disable(
 /// thinking stream as they are generated (matching the interactive CLI's live
 /// feel); the plain `-p` stream otherwise emits only one event per *completed*
 /// message, leaving the run log blank while a single long answer is composed.
-/// Set OPENWORKFLOW_DISABLE_PARTIAL=1 if a CLI build predates the flag.
+/// Set FREEULTRACODE_DISABLE_PARTIAL=1 if a CLI build predates the flag.
 fn partial_enabled() -> bool {
-    !std::env::var("OPENWORKFLOW_DISABLE_PARTIAL")
+    !std::env::var("FREEULTRACODE_DISABLE_PARTIAL")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             v == "1" || v == "true" || v == "yes"
@@ -1301,7 +1301,7 @@ fn partial_enabled() -> bool {
 
 /// Read the no-progress timeout override. Set to 0 to disable idle detection.
 fn configured_ai_cli_idle_timeout_secs() -> u64 {
-    std::env::var("OPENWORKFLOW_AI_CLI_IDLE_TIMEOUT_SECS")
+    std::env::var("FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|secs| *secs == 0 || *secs >= 30)
@@ -1376,7 +1376,7 @@ fn emit_progress(app: &tauri::AppHandle, run_id: &str, text: &str) {
 /// `🔧 Bash: ls app/src` / `🔧 Glob: **/*.tsx` / `🔧 Read: app/src/core/ir.ts`,
 /// so the run log shows *what* the agent is doing, not just the tool name.
 /// Retained as a fallback / for the codex text path; the claude path now emits
-/// structured `<<OWF_TOOL>>` sentinels instead.
+/// structured `<<FUC_TOOL>>` sentinels instead.
 #[allow(dead_code)]
 fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     // Prefer the most informative known field; fall back to compact JSON.
@@ -1441,7 +1441,7 @@ fn tool_subject(input: &serde_json::Value) -> String {
 /// Serialise a structured tool-event patch into an inline sentinel block that
 /// the frontend render layer decodes (mirrors src/components/ai/lib/toolEvent.ts).
 fn encode_tool_patch(patch: &serde_json::Value) -> String {
-    format!("\n<<OWF_TOOL>>{}<<OWF_TOOL_END>>\n", patch)
+    format!("\n<<FUC_TOOL>>{}<<FUC_TOOL_END>>\n", patch)
 }
 
 /// Cap a tool result body so a huge file read doesn't bloat the message text.
@@ -1644,7 +1644,7 @@ async fn ai_cli(
         let protocol = cli_runtime::adapter_protocol(&adapter);
         let is_codex = protocol == "codex";
         let codex_last_message_path = if is_codex {
-            Some(temp_output_path("openworkflow-codex-last", "txt"))
+            Some(temp_output_path("freeultracode-codex-last", "txt"))
         } else {
             None
         };
@@ -1746,7 +1746,7 @@ async fn ai_cli(
             // for an N-node run, while a single interactive session pays it
             // once. `--strict-mcp-config` with no `--mcp-config` means "use
             // only servers from the (absent) config", i.e. none. Opt back in
-            // with OPENWORKFLOW_ENABLE_MCP=1 for workflows that genuinely call
+            // with FREEULTRACODE_ENABLE_MCP=1 for workflows that genuinely call
             // an MCP tool.
             if !mcp_enabled() {
                 args.push("--strict-mcp-config".into());

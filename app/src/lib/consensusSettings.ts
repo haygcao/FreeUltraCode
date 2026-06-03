@@ -6,15 +6,15 @@
  */
 
 export interface ConsensusSettings {
-  /** Generation-time consensus on/off (owf_gen_consensus). */
+  /** Generation-time consensus on/off (fuc_gen_consensus). */
   genEnabled: boolean;
-  /** Candidate blueprints generated per complex request (owf_gen_candidates). */
+  /** Candidate blueprints generated per complex request (fuc_gen_candidates). */
   genCandidates: number;
-  /** Default fan-out / sample count for a consensus node (owf_consensus_default_samples). */
+  /** Default fan-out / sample count for a consensus node (fuc_consensus_default_samples). */
   voteSamples: number;
-  /** Show the "convert to consensus" suggestion on complex agent nodes (owf_consensus_autosuggest). */
+  /** Show the "convert to consensus" suggestion on complex agent nodes (fuc_consensus_autosuggest). */
   autoSuggest: boolean;
-  /** Max independent calls run at once — also caps consensus fan-out (owf_run_concurrency). */
+  /** Max independent calls run at once — also caps consensus fan-out (fuc_run_concurrency). */
   concurrency: number;
   /** Max concurrent calls after a route is classified as slow. */
   slowConcurrency: number;
@@ -74,28 +74,28 @@ export const CONSENSUS_LIMITS = {
 } as const;
 
 const KEYS = {
-  genEnabled: 'owf_gen_consensus',
-  genCandidates: 'owf_gen_candidates',
-  voteSamples: 'owf_consensus_default_samples',
-  autoSuggest: 'owf_consensus_autosuggest',
-  adaptiveEscalation: 'owf_adaptive_escalation',
-  concurrency: 'owf_run_concurrency',
-  slowConcurrency: 'owf_run_concurrency_slow',
-  standardConcurrency: 'owf_run_concurrency_standard',
-  fastConcurrency: 'owf_run_concurrency_fast',
-  researchAnglesMin: 'owf_research_angles_min',
-  researchAnglesMax: 'owf_research_angles_max',
-  nodeGenCandidatesMin: 'owf_nodegen_candidates_min',
-  nodeGenCandidatesMax: 'owf_nodegen_candidates_max',
-  runtimeVoteSamplesMin: 'owf_runtime_vote_samples_min',
-  runtimeVoteSamplesMax: 'owf_runtime_vote_samples_max',
-  terminalVoteSamplesMin: 'owf_terminal_vote_samples_min',
-  terminalVoteSamplesMax: 'owf_terminal_vote_samples_max',
-  complexityScaling: 'owf_complexity_scaling',
+  genEnabled: 'fuc_gen_consensus',
+  genCandidates: 'fuc_gen_candidates',
+  voteSamples: 'fuc_consensus_default_samples',
+  autoSuggest: 'fuc_consensus_autosuggest',
+  adaptiveEscalation: 'fuc_adaptive_escalation',
+  concurrency: 'fuc_run_concurrency',
+  slowConcurrency: 'fuc_run_concurrency_slow',
+  standardConcurrency: 'fuc_run_concurrency_standard',
+  fastConcurrency: 'fuc_run_concurrency_fast',
+  researchAnglesMin: 'fuc_research_angles_min',
+  researchAnglesMax: 'fuc_research_angles_max',
+  nodeGenCandidatesMin: 'fuc_nodegen_candidates_min',
+  nodeGenCandidatesMax: 'fuc_nodegen_candidates_max',
+  runtimeVoteSamplesMin: 'fuc_runtime_vote_samples_min',
+  runtimeVoteSamplesMax: 'fuc_runtime_vote_samples_max',
+  terminalVoteSamplesMin: 'fuc_terminal_vote_samples_min',
+  terminalVoteSamplesMax: 'fuc_terminal_vote_samples_max',
+  complexityScaling: 'fuc_complexity_scaling',
 } as const;
 
 /** Fired after any consensus setting changes, so open UI / consumers can refresh. */
-export const CONSENSUS_SETTINGS_EVENT = 'owf:consensus-settings-changed';
+export const CONSENSUS_SETTINGS_EVENT = 'fuc:consensus-settings-changed';
 
 function ls(): Storage | null {
   try {

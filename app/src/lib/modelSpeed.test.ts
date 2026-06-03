@@ -72,9 +72,9 @@ describe('model speed policy', () => {
   });
 
   it('uses configured per-tier concurrency caps', () => {
-    window.localStorage.setItem('owf_run_concurrency_slow', '3');
-    window.localStorage.setItem('owf_run_concurrency_standard', '6');
-    window.localStorage.setItem('owf_run_concurrency_fast', '12');
+    window.localStorage.setItem('fuc_run_concurrency_slow', '3');
+    window.localStorage.setItem('fuc_run_concurrency_standard', '6');
+    window.localStorage.setItem('fuc_run_concurrency_fast', '12');
 
     expect(
       effectiveRunConcurrency(16, {

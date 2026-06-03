@@ -15,7 +15,7 @@ interface StatusIndicatorProps {
 }
 
 function statusColorStyle(color: string): CSSProperties {
-  return { '--owf-status-color': color } as CSSProperties;
+  return { '--fuc-status-color': color } as CSSProperties;
 }
 
 const TONE_STYLE: Record<StatusTone, CSSProperties> = {
@@ -41,7 +41,7 @@ export default function StatusIndicator({
     <span
       aria-hidden={!active}
       aria-label={active ? label : undefined}
-      className={cn('owf-status-slot', className)}
+      className={cn('fuc-status-slot', className)}
       data-status={tone ?? 'none'}
       role={active ? 'img' : undefined}
       title={active ? label : undefined}
@@ -50,8 +50,8 @@ export default function StatusIndicator({
         <span
           aria-hidden="true"
           className={cn(
-            'owf-status-indicator',
-            isSpinningTone(tone) && 'owf-status-spinner',
+            'fuc-status-indicator',
+            isSpinningTone(tone) && 'fuc-status-spinner',
           )}
           style={TONE_STYLE[tone]}
         />

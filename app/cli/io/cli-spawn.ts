@@ -99,7 +99,7 @@ export interface SpawnCliAgentOpts {
 
 /** Clamp + env-override the hard timeout (mirrors ai_cli_timeout_secs). */
 function resolveTimeoutSecs(override?: number): number {
-  const configuredRaw = Number(process.env.OPENWORKFLOW_AI_CLI_TIMEOUT_SECS);
+  const configuredRaw = Number(process.env.FREEULTRACODE_AI_CLI_TIMEOUT_SECS);
   const configured =
     Number.isFinite(configuredRaw) && configuredRaw >= 60
       ? Math.floor(configuredRaw)
@@ -111,7 +111,7 @@ function resolveTimeoutSecs(override?: number): number {
 
 /** Clamp + env-override the idle timeout (mirrors ai_cli_idle_timeout_secs). 0 disables. */
 function resolveIdleTimeoutSecs(override?: number): number {
-  const raw = process.env.OPENWORKFLOW_AI_CLI_IDLE_TIMEOUT_SECS;
+  const raw = process.env.FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS;
   let configured = DEFAULT_IDLE_TIMEOUT_SECS;
   if (raw != null && raw.trim() !== '') {
     const n = Number(raw.trim());
@@ -135,7 +135,7 @@ function hasEnvValue(env: Record<string, string> | undefined, key: string): bool
 }
 
 function shouldRunClaudeBare(env: Record<string, string> | undefined): boolean {
-  if (flagEnabled(process.env.OPENWORKFLOW_DISABLE_CLAUDE_BARE)) return false;
+  if (flagEnabled(process.env.FREEULTRACODE_DISABLE_CLAUDE_BARE)) return false;
   const hasApiKey = hasEnvValue(env, 'ANTHROPIC_API_KEY');
   const hasGatewayRoute =
     hasEnvValue(env, 'ANTHROPIC_BASE_URL') || hasEnvValue(env, 'ANTHROPIC_MODEL');
@@ -191,7 +191,7 @@ function normalizeSpawnEnv(env: NodeJS.ProcessEnv): void {
 }
 
 function mcpEnabled(): boolean {
-  const v = (process.env.OPENWORKFLOW_ENABLE_MCP ?? '').trim().toLowerCase();
+  const v = (process.env.FREEULTRACODE_ENABLE_MCP ?? '').trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes';
 }
 
@@ -323,7 +323,7 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
   let codexDir: string | undefined;
   let codexOutPath: string | undefined;
   if (isCodex) {
-    codexDir = mkdtempSync(join(tmpdir(), 'openworkflow-codex-'));
+    codexDir = mkdtempSync(join(tmpdir(), 'freeultracode-codex-'));
     codexOutPath = join(codexDir, 'last-message.txt');
   }
   const cleanupCodex = () => {
