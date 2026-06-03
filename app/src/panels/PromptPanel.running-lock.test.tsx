@@ -243,6 +243,24 @@ describe('PromptPanel running lock', () => {
     }
   });
 
+  it('uses the chat-specific empty state copy in simple chat mode', async () => {
+    resetStoreForPromptLock('design');
+    useStore.setState({
+      workflow: simpleBlueprint('Simple chat'),
+      messages: [],
+    });
+    const view = await renderChatDock();
+
+    try {
+      expect(view.container.textContent).toContain('今天想做些什么呢？');
+      expect(view.container.textContent).not.toContain(
+        '在右侧描述你的意图，AI 将据此操作画布并在此回显。',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it('shows the chat run button in simple chat mode', async () => {
     resetStoreForPromptLock('design', 'hello');
     useStore.setState({

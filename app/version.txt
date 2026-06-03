@@ -1,6 +1,6 @@
 {
-  "version": "0.2.2",
-  "url": "https://github.com/wellingfeng/FreeUltraCode/releases/download/v0.2.2/FreeUltraCode_0.2.2_x64-setup.exe",
-  "notes": "FreeUltraCode v0.2.2",
+  "version": "0.2.3",
+  "url": "https://github.com/wellingfeng/FreeUltraCode/releases/download/v0.2.3/FreeUltraCode_0.2.3_x64-setup.exe",
+  "notes": "FreeUltraCode v0.2.3",
   "pubDate": "2026-06-03"
 }

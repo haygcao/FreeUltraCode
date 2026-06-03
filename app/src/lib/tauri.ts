@@ -252,12 +252,12 @@ export async function freeProxyEnsure(
     model: string;
     fallbackModels?: string[];
   }>,
-): Promise<{ port: number }> {
+): Promise<{ port: number; token: string }> {
   if (!tauriAvailable()) {
     throw new Error('NO_BACKEND');
   }
   const invoke = await getInvoke();
-  return invoke<{ port: number }>('free_proxy_ensure', { channels });
+  return invoke<{ port: number; token: string }>('free_proxy_ensure', { channels });
 }
 
 /** Stop the built-in local free-channel proxy. No-op outside the desktop shell. */
@@ -516,8 +516,21 @@ const EXECUTABLE_EXT = new Set([
   'command', 'desktop', 'sh', 'bash', 'zsh', 'fish', 'run', 'bin', 'appimage',
 ]);
 
-function executableExtensionOf(p: string): string | null {
-  const base = p.replace(/[\\/]+$/, '').split(/[:#?]/, 1)[0];
+function executableCheckPath(p: string): string {
+  const queryOrHash = p.search(/[?#]/);
+  let base = (queryOrHash >= 0 ? p.slice(0, queryOrHash) : p).replace(
+    /[\\/]+$/,
+    '',
+  );
+  const lineHint = /^(.*?):\d+(?::\d+)?$/.exec(base);
+  if (lineHint?.[1] && !/^[A-Za-z]$/.test(lineHint[1])) {
+    base = lineHint[1];
+  }
+  return base;
+}
+
+export function executableExtensionOf(p: string): string | null {
+  const base = executableCheckPath(p);
   const dot = base.lastIndexOf('.');
   if (dot <= 0) return null;
   const ext = base.slice(dot + 1).toLowerCase();

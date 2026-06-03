@@ -637,18 +637,23 @@ export default function AIDock({
     Record<string, LocalModelRuntimeStatus | undefined>
   >({});
   const channelSelectOptions = useMemo<SelectOption[]>(
-    () => [
-      { id: '__system__', label: t(locale, 'dock.channelSystemDefault') },
-      ...FREE_CHANNELS.map((c) => {
-        const localStatus = c.local ? localRuntimeStatuses[c.id] : undefined;
-        const needsAttention =
-          !freeChannelReady(c.id) || (c.local && localStatus && !localStatus.ready);
-        return {
-          id: c.id,
-          label: 'Free · ' + c.label + (needsAttention ? ' ⚠' : ''),
-        };
-      }),
-    ],
+    () => {
+      // Refresh labels after localStorage-backed channel config changes.
+      void freeChannelRevision;
+      return [
+        { id: '__system__', label: t(locale, 'dock.channelSystemDefault') },
+        ...FREE_CHANNELS.map((c) => {
+          const localStatus = c.local ? localRuntimeStatuses[c.id] : undefined;
+          const needsAttention =
+            !freeChannelReady(c.id) ||
+            (c.local && localStatus && !localStatus.ready);
+          return {
+            id: c.id,
+            label: 'Free · ' + c.label + (needsAttention ? ' ⚠' : ''),
+          };
+        }),
+      ];
+    },
     [locale, freeChannelRevision, localRuntimeStatuses],
   );
   const channelSelectValue =
@@ -689,7 +694,7 @@ export default function AIDock({
       disposed = true;
     };
   }, [isClaudeCodeRuntime, freeChannelRevision]);
-  const useFreeChannel = useCallback(
+  const selectFreeChannel = useCallback(
     (channel: FreeChannel) => {
       void ensureFreeProxy();
       setGlobalRunSelection(
@@ -754,7 +759,7 @@ export default function AIDock({
               setCheckingLocalModel(false);
             }
           }
-          useFreeChannel(channel);
+          selectFreeChannel(channel);
           return;
         }
         const key =
@@ -766,18 +771,18 @@ export default function AIDock({
           setKeyModalValue('');
           return;
         }
-        useFreeChannel(channel);
+        selectFreeChannel(channel);
       })();
     },
-    [locale, setGlobalRunSelection, useFreeChannel],
+    [locale, setGlobalRunSelection, selectFreeChannel],
   );
   const saveKeyModal = useCallback(() => {
     if (!keyModalChannel) return;
     const key = keyModalValue.trim();
     if (!key) return;
     setFreeChannelKey(keyModalChannel.id, key);
-    useFreeChannel(keyModalChannel);
-  }, [keyModalChannel, keyModalValue, useFreeChannel]);
+    selectFreeChannel(keyModalChannel);
+  }, [keyModalChannel, keyModalValue, selectFreeChannel]);
   const saveLocalModelModal = useCallback(() => {
     if (!localSetupChannel) return;
     const model = localModelValue.trim();
@@ -799,7 +804,7 @@ export default function AIDock({
             return;
           }
         }
-        useFreeChannel(localSetupChannel);
+        selectFreeChannel(localSetupChannel);
       } catch (err) {
         const status: LocalModelRuntimeStatus = {
           channelId: localSetupChannel.id,
@@ -821,7 +826,7 @@ export default function AIDock({
         setCheckingLocalModel(false);
       }
     })();
-  }, [localModelValue, localSetupChannel, locale, useFreeChannel]);
+  }, [localModelValue, localSetupChannel, locale, selectFreeChannel]);
 
   const ensureSelectedLocalChannelReady = useCallback(async (): Promise<boolean> => {
     const id = isFreeChannelSelection(runSelection);
@@ -1481,8 +1486,14 @@ export default function AIDock({
         </header>
         <div ref={streamRef} className="min-h-0 flex-1 overflow-y-auto p-3">
           {messages.length === 0 ? (
-            <div className="text-xs text-fg-faint">
-              {t(locale, 'dock.empty')}
+            <div
+              className={
+                isChat
+                  ? 'flex h-full items-start justify-center pt-16 text-base font-medium text-fg-dim'
+                  : 'text-xs text-fg-faint'
+              }
+            >
+              {t(locale, isChat ? 'dock.chatEmpty' : 'dock.empty')}
             </div>
           ) : (
             <ul className="flex flex-col gap-3">

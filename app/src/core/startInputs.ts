@@ -143,6 +143,36 @@ export function appendStartUserInputs(
             params: startParamsWithInputs(node.params ?? {}, merged),
           }
         : node,
+      ),
+  };
+}
+
+/** Replace the first Start node's canonical user input list. */
+export function setStartUserInputs(
+  graph: IRGraph,
+  inputs: readonly string[],
+): IRGraph {
+  const nextInputs = compactInputs(inputs);
+  const startNode = graph.nodes.find((node) => node.type === 'start');
+  if (!startNode) return graph;
+
+  const current = readStartUserInputs(startNode.params);
+  if (
+    nextInputs.length === current.length &&
+    nextInputs.every((value, index) => value === current[index])
+  ) {
+    return graph;
+  }
+
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.id === startNode.id
+        ? {
+            ...node,
+            params: startParamsWithInputs(node.params ?? {}, nextInputs),
+          }
+        : node,
     ),
   };
 }

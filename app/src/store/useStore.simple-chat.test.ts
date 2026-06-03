@@ -589,7 +589,7 @@ describe('simple-workflow chat mode', () => {
     expect(useStore.getState().chattingSessions.length).toBe(0);
   });
 
-  it('allows sending a second chat message while the first is still streaming', async () => {
+  it('keeps both replies when a second chat message finishes before the first', async () => {
     resetStore(simpleBlueprint('Simple chat'));
     mockDirectRoute();
     const resolvers: Array<(value: string) => void> = [];
@@ -605,11 +605,38 @@ describe('simple-workflow chat mode', () => {
     await waitFor(() => resolvers.length === 2, 'second chat call (not blocked)');
 
     expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(2);
-    for (const resolve of resolvers) resolve('答');
+
+    resolvers[1]('答二');
     await waitFor(
-      () => !useStore.getState().aiStreaming,
+      () =>
+        useStore
+          .getState()
+          .messages.some((m) => m.role === 'assistant' && m.text.includes('答二')),
+      'second chat reply',
+    );
+    expect(useStore.getState().aiStreaming).toBe(true);
+
+    resolvers[0]('答一');
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((m) => m.role === 'assistant' && m.text.includes('答一')),
       'all chat turns to finish',
     );
+
+    const assistantText = useStore
+      .getState()
+      .messages.filter((m) => m.role === 'assistant')
+      .map((m) => m.text)
+      .join('\n');
+    expect(assistantText).toContain('答一');
+    expect(assistantText).toContain('答二');
+    expect(useStore.getState().workflow.nodes[0].params.userInputs).toEqual([
+      '问题一',
+      '问题二',
+    ]);
   });
 
   it('streams CLI progress into the plain chat bubble before the final reply', async () => {

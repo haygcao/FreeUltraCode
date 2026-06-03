@@ -17,6 +17,7 @@ import { freeChannelAutoKeys, freeProxyEnsure, isTauri } from '@/lib/tauri';
  *   fuc_free_channel_keys_v1   -> { [id]: apiKey }
  *   fuc_free_channel_models_v1 -> { [id]: modelOverride }
  *   fuc_free_proxy_port_v1     -> number (default 8765)
+ *   fuc_free_proxy_token_v1    -> per-process local proxy auth token
  *
  * Exports the UI phase relies on:
  *   FREE_CHANNELS, FREE_CHANNEL_PROVIDER_PREFIX, freeChannelById,
@@ -59,6 +60,7 @@ const DEFAULT_FREE_PROXY_PORT = 8765;
 const KEYS_STORAGE = 'fuc_free_channel_keys_v1';
 const MODELS_STORAGE = 'fuc_free_channel_models_v1';
 const PORT_STORAGE = 'fuc_free_proxy_port_v1';
+const TOKEN_STORAGE = 'fuc_free_proxy_token_v1';
 
 export const FREE_CHANNELS: FreeChannel[] = [
   {
@@ -453,6 +455,30 @@ function setCachedFreeProxyPort(port: number): void {
   }
 }
 
+function getCachedFreeProxyToken(): string {
+  try {
+    if (!hasWindow()) return '';
+    return window.localStorage.getItem(TOKEN_STORAGE)?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function setCachedFreeProxyToken(token: string): void {
+  try {
+    if (!hasWindow()) return;
+    const trimmed = token.trim();
+    const prev = window.localStorage.getItem(TOKEN_STORAGE);
+    if (trimmed) window.localStorage.setItem(TOKEN_STORAGE, trimmed);
+    else window.localStorage.removeItem(TOKEN_STORAGE);
+    if (prev !== trimmed) {
+      window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function freeChannelSelection(
   id: string,
   modelClass?: string,
@@ -487,6 +513,7 @@ export function isFreeChannelSelection(
  */
 export function freeChannelGatewayProviders(): GatewayProvider[] {
   const port = getCachedFreeProxyPort();
+  const proxyToken = getCachedFreeProxyToken();
   return FREE_CHANNELS.map((c) => {
     const baseUrl = `http://127.0.0.1:${port}/ch/${c.id}`;
     const model = getFreeChannelModel(c.id);
@@ -499,7 +526,7 @@ export function freeChannelGatewayProviders(): GatewayProvider[] {
         {
           id: 'default',
           name: c.label,
-          apiKey: 'freecc',
+          apiKey: proxyToken || 'freecc',
           baseUrl,
           model,
           models: undefined,
@@ -536,6 +563,9 @@ export async function ensureFreeProxy(): Promise<number> {
     const info = await freeProxyEnsure(channels);
     if (info && Number.isFinite(info.port) && info.port > 0) {
       setCachedFreeProxyPort(info.port);
+      if (typeof info.token === 'string') {
+        setCachedFreeProxyToken(info.token);
+      }
       return info.port;
     }
   } catch (err) {

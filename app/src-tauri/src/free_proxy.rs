@@ -16,6 +16,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -38,16 +39,19 @@ pub struct FreeChannelCfg {
 #[derive(Debug, Clone, Serialize)]
 pub struct FreeProxyInfo {
     pub port: u16,
+    pub token: String,
 }
 
 struct ProxyState {
     port: u16,
+    token: String,
 }
 
 static SERVER_STATE: OnceLock<Mutex<Option<ProxyState>>> = OnceLock::new();
 static REGISTRY: OnceLock<Mutex<HashMap<String, FreeChannelCfg>>> = OnceLock::new();
 static MODEL_SUCCESS_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static MSG_COUNTER: AtomicU64 = AtomicU64::new(1);
+const PROXY_AUTH_HEADER: &str = "X-FreeUltraCode-Proxy-Token";
 
 fn state_lock() -> &'static Mutex<Option<ProxyState>> {
     SERVER_STATE.get_or_init(|| Mutex::new(None))
@@ -83,16 +87,19 @@ pub async fn free_proxy_ensure(channels: Vec<FreeChannelCfg>) -> Result<FreeProx
     {
         let guard = state_lock().lock().map_err(|_| "state poisoned")?;
         if let Some(st) = guard.as_ref() {
-            return Ok(FreeProxyInfo { port: st.port });
+            return Ok(FreeProxyInfo {
+                port: st.port,
+                token: st.token.clone(),
+            });
         }
     }
 
     // Bind + start the accept loop (blocking bind is cheap; do it on a blocking pool).
-    let port = tauri::async_runtime::spawn_blocking(start_server)
+    let info = tauri::async_runtime::spawn_blocking(start_server)
         .await
         .map_err(|e| format!("spawn_blocking join error: {e}"))??;
 
-    Ok(FreeProxyInfo { port })
+    Ok(info)
 }
 
 /// Tauri command: stop the proxy. (Idempotent best-effort.)
@@ -110,10 +117,13 @@ pub fn free_proxy_stop() -> Result<(), String> {
 
 /// Bind 127.0.0.1 on the first free port in 8765..=8799 and spawn the accept loop.
 /// Returns the chosen port. Idempotent guard via SERVER_STATE.
-fn start_server() -> Result<u16, String> {
+fn start_server() -> Result<FreeProxyInfo, String> {
     let mut guard = state_lock().lock().map_err(|_| "state poisoned")?;
     if let Some(st) = guard.as_ref() {
-        return Ok(st.port);
+        return Ok(FreeProxyInfo {
+            port: st.port,
+            token: st.token.clone(),
+        });
     }
 
     let mut bound: Option<(Server, u16)> = None;
@@ -129,6 +139,7 @@ fn start_server() -> Result<u16, String> {
 
     let (server, port) = bound
         .ok_or_else(|| "free proxy: no free port in 8765..8799 to bind on 127.0.0.1".to_string())?;
+    let token = generate_proxy_token()?;
 
     std::thread::Builder::new()
         .name("fuc-free-proxy".to_string())
@@ -143,16 +154,60 @@ fn start_server() -> Result<u16, String> {
         })
         .map_err(|e| format!("free proxy: failed to spawn accept thread: {e}"))?;
 
-    *guard = Some(ProxyState { port });
-    Ok(port)
+    *guard = Some(ProxyState {
+        port,
+        token: token.clone(),
+    });
+    Ok(FreeProxyInfo { port, token })
 }
 
-fn cors_headers() -> Vec<Header> {
-    vec![
-        Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap(),
-        Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"POST, OPTIONS"[..]).unwrap(),
-        Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"*"[..]).unwrap(),
-    ]
+fn generate_proxy_token() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|e| format!("free proxy: failed to generate auth token: {e}"))?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn header_value(headers: &[Header], name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str().to_string())
+}
+
+fn proxy_auth_headers_match(headers: &[Header], expected: &str) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    if header_value(headers, PROXY_AUTH_HEADER).as_deref() == Some(expected) {
+        return true;
+    }
+    if header_value(headers, "x-api-key").as_deref() == Some(expected) {
+        return true;
+    }
+    if let Some(auth) = header_value(headers, "authorization") {
+        let trimmed = auth.trim();
+        if trimmed == expected {
+            return true;
+        }
+        if let Some((scheme, token)) = trimmed.split_once(' ') {
+            if scheme.eq_ignore_ascii_case("bearer") {
+                return token.trim() == expected;
+            }
+        }
+    }
+    false
+}
+
+fn request_has_proxy_auth(request: &Request) -> bool {
+    let expected = state_lock()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|st| st.token.clone()));
+    match expected {
+        Some(token) => proxy_auth_headers_match(request.headers(), &token),
+        None => false,
+    }
 }
 
 fn anthropic_error_json(message: &str) -> Value {
@@ -168,9 +223,6 @@ fn respond_json_error(request: Request, status: u16, message: &str) {
     let mut response = Response::from_string(body).with_status_code(status);
     let ct = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
     response.add_header(ct);
-    for h in cors_headers() {
-        response.add_header(h);
-    }
     let _ = request.respond(response);
 }
 
@@ -178,13 +230,13 @@ fn handle_request(mut request: Request) {
     let method = request.method().clone();
     let url = request.url().to_string();
 
-    // CORS preflight.
     if method == Method::Options {
-        let mut response = Response::empty(200);
-        for h in cors_headers() {
-            response.add_header(h);
-        }
-        let _ = request.respond(response);
+        respond_json_error(request, 403, "free proxy: browser preflight is not allowed");
+        return;
+    }
+
+    if !request_has_proxy_auth(&request) {
+        respond_json_error(request, 403, "free proxy: missing or invalid local auth token");
         return;
     }
 
@@ -297,16 +349,13 @@ fn parse_channel_route(path: &str) -> Option<(String, ProxyEndpoint)> {
     }
 }
 
-/// Respond with a plain JSON body + CORS (used for count_tokens and similar
+/// Respond with a plain JSON body (used for count_tokens and similar
 /// non-streamed JSON replies).
 fn respond_json(request: Request, status: u16, value: &Value) {
     let body = value.to_string();
     let mut response = Response::from_string(body).with_status_code(status);
     let ct = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
     response.add_header(ct);
-    for h in cors_headers() {
-        response.add_header(h);
-    }
     let _ = request.respond(response);
 }
 
@@ -704,9 +753,6 @@ fn respond_upstream_status(request: Request, code: u16, content_type: &str, body
     if let Ok(h) = Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()) {
         out.add_header(h);
     }
-    for h in cors_headers() {
-        out.add_header(h);
-    }
     let _ = request.respond(out);
 }
 
@@ -746,7 +792,7 @@ fn stream_passthrough(request: Request, response: ureq::Response) {
     let _ = writer.flush();
 }
 
-/// Write an HTTP/1.1 response head using chunked transfer-encoding + CORS.
+/// Write an HTTP/1.1 response head using chunked transfer-encoding.
 fn write_stream_head<W: Write>(
     writer: &mut W,
     status: u16,
@@ -759,7 +805,6 @@ fn write_stream_head<W: Write>(
          Cache-Control: no-cache\r\n\
          Connection: keep-alive\r\n\
          X-Accel-Buffering: no\r\n\
-         Access-Control-Allow-Origin: *\r\n\
          \r\n"
     );
     writer.write_all(head.as_bytes())
@@ -1543,6 +1588,35 @@ mod tests {
         assert_eq!(estimate_input_tokens(&body), 2); // 8 chars / 4
         let empty = json!({ "messages": [] });
         assert_eq!(estimate_input_tokens(&empty), 1); // floored to 1
+    }
+
+    #[test]
+    fn proxy_auth_accepts_local_token_headers_only() {
+        let expected = "local-token-123";
+        let local = Header::from_bytes(PROXY_AUTH_HEADER.as_bytes(), expected.as_bytes()).unwrap();
+        let x_api_key = Header::from_bytes(&b"x-api-key"[..], expected.as_bytes()).unwrap();
+        let auth = Header::from_bytes(
+            &b"Authorization"[..],
+            format!("Bearer {expected}").as_bytes(),
+        )
+        .unwrap();
+        let wrong = Header::from_bytes(&b"x-api-key"[..], &b"wrong"[..]).unwrap();
+
+        assert!(proxy_auth_headers_match(&[local], expected));
+        assert!(proxy_auth_headers_match(&[x_api_key], expected));
+        assert!(proxy_auth_headers_match(&[auth], expected));
+        assert!(!proxy_auth_headers_match(&[wrong], expected));
+        assert!(!proxy_auth_headers_match(&[], expected));
+    }
+
+    #[test]
+    fn stream_head_does_not_allow_wildcard_cors() {
+        let mut out = Vec::new();
+        write_stream_head(&mut out, 200, "text/event-stream").unwrap();
+        let head = String::from_utf8(out).unwrap();
+
+        assert!(!head.contains("Access-Control-Allow-Origin"));
+        assert!(!head.contains("Access-Control-Allow-Headers"));
     }
 
     #[test]

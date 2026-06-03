@@ -134,6 +134,7 @@ describe('channel catalog', () => {
 
 describe('freeChannelGatewayProviders', () => {
   it('builds a CLI claude-code provider per channel pointed at the local proxy', () => {
+    window.localStorage.setItem('fuc_free_proxy_token_v1', 'local-token-123');
     const providers = freeChannelGatewayProviders();
     expect(providers).toHaveLength(FREE_CHANNELS.length);
     for (const provider of providers) {
@@ -141,6 +142,7 @@ describe('freeChannelGatewayProviders', () => {
       expect(provider.adapter).toBe('claude-code');
       const channel = provider.channels[0];
       expect(channel.route.transport).toBe('cli');
+      expect(channel.apiKey).toBe('local-token-123');
       const id = provider.id.slice(FREE_CHANNEL_PROVIDER_PREFIX.length);
       expect(channel.route.baseUrl).toContain(`/ch/${id}`);
       expect(channel.route.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/ch\//);

@@ -52,6 +52,8 @@ import {
 } from '@/lib/modelSpeed';
 import {
   appendStartUserInputs,
+  readStartUserInputs,
+  setStartUserInputs,
   setGenerationProvenance,
   type GenProvenance,
 } from '@/core/startInputs';
@@ -2497,10 +2499,7 @@ function renameWorkflowInLiveChannels(
   const aiEdit = getAiEditChannel(workspaceId, sessionId);
   if (aiEdit) {
     aiEdit.workflow = workflowWithName(aiEdit.workflow, name);
-    aiEditSnapshots.set(aiEdit.key, {
-      ...aiEdit,
-      messages: [...aiEdit.messages],
-    });
+    rememberAiEditSnapshot(aiEdit);
     workflow = aiEdit.workflow;
   } else {
     const snapshot = getAiEditSnapshot(workspaceId, sessionId);
@@ -2932,8 +2931,14 @@ export const useStore = create<StoreState>((set) => ({
     const activeSession = sessionForKey(state, aiEditingSession);
     const workflowSession =
       activeSession?.isWorkflow ?? promptUpdate.workflow.meta?.simple !== true;
+    const chSessionKey = runKey(
+      aiEditingSession.workspaceId,
+      aiEditingSession.sessionId,
+    );
+    const chatMode = promptUpdate.workflow.meta?.simple === true;
     const ch: AiEditChannel = {
-      key: runKey(aiEditingSession.workspaceId, aiEditingSession.sessionId),
+      key: chatMode ? chatTurnKey(chSessionKey, userMsg.id) : chSessionKey,
+      sessionKey: chSessionKey,
       workspaceId: aiEditingSession.workspaceId,
       sessionId: aiEditingSession.sessionId,
       workflow: promptUpdate.workflow,
@@ -2941,7 +2946,9 @@ export const useStore = create<StoreState>((set) => ({
       cliRunIds: new Set<string>(),
       abortController: new AbortController(),
       workflowSession,
-      ...(promptUpdate.workflow.meta?.simple === true ? { chat: true } : {}),
+      ...(chatMode
+        ? { chat: true, ownedMessageIds: new Set<string>([userMsg.id]) }
+        : {}),
     };
     addAiEditChannel(ch);
     if (aiEditViewActive(ch)) {
@@ -2985,6 +2992,7 @@ export const useStore = create<StoreState>((set) => ({
         text: txt,
         createdAt: Date.now(),
       };
+      ch.ownedMessageIds?.add(msg.id);
       ch.messages = [...ch.messages, msg];
       aiEditCommitMessages(ch, true);
     };
@@ -3117,6 +3125,7 @@ export const useStore = create<StoreState>((set) => ({
     const newBubble = (initial: string) => {
       const id = shortId('m');
       activeId = id;
+      ch.ownedMessageIds?.add(id);
       ch.messages = [
         ...ch.messages,
         { id, role: 'assistant', text: initial, createdAt: Date.now() },
@@ -4507,6 +4516,7 @@ const activeRuns = new Map<string, RunChannel>();
 
 interface AiEditChannel {
   key: string;
+  sessionKey: string;
   workspaceId: string | null;
   sessionId: string | null;
   workflow: IRGraph;
@@ -4523,12 +4533,18 @@ interface AiEditChannel {
    * read-only. See sendPrompt's simpleMode branch.
    */
   chat?: boolean;
+  /** Message ids created by this chat turn; used to merge concurrent replies. */
+  ownedMessageIds?: Set<string>;
 }
 const activeAiEdits = new Map<string, AiEditChannel>();
 const aiEditSnapshots = new Map<string, AiEditChannel>();
 
 function runKey(workspaceId: string | null, sessionId: string | null): string {
   return workflowSessionKeyId({ workspaceId, sessionId });
+}
+
+function chatTurnKey(sessionKey: string, messageId: string): string {
+  return `${sessionKey}::chat::${messageId}`;
 }
 
 function getRunChannel(workspaceId: string | null, sessionId: string | null): RunChannel | null {
@@ -4547,14 +4563,58 @@ function getAiEditChannel(
   workspaceId: string | null,
   sessionId: string | null,
 ): AiEditChannel | null {
-  return activeAiEdits.get(runKey(workspaceId, sessionId)) ?? null;
+  const key = runKey(workspaceId, sessionId);
+  return (
+    activeAiEdits.get(key) ??
+    getAiEditChannelsForSession(workspaceId, sessionId).find((ch) => !ch.chat) ??
+    null
+  );
 }
 
 function getAiEditSnapshot(
   workspaceId: string | null,
   sessionId: string | null,
 ): AiEditChannel | null {
-  return aiEditSnapshots.get(runKey(workspaceId, sessionId)) ?? null;
+  const key = runKey(workspaceId, sessionId);
+  const exact = aiEditSnapshots.get(key);
+  if (exact) return exact;
+  const snapshots = getAiEditSnapshotsForSession(workspaceId, sessionId);
+  return snapshots[snapshots.length - 1] ?? null;
+}
+
+function channelMatchesSession(
+  ch: Pick<AiEditChannel, 'sessionKey' | 'workspaceId' | 'sessionId'>,
+  workspaceId: string | null,
+  sessionId: string | null,
+): boolean {
+  return ch.sessionKey === runKey(workspaceId, sessionId);
+}
+
+function getAiEditChannelsForSession(
+  workspaceId: string | null,
+  sessionId: string | null,
+): AiEditChannel[] {
+  return [...activeAiEdits.values()].filter((ch) =>
+    channelMatchesSession(ch, workspaceId, sessionId),
+  );
+}
+
+function getAiEditChatChannels(
+  workspaceId: string | null,
+  sessionId: string | null,
+): AiEditChannel[] {
+  return getAiEditChannelsForSession(workspaceId, sessionId).filter(
+    (ch) => ch.chat,
+  );
+}
+
+function getAiEditSnapshotsForSession(
+  workspaceId: string | null,
+  sessionId: string | null,
+): AiEditChannel[] {
+  return [...aiEditSnapshots.values()].filter((ch) =>
+    channelMatchesSession(ch, workspaceId, sessionId),
+  );
 }
 
 function activeRunChannels(): RunChannel[] {
@@ -4601,12 +4661,12 @@ function syncAiEditingSessions(): void {
   // (simple-workflow turns) do not — they surface separately so consecutive
   // chat messages aren't blocked by the read-only gate. Both keep aiStreaming
   // truthy so the composer reflects "busy".
-  const aiEditingSessions = channels
-    .filter((ch) => !ch.chat)
-    .map((ch) => ({ workspaceId: ch.workspaceId, sessionId: ch.sessionId }));
-  const chattingSessions = channels
-    .filter((ch) => ch.chat)
-    .map((ch) => ({ workspaceId: ch.workspaceId, sessionId: ch.sessionId }));
+  const aiEditingSessions = uniqueAiEditSessions(
+    channels.filter((ch) => !ch.chat),
+  );
+  const chattingSessions = uniqueAiEditSessions(
+    channels.filter((ch) => ch.chat),
+  );
   useStore.setState({
     aiEditingSessions,
     chattingSessions,
@@ -4616,6 +4676,17 @@ function syncAiEditingSessions(): void {
 
 function syncRunningSessionProgress(): void {
   useStore.setState({ runningSessionProgress: runningSessionProgressByKey() });
+}
+
+function uniqueAiEditSessions(channels: AiEditChannel[]): WorkflowSessionKey[] {
+  const seen = new Set<string>();
+  const out: WorkflowSessionKey[] = [];
+  for (const ch of channels) {
+    if (seen.has(ch.sessionKey)) continue;
+    seen.add(ch.sessionKey);
+    out.push({ workspaceId: ch.workspaceId, sessionId: ch.sessionId });
+  }
+  return out;
 }
 
 function aiEditRegistered(ch: AiEditChannel | null): ch is AiEditChannel {
@@ -4635,13 +4706,13 @@ function aiEditViewActive(ch: AiEditChannel | null): boolean {
 
 function addAiEditChannel(ch: AiEditChannel): void {
   activeAiEdits.set(ch.key, ch);
-  aiEditSnapshots.set(ch.key, { ...ch, messages: [...ch.messages] });
+  rememberAiEditSnapshot(ch);
   syncAiEditingSessions();
 }
 
 function removeAiEditChannel(ch: AiEditChannel | null): void {
   if (!aiEditRegistered(ch)) return;
-  aiEditSnapshots.set(ch.key, { ...ch, messages: [...ch.messages] });
+  rememberAiEditSnapshot(ch);
   activeAiEdits.delete(ch.key);
   syncAiEditingSessions();
 }
@@ -4649,23 +4720,30 @@ function removeAiEditChannel(ch: AiEditChannel | null): void {
 function stopActiveChat(): void {
   const state = useStore.getState();
   const key = activeWorkflowSessionKey(state);
-  const ch = getAiEditChannel(key.workspaceId, key.sessionId);
-  if (!ch?.chat) return;
+  const channels = getAiEditChatChannels(key.workspaceId, key.sessionId);
+  if (channels.length === 0) return;
 
   const stoppedAt = Date.now();
-  ch.abortController.abort();
-  void cancelActiveAiEditRuns(ch);
+  for (const ch of channels) {
+    ch.abortController.abort();
+    void cancelActiveAiEditRuns(ch);
+  }
+  const ch = channels[0];
+  const stoppedMsg: Message = {
+    id: shortId('m'),
+    role: 'assistant',
+    text: `⏹ 会话已中断 · ${formatClock(stoppedAt)}。`,
+    createdAt: stoppedAt,
+  };
+  ch.ownedMessageIds?.add(stoppedMsg.id);
   ch.messages = [
     ...ch.messages,
-    {
-      id: shortId('m'),
-      role: 'assistant',
-      text: `⏹ 会话已中断 · ${formatClock(stoppedAt)}。`,
-      createdAt: stoppedAt,
-    },
+    stoppedMsg,
   ];
   aiEditCommitMessages(ch, true);
-  removeAiEditChannel(ch);
+  for (const item of channels) {
+    removeAiEditChannel(item);
+  }
 }
 
 /** Is a run alive? (false once the user hits 停止, or the channel is gone.) */
@@ -4787,6 +4865,75 @@ function channelCommitMessages(ch: RunChannel | null, persist: boolean): void {
   }
 }
 
+function cloneAiEditSnapshot(ch: AiEditChannel): AiEditChannel {
+  return {
+    ...ch,
+    messages: [...ch.messages],
+    cliRunIds: new Set(ch.cliRunIds),
+    ownedMessageIds: ch.ownedMessageIds
+      ? new Set(ch.ownedMessageIds)
+      : undefined,
+  };
+}
+
+function rememberAiEditSnapshot(ch: AiEditChannel): void {
+  aiEditSnapshots.set(ch.key, cloneAiEditSnapshot(ch));
+}
+
+function aiEditOwnedMessages(ch: AiEditChannel): Message[] {
+  if (!ch.chat || !ch.ownedMessageIds) return ch.messages;
+  return ch.messages.filter((message) => ch.ownedMessageIds?.has(message.id));
+}
+
+function mergeMessagesById(base: Message[], updates: Message[]): Message[] {
+  if (updates.length === 0) return base;
+  const byId = new Map(updates.map((message) => [message.id, message]));
+  const merged = base.map((message) => byId.get(message.id) ?? message);
+  const existing = new Set(base.map((message) => message.id));
+  for (const message of updates) {
+    if (!existing.has(message.id)) {
+      merged.push(message);
+      existing.add(message.id);
+    }
+  }
+  return merged;
+}
+
+function aiEditBaseMessages(ch: AiEditChannel): Message[] {
+  if (aiEditViewActive(ch)) return useStore.getState().messages;
+  return getAiEditSnapshot(ch.workspaceId, ch.sessionId)?.messages ?? ch.messages;
+}
+
+function mergeAiEditChatMessages(ch: AiEditChannel): Message[] {
+  if (!ch.chat) return ch.messages;
+  ch.messages = mergeMessagesById(aiEditBaseMessages(ch), aiEditOwnedMessages(ch));
+  return ch.messages;
+}
+
+function startInputsFromWorkflow(workflow: IRGraph): string[] {
+  const startNode = workflow.nodes.find((node) => node.type === 'start');
+  return readStartUserInputs(startNode?.params);
+}
+
+function aiEditBaseWorkflow(ch: AiEditChannel): IRGraph {
+  if (aiEditViewActive(ch)) return useStore.getState().workflow;
+  return getAiEditSnapshot(ch.workspaceId, ch.sessionId)?.workflow ?? ch.workflow;
+}
+
+function chatUserInputsFromMessages(messages: Message[]): string[] {
+  return messages
+    .filter((message) => message.role === 'user' && message.text.trim())
+    .map((message) => message.text);
+}
+
+function mergeAiEditChatWorkflow(ch: AiEditChannel, nextIr: IRGraph): IRGraph {
+  const messages = mergeAiEditChatMessages(ch);
+  return setStartUserInputs(aiEditBaseWorkflow(ch), [
+    ...chatUserInputsFromMessages(messages),
+    ...startInputsFromWorkflow(nextIr),
+  ]);
+}
+
 function updateAiEditSessionSummary(ch: AiEditChannel): void {
   const last = ch.messages[ch.messages.length - 1]?.text ?? '';
   const updatedAt = Date.now();
@@ -4852,9 +4999,10 @@ function persistAiEditWorkflow(ch: AiEditChannel): void {
 
 function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean): void {
   if (!aiEditRegistered(ch)) return;
-  aiEditSnapshots.set(ch.key, { ...ch, messages: [...ch.messages] });
+  const messages = ch.chat ? mergeAiEditChatMessages(ch) : ch.messages;
+  rememberAiEditSnapshot(ch);
   if (aiEditViewActive(ch)) {
-    useStore.setState({ messages: ch.messages });
+    useStore.setState({ messages });
   }
   if (persist) {
     updateAiEditSessionSummary(ch);
@@ -4864,10 +5012,11 @@ function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean): void 
 
 function aiEditCommitWorkflow(ch: AiEditChannel | null, persist: boolean): void {
   if (!aiEditRegistered(ch)) return;
-  aiEditSnapshots.set(ch.key, { ...ch, messages: [...ch.messages] });
+  const messages = ch.chat ? mergeAiEditChatMessages(ch) : ch.messages;
+  rememberAiEditSnapshot(ch);
   if (aiEditViewActive(ch)) {
     useStore.setState({
-      messages: ch.messages,
+      messages,
       workflow: ch.workflow,
       selectedNodeId: null,
       dirty: ch.workflowSession,
@@ -4886,7 +5035,9 @@ function aiEditCommitWorkflow(ch: AiEditChannel | null, persist: boolean): void 
 
 function commitAiChannelBlueprint(ch: AiEditChannel, ir: IRGraph): boolean {
   if (!aiEditActive(ch)) return false;
-  ch.workflow = prepareGraphEdit(ch.workflow, ir);
+  ch.workflow = ch.chat
+    ? mergeAiEditChatWorkflow(ch, ir)
+    : prepareGraphEdit(ch.workflow, ir);
   aiEditCommitWorkflow(ch, true);
   return true;
 }
