@@ -101,11 +101,8 @@ ensure_rust() {
   esac
 }
 
-# The repo pins a Windows MSVC toolchain in app/src-tauri/rust-toolchain.toml
-# (for Windows builds). On macOS/Linux that pin makes cargo fail with
-# "target tuple in channel name 'stable-x86_64-pc-windows-msvc'". We don't edit
-# the repo file; instead we override it for this run with the host's own stable
-# toolchain via RUSTUP_TOOLCHAIN, installing it first if needed.
+# Older checkouts pinned a Windows MSVC toolchain in rust-toolchain.toml. If
+# present, override it on macOS/Linux so cargo uses this host's stable toolchain.
 override_windows_toolchain() {
   local os
   os="$(uname -s)"
@@ -119,7 +116,7 @@ override_windows_toolchain() {
     }
   fi
   export RUSTUP_TOOLCHAIN="stable"
-  c_info "overriding repo's Windows toolchain pin -> RUSTUP_TOOLCHAIN=stable (host)"
+  c_info "overriding Windows toolchain pin -> RUSTUP_TOOLCHAIN=stable (host)"
 }
 
 # Decide whether a rebuild is needed (mirrors needs-rebuild.ps1):
@@ -130,7 +127,9 @@ sources_newer_than_exe() {
   newer="$(find "$APP_DIR/src" "$TAURI_DIR/src" \
               "$APP_DIR/index.html" "$APP_DIR/vite.config.ts" \
               "$APP_DIR/tailwind.config.ts" "$TAURI_DIR/tauri.conf.json" \
-              "$TAURI_DIR/Cargo.toml" \
+              "$TAURI_DIR/tauri.macos.conf.json" "$TAURI_DIR/tauri.linux.conf.json" \
+              "$TAURI_DIR/Cargo.toml" "$TAURI_DIR/rust-toolchain.toml" \
+              "$TAURI_DIR/capabilities/default.json" \
               -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.rs' \
                          -o -name '*.css' -o -name '*.html' -o -name '*.json' \
                          -o -name '*.toml' \) \
@@ -190,9 +189,8 @@ hint_cargo_mirror() {
 }
 
 # Build the native release binary via the official Tauri flow, skipping the
-# bundler. The tauri.conf bundle target is NSIS (Windows-only) and would fail to
-# package on macOS/Linux, so `--no-bundle` compiles just the launchable binary
-# (Tauri still runs beforeBuildCommand `npm run build` to produce the frontend).
+# bundler for speed. `--no-bundle` compiles just the launchable binary (Tauri
+# still runs beforeBuildCommand `npm run build` to produce the frontend).
 # This is the macOS/Linux equivalent of FreeUltraCode.exe on Windows.
 build_native() {
   stop_running_app

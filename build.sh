@@ -3,8 +3,8 @@
 # Mirrors build.bat: check prerequisites -> install deps -> tauri build ->
 # print output paths -> open the output folder.
 #
-# tauri.conf.json pins the Windows-only "nsis" bundle, so on macOS/Linux we
-# pass --bundles per host OS (dmg on macOS, deb+appimage on Linux).
+# On macOS/Linux we pass --bundles per host OS (dmg on macOS,
+# deb+appimage on Linux) so the output is deterministic.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,7 +47,7 @@ case "$OS" in
     *) c_err "unsupported OS: $OS (use build.bat on Windows)"; pause; exit 1 ;;
 esac
 
-# ---- override repo's Windows toolchain pin so cargo uses host stable ----
+# ---- override older Windows toolchain pins so cargo uses host stable ----
 if grep -q 'pc-windows' "$TAURI_DIR/rust-toolchain.toml" 2>/dev/null; then
     if command -v rustup >/dev/null 2>&1; then
         rustup toolchain list 2>/dev/null | grep -q '^stable' || \

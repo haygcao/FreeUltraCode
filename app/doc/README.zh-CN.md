@@ -120,7 +120,14 @@ cd app
 npm run package
 ```
 
-在仓库根目录下，也可以使用 `run.bat` 自动重建并启动 Windows 应用，或使用 `build.bat` 打包 Windows 安装器。
+在仓库根目录下，也可以使用平台脚本：
+
+```bash
+./run.sh        # macOS/Linux：必要时重建，然后启动
+./package.sh    # macOS/Linux：打包原生安装包（macOS 产出 .dmg）
+run.bat         # Windows：必要时重建，然后启动
+build.bat       # Windows：打包 NSIS 安装器
+```
 
 ## 使用方式
 

@@ -167,7 +167,14 @@ cd app
 npm run package
 ```
 
-From the repository root, `run.bat` rebuilds when needed and launches the Windows app. `build.bat` packages the Windows installer.
+From the repository root:
+
+```bash
+./run.sh        # macOS/Linux: rebuild if needed, then launch
+./package.sh    # macOS/Linux: build native bundles (.dmg on macOS)
+run.bat         # Windows: rebuild if needed, then launch
+build.bat       # Windows: package the NSIS installer
+```
 
 ## Basic Usage
 

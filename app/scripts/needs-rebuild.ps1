@@ -15,7 +15,11 @@ $cfgPaths = @(
   "$Root\app\vite.config.ts",
   "$Root\app\tailwind.config.ts",
   "$Root\app\src-tauri\tauri.conf.json",
-  "$Root\app\src-tauri\Cargo.toml"
+  "$Root\app\src-tauri\tauri.macos.conf.json",
+  "$Root\app\src-tauri\tauri.linux.conf.json",
+  "$Root\app\src-tauri\Cargo.toml",
+  "$Root\app\src-tauri\rust-toolchain.toml",
+  "$Root\app\src-tauri\capabilities\default.json"
 ) | Where-Object { Test-Path $_ }
 $cfg = @()
 if ($cfgPaths.Count -gt 0) { $cfg = Get-ChildItem -File $cfgPaths -ErrorAction SilentlyContinue }

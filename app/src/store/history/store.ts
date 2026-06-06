@@ -4,6 +4,11 @@ import { FUC_STORAGE_KEY } from '@/lib/persist';
 import { tauriAvailable } from '@/lib/tauri';
 import type { Message } from '@/store/types';
 import {
+  deriveWorkspaceId,
+  normalizeWorkspaceIdentityPath,
+  workspaceLeafName,
+} from './paths';
+import {
   HISTORY_SCHEMA_VERSION,
   UNASSIGNED_WORKSPACE_ID,
   type HistoryConfig,
@@ -162,41 +167,19 @@ function randomId(): string {
 }
 
 function normalizePath(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return '';
-  const slashed = trimmed.replace(/\//g, '\\').replace(/\\+/g, '\\');
-  const withoutTrailing = slashed.replace(/\\+$/, '');
-  return withoutTrailing.replace(/^([A-Z]):/, (m) => m.toLowerCase());
-}
-
-async function sha1Hex(text: string): Promise<string> {
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const bytes = new TextEncoder().encode(text);
-    const digest = await crypto.subtle.digest('SHA-1', bytes);
-    return Array.from(new Uint8Array(digest))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-  }
-
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return Math.abs(h).toString(16).padStart(16, '0');
+  return normalizeWorkspaceIdentityPath(input);
 }
 
 async function workspaceIdForPath(path: string): Promise<string> {
   const normalized = normalizePath(path);
   if (!normalized) return UNASSIGNED_WORKSPACE_ID;
-  return (await sha1Hex(normalized)).slice(0, 16);
+  return deriveWorkspaceId(normalized);
 }
 
 function workspaceName(path: string): string {
   const normalized = normalizePath(path);
   if (!normalized) return '未指定工作区';
-  const parts = normalized.split('\\').filter(Boolean);
-  return parts[parts.length - 1] || normalized || '未指定工作区';
+  return workspaceLeafName(normalized) || '未指定工作区';
 }
 
 function workspaceMetaPath(id: string): string {

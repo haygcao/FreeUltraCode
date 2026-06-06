@@ -1,5 +1,5 @@
-# Pin FreeUltraCode' Rust build to the MSVC toolchain.
-# The GNU toolchain needs MinGW (dlltool.exe), which is not installed on this
-# machine; MSVC uses the already-installed Visual Studio 2022 Build Tools.
+# Use the host platform's stable Rust toolchain.
+# Windows builders that need a specific MSVC host can still run:
+#   rustup default stable-x86_64-pc-windows-msvc
 [toolchain]
-channel = "stable-x86_64-pc-windows-msvc"
+channel = "stable"

@@ -1,5 +1,5 @@
-/** Canonical filesystem root for FreeUltraCode history data. */
-export const HISTORY_ROOT_DIR = 'C:\\Users\\FW\\.worktree';
+/** Display fallback for the FreeUltraCode history root; Tauri resolves the real path. */
+export const HISTORY_ROOT_DIR = '~/.worktree';
 
 /** Alias used by code that talks about the physical worktree root. */
 export const WORKTREE_ROOT_DIR = HISTORY_ROOT_DIR;

@@ -32,6 +32,16 @@ interface ParsedWindowsPath {
   segments: string[];
 }
 
+interface ParsedPosixPath {
+  kind: 'absolute' | 'home' | 'relative';
+  prefix: string;
+  segments: string[];
+}
+
+type ParsedWorkspacePath =
+  | (ParsedWindowsPath & { family: 'windows' })
+  | (ParsedPosixPath & { family: 'posix' });
+
 function normalizePathSegments(segments: string[]): string[] {
   const normalized: string[] = [];
 
@@ -92,6 +102,60 @@ function joinParsedPath(parsed: ParsedWindowsPath): string {
   return parsed.prefix.endsWith('\\')
     ? `${parsed.prefix}${tail}`
     : `${parsed.prefix}\\${tail}`;
+}
+
+function parsePosixPath(input: string): ParsedPosixPath {
+  const slashed = input.trim().replace(/\\/g, '/');
+  if (!slashed) {
+    return { kind: 'relative', prefix: '', segments: [] };
+  }
+
+  if (slashed === '~' || slashed.startsWith('~/')) {
+    return {
+      kind: 'home',
+      prefix: '~',
+      segments: normalizePathSegments(slashed.slice(2).split('/')),
+    };
+  }
+
+  if (slashed.startsWith('/')) {
+    return {
+      kind: 'absolute',
+      prefix: '/',
+      segments: normalizePathSegments(slashed.split('/')),
+    };
+  }
+
+  return {
+    kind: 'relative',
+    prefix: '',
+    segments: normalizePathSegments(slashed.split('/')),
+  };
+}
+
+function joinParsedPosixPath(parsed: ParsedPosixPath): string {
+  const tail = parsed.segments.join('/');
+  if (parsed.prefix === '/') return tail ? `/${tail}` : '/';
+  if (parsed.prefix === '~') return tail ? `~/${tail}` : '~';
+  return tail;
+}
+
+function parseWorkspacePath(input: string): ParsedWorkspacePath {
+  const trimmed = input.trim();
+  if (
+    /^([a-zA-Z]):/u.test(trimmed) ||
+    trimmed.startsWith('\\\\') ||
+    trimmed.includes('\\')
+  ) {
+    return { family: 'windows', ...parseWindowsPath(trimmed) };
+  }
+  return { family: 'posix', ...parsePosixPath(trimmed) };
+}
+
+function joinParsedWorkspacePath(parsed: ParsedWorkspacePath): string {
+  return parsed.family === 'windows'
+    ? joinParsedPath(parsed)
+    : joinParsedPosixPath(parsed);
 }
 
 function leftRotate(value: number, bits: number): number {
@@ -191,11 +255,15 @@ export async function sha1Hex(input: string): Promise<string> {
 }
 
 export function normalizeWorkspaceIdentityPath(input: string): string {
-  return joinParsedPath(parseWindowsPath(input));
+  return joinParsedWorkspacePath(parseWorkspacePath(input));
 }
 
 export function workspaceIdentityHashInput(input: string): string {
-  return normalizeWorkspaceIdentityPath(input).toLocaleLowerCase('en-US');
+  const parsed = parseWorkspacePath(input);
+  const normalized = joinParsedWorkspacePath(parsed);
+  return parsed.family === 'windows'
+    ? normalized.toLocaleLowerCase('en-US')
+    : normalized;
 }
 
 /** Legacy deterministic id helper for records imported from path-keyed storage. */
@@ -256,11 +324,14 @@ export function isMigrationSessionId(value: string): boolean {
 }
 
 export function workspaceLeafName(input: string): string {
-  const parsed = parseWindowsPath(input);
+  const parsed = parseWorkspacePath(input);
   const lastSegment = parsed.segments[parsed.segments.length - 1];
   if (lastSegment) return lastSegment;
-  if (parsed.kind === 'unc' && parsed.uncShare) return parsed.uncShare;
-  if (parsed.kind === 'drive' && parsed.drive) return parsed.drive;
+  if (parsed.family === 'windows') {
+    if (parsed.kind === 'unc' && parsed.uncShare) return parsed.uncShare;
+    if (parsed.kind === 'drive' && parsed.drive) return parsed.drive;
+  }
+  if (parsed.family === 'posix' && parsed.kind === 'home') return '~';
   return DEFAULT_WORKSPACE_NAME;
 }
 

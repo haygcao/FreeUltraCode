@@ -54,6 +54,37 @@ fn hide_console(cmd: &mut Command) {
     }
 }
 
+fn resolve_spawn_program(program: &str) -> String {
+    let trimmed = program.trim();
+    if trimmed.is_empty() {
+        return program.to_string();
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || Path::new(trimmed).is_absolute() {
+        return trimmed.to_string();
+    }
+    cli_runtime::resolve_command_path(trimmed)
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
+fn prepare_command_for_spawn(cmd: &mut Command) {
+    hide_console(cmd);
+    if let Some(path) = cli_runtime::augmented_path_var() {
+        cmd.env("PATH", path);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+}
+
+fn new_spawn_command(program: &str) -> Command {
+    let mut cmd = Command::new(resolve_spawn_program(program));
+    prepare_command_for_spawn(&mut cmd);
+    cmd
+}
+
 fn terminate_process_tree(pid: u32) -> bool {
     #[cfg(windows)]
     {
@@ -72,6 +103,18 @@ fn terminate_process_tree(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
+        let group_pid = format!("-{pid}");
+        let killed_group = Command::new("kill")
+            .arg("-TERM")
+            .arg(&group_pid)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if killed_group {
+            return true;
+        }
         return Command::new("kill")
             .arg("-TERM")
             .arg(pid.to_string())
@@ -83,7 +126,7 @@ fn terminate_process_tree(pid: u32) -> bool {
     }
 }
 
-/// Terminate a spawned CLI and, on Windows, its wrapper descendants too.
+/// Terminate a spawned CLI and its wrapper descendants where the OS supports it.
 fn terminate_child_tree(child: &mut Child) {
     if !terminate_process_tree(child.id()) {
         let _ = child.kill();
@@ -168,6 +211,7 @@ const FREE_CHANNEL_ENV_MAPPINGS: &[(&str, &[&str])] = &[
     ),
 ];
 
+#[cfg(target_os = "windows")]
 const LOCAL_MODEL_SETUP_PS1: &str = include_str!("../../scripts/setup-local-model.ps1");
 const LOCAL_MODEL_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const REMOTE_MODEL_LIST_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
@@ -1670,16 +1714,13 @@ fn spawn_cli_command(binary: &str) -> Command {
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_ascii_lowercase());
         if matches!(ext.as_deref(), Some("cmd" | "bat")) {
-            let mut cmd = Command::new("cmd");
-            hide_console(&mut cmd);
+            let mut cmd = new_spawn_command("cmd");
             cmd.arg("/C").arg(binary);
             return cmd;
         }
     }
 
-    let mut cmd = Command::new(binary);
-    hide_console(&mut cmd);
-    cmd
+    new_spawn_command(binary)
 }
 
 /// Optional launch shell that wraps an AI CLI invocation (see `shellConfig.ts`).
@@ -1718,8 +1759,7 @@ fn build_launch_command(binary: &str, args: &[String], shell: &Option<ShellSpec>
     let kind = shell.as_ref().map(|s| s.kind.as_str()).unwrap_or("direct");
     match kind {
         "cmd" => {
-            let mut cmd = Command::new("cmd");
-            hide_console(&mut cmd);
+            let mut cmd = new_spawn_command("cmd");
             cmd.arg("/C").arg(binary);
             for a in args {
                 cmd.arg(a);
@@ -1752,8 +1792,7 @@ fn build_launch_command(binary: &str, args: &[String], shell: &Option<ShellSpec>
                     {
                         powershell_command(path, binary, args)
                     } else if lower.ends_with("cmd.exe") || lower.ends_with("cmd") {
-                        let mut cmd = Command::new(path);
-                        hide_console(&mut cmd);
+                        let mut cmd = new_spawn_command(path);
                         cmd.arg("/C").arg(binary);
                         for a in args {
                             cmd.arg(a);
@@ -1761,8 +1800,7 @@ fn build_launch_command(binary: &str, args: &[String], shell: &Option<ShellSpec>
                         cmd
                     } else {
                         // Treat as a POSIX login shell: pass argv natively.
-                        let mut cmd = Command::new(path);
-                        hide_console(&mut cmd);
+                        let mut cmd = new_spawn_command(path);
                         cmd.arg("-lc")
                             .arg(r#"exec "$@""#)
                             .arg("fuc-shell")
@@ -1780,8 +1818,7 @@ fn build_launch_command(binary: &str, args: &[String], shell: &Option<ShellSpec>
 }
 
 fn powershell_command(exe: &str, binary: &str, args: &[String]) -> Command {
-    let mut cmd = Command::new(exe);
-    hide_console(&mut cmd);
+    let mut cmd = new_spawn_command(exe);
     let mut script = String::from("& ");
     script.push_str(&ps_quote(binary));
     for a in args {
@@ -1822,23 +1859,22 @@ fn open_external_blocking(url: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     let mut cmd = {
-        let mut c = Command::new("cmd");
+        let mut c = new_spawn_command("cmd");
         c.args(["/C", "start", "", u]);
         c
     };
     #[cfg(target_os = "macos")]
     let mut cmd = {
-        let mut c = Command::new("open");
+        let mut c = new_spawn_command("open");
         c.arg(u);
         c
     };
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut cmd = {
-        let mut c = Command::new("xdg-open");
+        let mut c = new_spawn_command("xdg-open");
         c.arg(u);
         c
     };
-    hide_console(&mut cmd);
     cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -2307,11 +2343,60 @@ fn fallback_local_model_hardware() -> LocalModelHardware {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn local_model_hardware_unix(fallback: &LocalModelHardware) -> LocalModelHardware {
+    fn sysctl_number(name: &str) -> Option<u64> {
+        let output = new_spawn_command("sysctl").arg("-n").arg(name).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u64>()
+            .ok()
+    }
+
+    LocalModelHardware {
+        ram_gb: sysctl_number("hw.memsize").map(|bytes| {
+            let gb = bytes as f64 / 1024.0 / 1024.0 / 1024.0;
+            (gb * 10.0).round() / 10.0
+        }),
+        cpu_threads: sysctl_number("hw.logicalcpu")
+            .map(|value| value as u32)
+            .or(fallback.cpu_threads),
+        gpu_vram_gb: None,
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn local_model_hardware_unix(fallback: &LocalModelHardware) -> LocalModelHardware {
+    let ram_gb = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let value = line.strip_prefix("MemTotal:")?.trim();
+                let kb = value.split_whitespace().next()?.parse::<f64>().ok()?;
+                Some(((kb / 1024.0 / 1024.0) * 10.0).round() / 10.0)
+            })
+        });
+
+    LocalModelHardware {
+        ram_gb,
+        cpu_threads: fallback.cpu_threads,
+        gpu_vram_gb: None,
+    }
+}
+
+#[cfg(unix)]
 fn local_model_hardware_blocking() -> LocalModelHardware {
     let fallback = fallback_local_model_hardware();
-    #[cfg(target_os = "windows")]
-    {
-        let script = r#"
+    local_model_hardware_unix(&fallback)
+}
+
+#[cfg(target_os = "windows")]
+fn local_model_hardware_blocking() -> LocalModelHardware {
+    let fallback = fallback_local_model_hardware();
+    let script = r#"
 $ErrorActionPreference = 'SilentlyContinue'
 $ramGb = $null
 $cpuThreads = [Environment]::ProcessorCount
@@ -2324,23 +2409,21 @@ $gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 
 if ($gpu.Maximum) { $gpuVramGb = [math]::Round($gpu.Maximum / 1GB, 1) }
 [pscustomobject]@{ ramGb = $ramGb; cpuThreads = $cpuThreads; gpuVramGb = $gpuVramGb } | ConvertTo-Json -Compress
 "#;
-        let mut cmd = Command::new("powershell");
-        hide_console(&mut cmd);
-        let output = cmd.arg("-NoProfile").arg("-Command").arg(script).output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    let cpu_threads = value
-                        .get("cpuThreads")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32)
-                        .or(fallback.cpu_threads);
-                    return LocalModelHardware {
-                        ram_gb: value.get("ramGb").and_then(|v| v.as_f64()),
-                        cpu_threads,
-                        gpu_vram_gb: value.get("gpuVramGb").and_then(|v| v.as_f64()),
-                    };
-                }
+    let mut cmd = new_spawn_command("powershell");
+    let output = cmd.arg("-NoProfile").arg("-Command").arg(script).output();
+    if let Ok(output) = output {
+        if output.status.success() {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                let cpu_threads = value
+                    .get("cpuThreads")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .or(fallback.cpu_threads);
+                return LocalModelHardware {
+                    ram_gb: value.get("ramGb").and_then(|v| v.as_f64()),
+                    cpu_threads,
+                    gpu_vram_gb: value.get("gpuVramGb").and_then(|v| v.as_f64()),
+                };
             }
         }
     }
@@ -2723,15 +2806,31 @@ fn validate_ollama_model_id(model: &str) -> Result<String, String> {
 }
 
 fn setup_local_model_blocking(model: String) -> Result<(), String> {
-    if !cfg!(target_os = "windows") {
-        return Err("本地模型一键配置目前只支持 Windows + Ollama。".to_string());
-    }
     let model = validate_ollama_model_id(&model)?;
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        new_spawn_command("ollama")
+            .arg("pull")
+            .arg(&model)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                format!("无法启动 ollama pull，请先安装 Ollama 并确认 ollama 在 PATH 中。({e})")
+            })?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
     let script_path = std::env::temp_dir().join("freeultracode-setup-local-model.ps1");
     std::fs::write(&script_path, LOCAL_MODEL_SETUP_PS1.as_bytes())
         .map_err(|e| format!("写入本地模型安装脚本失败: {e}"))?;
 
-    Command::new("powershell")
+    let mut cmd = new_spawn_command("powershell");
+    cmd
         .arg("-NoProfile")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
@@ -2744,6 +2843,7 @@ fn setup_local_model_blocking(model: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("启动本地模型安装脚本失败: {e}"))?;
     Ok(())
+    }
 }
 
 #[tauri::command]
@@ -3027,8 +3127,7 @@ async fn run_ultracode(
         args.push("--run-id".to_string());
         args.push(run_id.clone());
 
-        let mut cmd = Command::new("node");
-        hide_console(&mut cmd);
+        let mut cmd = new_spawn_command("node");
         cmd.args(&args)
             .current_dir(&workdir)
             .stdin(Stdio::null())

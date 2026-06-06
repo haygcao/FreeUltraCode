@@ -14,9 +14,8 @@
 #   ./package.sh --help     show this help
 #
 # Building requires Rust/cargo (https://rustup.rs); the script can install it for
-# you on first run. tauri.conf.json pins the Windows-only "nsis" target, so this
-# script overrides --bundles per host OS to produce the formats that actually
-# package on macOS/Linux.
+# you on first run. The script still passes --bundles explicitly so each host
+# produces the native formats expected for that OS.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,8 +75,8 @@ if [ "$MODE" = "clean" ]; then
 fi
 
 # ---- pick the Tauri bundle targets for this run ----
-# Tauri's --bundles takes a comma-separated list. We choose per host OS so the
-# repo's Windows-only "nsis" pin doesn't break macOS/Linux packaging.
+# Tauri's --bundles takes a comma-separated list. We choose per host OS so
+# explicit modes and CI logs stay deterministic across hosts.
 choose_targets() {
   if [ -n "$EXPLICIT_TARGET" ]; then
     BUNDLES="$EXPLICIT_TARGET"
@@ -155,10 +154,8 @@ ensure_rust() {
   esac
 }
 
-# The repo pins a Windows MSVC toolchain in app/src-tauri/rust-toolchain.toml.
-# On macOS/Linux that pin makes cargo fail with a windows-msvc target error, so
-# we override it for this run with the host's own stable toolchain (same trick
-# run.sh uses). We never edit the repo file.
+# Older checkouts pinned a Windows MSVC toolchain in rust-toolchain.toml. If
+# present, override it on macOS/Linux so cargo uses this host's stable toolchain.
 override_windows_toolchain() {
   [ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ] || return 0
   grep -q 'pc-windows' "$TAURI_DIR/rust-toolchain.toml" 2>/dev/null || return 0
@@ -169,7 +166,7 @@ override_windows_toolchain() {
     }
   fi
   export RUSTUP_TOOLCHAIN="stable"
-  c_info "overriding repo's Windows toolchain pin -> RUSTUP_TOOLCHAIN=stable (host)"
+  c_info "overriding Windows toolchain pin -> RUSTUP_TOOLCHAIN=stable (host)"
 }
 
 # Heads-up about slow first-time crate downloads. Advice only — we never touch

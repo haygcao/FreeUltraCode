@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::Read;
 #[cfg(unix)]
@@ -116,6 +116,91 @@ pub fn platform() -> CliPlatform {
     }
 }
 
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+}
+
+fn push_path_dir(out: &mut Vec<PathBuf>, seen: &mut Vec<String>, path: PathBuf) {
+    let key = path.to_string_lossy().to_string();
+    if key.trim().is_empty() || seen.iter().any(|existing| existing == &key) {
+        return;
+    }
+    seen.push(key);
+    out.push(path);
+}
+
+fn common_path_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut seen = Vec::new();
+
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            push_path_dir(&mut out, &mut seen, dir);
+        }
+    }
+
+    if let Some(home) = home_dir() {
+        #[cfg(windows)]
+        {
+            if let Some(appdata) = std::env::var_os("APPDATA") {
+                push_path_dir(&mut out, &mut seen, PathBuf::from(appdata).join("npm"));
+            }
+            push_path_dir(&mut out, &mut seen, home.join(".cargo").join("bin"));
+            push_path_dir(&mut out, &mut seen, home.join(".bun").join("bin"));
+        }
+
+        #[cfg(not(windows))]
+        {
+            push_path_dir(&mut out, &mut seen, home.join(".cargo").join("bin"));
+            push_path_dir(&mut out, &mut seen, home.join(".bun").join("bin"));
+            push_path_dir(&mut out, &mut seen, home.join(".deno").join("bin"));
+            push_path_dir(&mut out, &mut seen, home.join(".local").join("bin"));
+            push_path_dir(&mut out, &mut seen, home.join(".npm-global").join("bin"));
+            push_path_dir(&mut out, &mut seen, home.join(".volta").join("bin"));
+            push_path_dir(&mut out, &mut seen, home.join("Library").join("pnpm"));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        for dir in [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ] {
+            push_path_dir(&mut out, &mut seen, PathBuf::from(dir));
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        for dir in [
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+            "/snap/bin",
+        ] {
+            push_path_dir(&mut out, &mut seen, PathBuf::from(dir));
+        }
+    }
+
+    out
+}
+
+pub fn augmented_path_var() -> Option<OsString> {
+    std::env::join_paths(common_path_dirs()).ok()
+}
+
 pub fn scan_model_clis() -> CliScanResult {
     let platform = platform();
     let scanned_at_ms = now_ms();
@@ -177,7 +262,8 @@ fn resolve_spec_candidate(
 ) -> Result<CliScanCandidate, String> {
     for command in spec.commands {
         if let Some(path) =
-            resolve_command(command).and_then(|candidate| validate_candidate_path(&candidate).ok())
+            resolve_command_path(command)
+                .and_then(|candidate| validate_candidate_path(&candidate).ok())
         {
             let resolved_path = path.normalized_path.clone();
             return Ok(CliScanCandidate {
@@ -197,7 +283,7 @@ fn resolve_spec_candidate(
     Err(format!("未找到 {} CLI", spec.label))
 }
 
-fn resolve_command(command: &str) -> Option<PathBuf> {
+pub fn resolve_command_path(command: &str) -> Option<PathBuf> {
     let raw = Path::new(command);
     if looks_like_path(command) {
         return raw.exists().then(|| raw.to_path_buf());
@@ -240,8 +326,7 @@ fn pathext_variants(command: &str) -> Vec<String> {
 }
 
 fn search_path(variants: &[String]) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
+    for dir in common_path_dirs() {
         for variant in variants {
             let candidate = dir.join(variant);
             if candidate.exists() && validate_candidate_path(&candidate).is_ok() {
