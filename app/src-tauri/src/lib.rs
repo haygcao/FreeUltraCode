@@ -3204,14 +3204,13 @@ fn project_suggested_mcp_servers(engine: &str) -> Vec<ProjectMcpServerSuggestion
             // Converge with the one-click installer: same stable id, and point at
             // the cached verified binary when it is already present so "apply
             // recommended" + probe work without extra steps. Falls back to the
-            // expected cache path (download-on-setup) when not yet installed.
+            // server id label when not yet installed.
             let cached = ue_mcp_expected_binary_path()
                 .filter(|path| path.is_file() && ue_mcp_binary_verified(path));
             let command = cached
                 .as_ref()
                 .map(|path| display_preview_path(path))
-                .or_else(|| ue_mcp_expected_binary_path().map(|path| display_preview_path(&path)))
-                .unwrap_or_else(|| UE_MCP_ASSET_NAME.to_string());
+                .unwrap_or_else(|| UE_MCP_SERVER_ID.to_string());
             let (available, availability_note) = if cached.is_some() {
                 (true, "已安装并校验的 UE MCP 二进制。".to_string())
             } else {
@@ -3971,10 +3970,11 @@ async fn project_lsp_install(
 //
 // Wraps `ue-mcp-for-all-versions` (https://github.com/wellingfeng/ue-mcp-for-all-versions):
 // a single version-agnostic binary that drives UE 4.25–5.8 over RemoteControl.
-// The shipped v0.2.0 binary is purely the MCP server/probe (`--host/--port/
-// --probe`); it does NOT implement project configuration. So we download +
-// sha256-verify the pinned release, cache it under the global tools dir, and do
-// the project setup natively in Rust: enable the stock engine plugins in the
+// The binary is purely the MCP server/probe (`--host/--port/--probe`); it does
+// NOT implement project configuration. So we resolve the *latest* GitHub
+// release at install time, download + sha256-verify it (using the digest the
+// GitHub API advertises), cache it under the global tools dir keyed by version,
+// and do the project setup natively in Rust: enable the stock engine plugins in the
 // `.uproject`, make the RemoteControl web server auto-start on launch (the
 // `WebControl.EnableServerOnStartup` CVar, which is exactly what the binary's
 // own "Start UE and run WebControl.StartServer" message asks for), and write/
@@ -3984,13 +3984,44 @@ async fn project_lsp_install(
 /// Stable server id used in project settings so one-click + "apply recommended" converge.
 const UE_MCP_SERVER_ID: &str = "ue-mcp-for-all-versions";
 const UE_MCP_DISABLED_ARCHIVE_KEY: &str = "freeultracodeDisabledMcpServers";
-const UE_MCP_RELEASE_VERSION: &str = "v0.2.0";
-const UE_MCP_ASSET_NAME: &str = "ue-mcp-for-all-versions-v0.2.0-win64.exe";
-const UE_MCP_DOWNLOAD_URL: &str = "https://github.com/wellingfeng/ue-mcp-for-all-versions/releases/download/v0.2.0/ue-mcp-for-all-versions-v0.2.0-win64.exe";
-/// sha256 of the pinned win64 release asset (verified before trusting the binary).
-const UE_MCP_SHA256: &str = "2a19a32818933db1357fe9c59d6ea415654937272d169c0bf7ddcaeb89d0762d";
+/// GitHub "latest release" API — resolved at install time so we always pull the
+/// newest published `ue-mcp-for-all-versions` build instead of a pinned tag.
+const UE_MCP_LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/wellingfeng/ue-mcp-for-all-versions/releases/latest";
+/// Fallback release used only when the GitHub API is unreachable, so one-click
+/// install still works offline-ish. Keep this reasonably current.
+const UE_MCP_FALLBACK_VERSION: &str = "v0.4.0";
+const UE_MCP_FALLBACK_ASSET_NAME: &str = "ue-mcp-for-all-versions.exe";
+const UE_MCP_FALLBACK_DOWNLOAD_URL: &str = "https://github.com/wellingfeng/ue-mcp-for-all-versions/releases/download/v0.4.0/ue-mcp-for-all-versions.exe";
+const UE_MCP_FALLBACK_SHA256: &str =
+    "7e536be5ad2d54b836a4ebb67c6418143d0b2504e0d87ce75cc126123ea1ca92";
 const UE_MCP_DOWNLOAD_LIMIT: usize = 64 * 1024 * 1024;
 const UE_MCP_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const UE_MCP_API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// A resolved release asset to download (version-agnostic; populated from the
+/// GitHub API or the pinned fallback).
+#[derive(Clone)]
+struct UeMcpRelease {
+    version: String,
+    asset_name: String,
+    download_url: String,
+    /// sha256 hex from the GitHub asset `digest` when available; `None` means
+    /// the API did not advertise a digest and we trust the download as-is.
+    sha256: Option<String>,
+}
+
+/// Persisted pointer to the currently installed binary so status checks and
+/// project setup can find it offline (no network, no version guessing).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UeMcpInstalledMeta {
+    version: String,
+    asset_name: String,
+    /// Absolute path to the cached binary.
+    path: String,
+    sha256: String,
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4044,36 +4075,156 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Deterministic cache location for the pinned binary (no side effects).
-fn ue_mcp_expected_binary_path() -> Option<PathBuf> {
-    let root = storage_paths::global_root().ok()?;
-    Some(
-        root.join("tools")
-            .join("ue-mcp")
-            .join(UE_MCP_RELEASE_VERSION)
-            .join(UE_MCP_ASSET_NAME),
-    )
-}
-
-fn ue_mcp_binary_target() -> Result<PathBuf, String> {
+/// Directory that holds the cached binary plus the `installed.json` pointer.
+fn ue_mcp_tools_dir() -> Result<PathBuf, String> {
     let root = storage_paths::ensure_global_root_with_dirs(&["tools"])?;
-    let dir = root
-        .join("tools")
-        .join("ue-mcp")
-        .join(UE_MCP_RELEASE_VERSION);
+    let dir = root.join("tools").join("ue-mcp");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建 UE MCP 工具目录失败：{e}"))?;
-    Ok(dir.join(UE_MCP_ASSET_NAME))
+    Ok(dir)
 }
 
-fn ue_mcp_binary_verified(path: &Path) -> bool {
+/// Read-only tools dir (no side effects) for status queries.
+fn ue_mcp_tools_dir_readonly() -> Option<PathBuf> {
+    storage_paths::global_root()
+        .ok()
+        .map(|root| root.join("tools").join("ue-mcp"))
+}
+
+fn ue_mcp_meta_path_readonly() -> Option<PathBuf> {
+    ue_mcp_tools_dir_readonly().map(|dir| dir.join("installed.json"))
+}
+
+/// Pointer to whatever version we last installed; drives offline status checks
+/// and project setup without re-resolving the release.
+fn ue_mcp_read_installed_meta() -> Option<UeMcpInstalledMeta> {
+    let path = ue_mcp_meta_path_readonly()?;
+    let bytes = std::fs::read(&path).ok()?;
+    serde_json::from_slice::<UeMcpInstalledMeta>(&bytes).ok()
+}
+
+fn ue_mcp_write_installed_meta(meta: &UeMcpInstalledMeta) -> Result<(), String> {
+    let dir = ue_mcp_tools_dir()?;
+    let path = dir.join("installed.json");
+    let serialized =
+        serde_json::to_vec_pretty(meta).map_err(|e| format!("序列化 UE MCP 安装信息失败：{e}"))?;
+    atomic_write(&path, &serialized).map_err(|e| format!("写入 UE MCP 安装信息失败：{e}"))
+}
+
+fn ue_mcp_verify_file(path: &Path, expected_sha: &str) -> bool {
     std::fs::read(path)
         .ok()
-        .map(|bytes| sha256_hex(&bytes).eq_ignore_ascii_case(UE_MCP_SHA256))
+        .map(|bytes| sha256_hex(&bytes).eq_ignore_ascii_case(expected_sha))
         .unwrap_or(false)
 }
 
-fn ue_mcp_download_binary(target: &Path) -> Result<(), String> {
-    let response = ureq::get(UE_MCP_DOWNLOAD_URL)
+/// Path of the currently installed binary, per `installed.json`.
+fn ue_mcp_expected_binary_path() -> Option<PathBuf> {
+    ue_mcp_read_installed_meta().map(|meta| PathBuf::from(meta.path))
+}
+
+/// True when `path` matches the recorded install and its sha256 still checks out.
+fn ue_mcp_binary_verified(path: &Path) -> bool {
+    match ue_mcp_read_installed_meta() {
+        Some(meta) => {
+            PathBuf::from(&meta.path) == path && ue_mcp_verify_file(path, &meta.sha256)
+        }
+        None => false,
+    }
+}
+
+/// Resolve the GitHub "latest" release into a concrete downloadable asset.
+/// Falls back to a pinned release when the API is unreachable.
+fn ue_mcp_resolve_latest_release() -> UeMcpRelease {
+    match ue_mcp_query_latest_release() {
+        Ok(release) => release,
+        Err(_) => UeMcpRelease {
+            version: UE_MCP_FALLBACK_VERSION.to_string(),
+            asset_name: UE_MCP_FALLBACK_ASSET_NAME.to_string(),
+            download_url: UE_MCP_FALLBACK_DOWNLOAD_URL.to_string(),
+            sha256: Some(UE_MCP_FALLBACK_SHA256.to_string()),
+        },
+    }
+}
+
+fn ue_mcp_query_latest_release() -> Result<UeMcpRelease, String> {
+    let body: serde_json::Value = ureq::get(UE_MCP_LATEST_RELEASE_API)
+        .timeout(UE_MCP_API_TIMEOUT)
+        .set("User-Agent", "FreeUltraCode")
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|err| match err {
+            ureq::Error::Status(code, _) => format!("查询 UE MCP 最新版本失败：HTTP {code}。"),
+            other => format!("查询 UE MCP 最新版本失败：{other}"),
+        })?
+        .into_json()
+        .map_err(|e| format!("解析 UE MCP 版本信息失败：{e}"))?;
+
+    let version = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "UE MCP 版本信息缺少 tag_name。".to_string())?;
+
+    let assets = body
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "UE MCP 版本信息缺少 assets。".to_string())?;
+
+    // Prefer a Windows `.exe` asset (win64-tagged first, then any .exe).
+    let pick = assets
+        .iter()
+        .filter(|asset| {
+            asset
+                .get("name")
+                .and_then(|n| n.as_str())
+                .map(|name| name.to_ascii_lowercase().ends_with(".exe"))
+                .unwrap_or(false)
+        })
+        .max_by_key(|asset| {
+            let name = asset
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if name.contains("win64") {
+                2
+            } else if name.contains("win") {
+                1
+            } else {
+                0
+            }
+        })
+        .ok_or_else(|| {
+            "最新 UE MCP 版本未提供 Windows .exe 预编译资源，请手动编译。".to_string()
+        })?;
+
+    let asset_name = pick
+        .get("name")
+        .and_then(|n| n.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "UE MCP 资源缺少名称。".to_string())?;
+    let download_url = pick
+        .get("browser_download_url")
+        .and_then(|u| u.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "UE MCP 资源缺少下载地址。".to_string())?;
+    // GitHub advertises `digest` like "sha256:<hex>"; use it to verify the download.
+    let sha256 = pick
+        .get("digest")
+        .and_then(|d| d.as_str())
+        .and_then(|d| d.strip_prefix("sha256:"))
+        .map(|hex| hex.to_string());
+
+    Ok(UeMcpRelease {
+        version,
+        asset_name,
+        download_url,
+        sha256,
+    })
+}
+
+fn ue_mcp_download_binary(release: &UeMcpRelease, target: &Path) -> Result<String, String> {
+    let response = ureq::get(&release.download_url)
         .timeout(UE_MCP_DOWNLOAD_TIMEOUT)
         .set("User-Agent", "FreeUltraCode")
         .set("Accept", "application/octet-stream,*/*;q=0.8")
@@ -4095,10 +4246,12 @@ fn ue_mcp_download_binary(target: &Path) -> Result<(), String> {
         return Err("UE MCP 二进制超出大小上限。".to_string());
     }
     let digest = sha256_hex(&bytes);
-    if !digest.eq_ignore_ascii_case(UE_MCP_SHA256) {
-        return Err(format!(
-            "UE MCP 校验失败：期望 {UE_MCP_SHA256}，实际 {digest}。已放弃使用未校验的二进制。"
-        ));
+    if let Some(expected) = release.sha256.as_deref() {
+        if !digest.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "UE MCP 校验失败：期望 {expected}，实际 {digest}。已放弃使用未校验的二进制。"
+            ));
+        }
     }
     let tmp = target.with_extension("download");
     std::fs::write(&tmp, &bytes).map_err(|e| format!("写入 UE MCP 二进制失败：{e}"))?;
@@ -4108,7 +4261,7 @@ fn ue_mcp_download_binary(target: &Path) -> Result<(), String> {
             std::fs::rename(&tmp, target)
         })
         .map_err(|e| format!("保存 UE MCP 二进制失败：{e}"))?;
-    Ok(())
+    Ok(digest)
 }
 
 fn ue_mcp_ensure_binary_blocking() -> Result<UeMcpBinaryStatus, String> {
@@ -4118,34 +4271,58 @@ fn ue_mcp_ensure_binary_blocking() -> Result<UeMcpBinaryStatus, String> {
                 .to_string(),
         );
     }
-    let target = ue_mcp_binary_target()?;
-    if target.is_file() && ue_mcp_binary_verified(&target) {
-        return Ok(UeMcpBinaryStatus {
-            server_id: UE_MCP_SERVER_ID.to_string(),
-            version: UE_MCP_RELEASE_VERSION.to_string(),
-            path: display_preview_path(&target),
-            available: true,
-            downloaded: false,
-            sha256: UE_MCP_SHA256.to_string(),
-            source: "cached".to_string(),
-            supported_platform: true,
-            message: "已使用本地缓存的 UE MCP 二进制（校验通过）。".to_string(),
-        });
+
+    let release = ue_mcp_resolve_latest_release();
+
+    // Already on the resolved version and the cached binary still verifies?
+    // Skip the download.
+    if let Some(meta) = ue_mcp_read_installed_meta() {
+        let cached = PathBuf::from(&meta.path);
+        if meta.version == release.version
+            && cached.is_file()
+            && ue_mcp_verify_file(&cached, &meta.sha256)
+        {
+            return Ok(UeMcpBinaryStatus {
+                server_id: UE_MCP_SERVER_ID.to_string(),
+                version: meta.version.clone(),
+                path: display_preview_path(&cached),
+                available: true,
+                downloaded: false,
+                sha256: meta.sha256.clone(),
+                source: "cached".to_string(),
+                supported_platform: true,
+                message: format!("已使用本地缓存的 UE MCP {} 二进制（校验通过）。", meta.version),
+            });
+        }
     }
+
+    let dir = ue_mcp_tools_dir()?.join(&release.version);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 UE MCP 版本目录失败：{e}"))?;
+    let target = dir.join(&release.asset_name);
+
     if target.is_file() {
         std::fs::remove_file(&target).ok();
     }
-    ue_mcp_download_binary(&target)?;
+    let digest = ue_mcp_download_binary(&release, &target)?;
+
+    let meta = UeMcpInstalledMeta {
+        version: release.version.clone(),
+        asset_name: release.asset_name.clone(),
+        path: target.to_string_lossy().to_string(),
+        sha256: digest.clone(),
+    };
+    ue_mcp_write_installed_meta(&meta)?;
+
     Ok(UeMcpBinaryStatus {
         server_id: UE_MCP_SERVER_ID.to_string(),
-        version: UE_MCP_RELEASE_VERSION.to_string(),
+        version: release.version.clone(),
         path: display_preview_path(&target),
         available: true,
         downloaded: true,
-        sha256: UE_MCP_SHA256.to_string(),
+        sha256: digest,
         source: "downloaded".to_string(),
         supported_platform: true,
-        message: "已下载并校验 UE MCP 二进制。".to_string(),
+        message: format!("已下载并校验 UE MCP {} 二进制。", release.version),
     })
 }
 
@@ -4584,7 +4761,8 @@ fn ue_mcp_write_project_mcp_json(
 
 fn ue_mcp_setup_project_blocking(req: UeMcpSetupRequest) -> Result<UeMcpSetupResult, String> {
     let root = project_scan_root(&req.root_path)?;
-    let binary = ue_mcp_binary_target()?;
+    let binary = ue_mcp_expected_binary_path()
+        .ok_or_else(|| "UE MCP 二进制不存在，请先点击“一键配置 Unreal MCP”下载安装。".to_string())?;
     if !binary.is_file() {
         return Err("UE MCP 二进制不存在，请先下载安装。".to_string());
     }
