@@ -120,6 +120,7 @@ export interface ImageGenerationSettings {
   providerAccountIds: Partial<Record<ImageProviderId, string>>;
   providerBaseUrls: Partial<Record<ImageProviderId, string>>;
   providerModels: Partial<Record<ImageProviderId, string>>;
+  providerModelLists: Partial<Record<ImageProviderId, string[]>>;
 }
 
 export interface ImageGenerationResult {
@@ -721,6 +722,7 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
   providerAccountIds: {},
   providerBaseUrls: {},
   providerModels: {},
+  providerModelLists: {},
 };
 
 function isKnownImageProviderId(
@@ -860,6 +862,29 @@ function cleanRecord<T extends string>(
   return out;
 }
 
+function cleanModelListRecord<T extends string>(
+  value: unknown,
+  validKey: (key: unknown) => key is T,
+): Partial<Record<T, string[]>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Partial<Record<T, string[]>> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!validKey(key) || !Array.isArray(raw)) continue;
+    const models: string[] = [];
+    const seen = new Set<string>();
+    for (const item of raw) {
+      if (typeof item !== 'string') continue;
+      const model = item.trim();
+      const dedupeKey = model.toLowerCase();
+      if (!model || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      models.push(model);
+    }
+    if (models.length > 0) out[key] = models;
+  }
+  return out;
+}
+
 export function normalizeImageGenerationSettings(
   value: unknown,
 ): ImageGenerationSettings {
@@ -892,6 +917,7 @@ export function normalizeImageGenerationSettings(
     providerAccountIds: cleanRecord(source.providerAccountIds, validKey),
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
+    providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
   };
 }
 

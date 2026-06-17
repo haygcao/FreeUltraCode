@@ -195,7 +195,7 @@ describe('simple-workflow chat mode', () => {
     useStore.getState().newSession();
 
     await waitFor(
-      () => useStore.getState().sessions[0]?.title === '未命名会话',
+      () => useStore.getState().sessions[0]?.title === '新会话',
       'plain chat session history title',
     );
 
@@ -203,10 +203,10 @@ describe('simple-workflow chat mode', () => {
     const record = await historyStore.getSession(workspace.id, session.id);
 
     expect(session.isWorkflow).toBe(false);
-    expect(session.title).toBe('未命名会话');
+    expect(session.title).toBe('新会话');
     expect(useStore.getState().workflow.meta.simple).toBe(true);
     expect(useStore.getState().workflow.nodes).toHaveLength(1);
-    expect(record?.title).toBe('未命名会话');
+    expect(record?.title).toBe('新会话');
     expect(record?.isWorkflow).toBe(false);
     expect(record?.workflow).toBeUndefined();
   });
@@ -382,7 +382,7 @@ describe('simple-workflow chat mode', () => {
 
     useStore.getState().newSession();
     await waitFor(
-      () => useStore.getState().sessions[0]?.title === '未命名会话',
+      () => useStore.getState().sessions[0]?.title === '新会话',
       'new source workspace session',
     );
 
@@ -788,7 +788,7 @@ describe('simple-workflow chat mode', () => {
     useStore.getState().newSimpleWorkflow();
 
     await waitFor(
-      () => useStore.getState().sessions[0]?.title === '未命名会话',
+      () => useStore.getState().sessions[0]?.title === '新会话',
       'simple session history title',
     );
 
@@ -797,16 +797,16 @@ describe('simple-workflow chat mode', () => {
     const record = await historyStore.getSession(workspace.id, session.id);
 
     expect(state.workflow.meta.simple).toBe(true);
-    expect(state.workflow.meta.name).toBe('未命名会话');
-    expect(session.title).toBe('未命名会话');
-    expect(record?.title).toBe('未命名会话');
-    expect(record?.workflow?.meta.name).toBe('未命名会话');
+    expect(state.workflow.meta.name).toBe('新会话');
+    expect(session.title).toBe('新会话');
+    expect(record?.title).toBe('新会话');
+    expect(record?.workflow?.meta.name).toBe('新会话');
   });
 
   it('localizes the untitled session placeholder', () => {
-    expect(simpleBlueprint(undefined, 'en-US').meta.name).toBe('Untitled Session');
-    expect(simpleBlueprint(undefined, 'ja-JP').meta.name).toBe('無題のセッション');
-    expect(simpleBlueprint(undefined, 'ko-KR').meta.name).toBe('제목 없는 세션');
+    expect(simpleBlueprint(undefined, 'en-US').meta.name).toBe('New Session');
+    expect(simpleBlueprint(undefined, 'ja-JP').meta.name).toBe('新規セッション');
+    expect(simpleBlueprint(undefined, 'ko-KR').meta.name).toBe('새 세션');
   });
 
   it('answers directly without generating an IRGraph and keeps a single node', async () => {

@@ -108,6 +108,7 @@ export interface SpeechGenerationSettings {
   providerAccountIds: Partial<Record<SpeechProviderId, string>>;
   providerBaseUrls: Partial<Record<SpeechProviderId, string>>;
   providerModels: Partial<Record<SpeechProviderId, string>>;
+  providerModelLists: Partial<Record<SpeechProviderId, string[]>>;
   providerVoices: Partial<Record<SpeechProviderId, string>>;
 }
 
@@ -719,6 +720,7 @@ export const DEFAULT_SPEECH_GENERATION_SETTINGS: SpeechGenerationSettings = {
   providerAccountIds: {},
   providerBaseUrls: {},
   providerModels: {},
+  providerModelLists: {},
   providerVoices: {},
 };
 
@@ -872,6 +874,29 @@ function cleanRecord<T extends string>(
   return out;
 }
 
+function cleanModelListRecord<T extends string>(
+  value: unknown,
+  validKey: (key: unknown) => key is T,
+): Partial<Record<T, string[]>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Partial<Record<T, string[]>> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!validKey(key) || !Array.isArray(raw)) continue;
+    const models: string[] = [];
+    const seen = new Set<string>();
+    for (const item of raw) {
+      if (typeof item !== 'string') continue;
+      const model = item.trim();
+      const dedupeKey = model.toLowerCase();
+      if (!model || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      models.push(model);
+    }
+    if (models.length > 0) out[key] = models;
+  }
+  return out;
+}
+
 export function normalizeSpeechGenerationSettings(value: unknown): SpeechGenerationSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return DEFAULT_SPEECH_GENERATION_SETTINGS;
@@ -898,6 +923,7 @@ export function normalizeSpeechGenerationSettings(value: unknown): SpeechGenerat
     providerAccountIds: cleanRecord(source.providerAccountIds, validKey),
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
+    providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
     providerVoices: cleanRecord(source.providerVoices, validKey),
   };
 }

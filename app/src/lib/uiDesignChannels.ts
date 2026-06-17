@@ -1,3 +1,5 @@
+import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
+
 export type UiDesignChannelId =
   | 'figma'
   | 'photoshop'
@@ -48,6 +50,7 @@ export interface UiDesignChannelSettings {
 
 export const UI_DESIGN_CHANNEL_STORAGE_KEY =
   'freeultracode.uiDesignChannels.v1';
+const UI_DESIGN_CHANNEL_REL_PATH = 'settings/uiDesignChannels.v1.json';
 
 export const UI_DESIGN_CHANNELS: UiDesignChannelDefinition[] = [
   {
@@ -191,10 +194,6 @@ export const DEFAULT_UI_DESIGN_CHANNEL_SETTINGS: UiDesignChannelSettings = {
   channelExportFormats: {},
 };
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
-
 export function isUiDesignChannelId(value: unknown): value is UiDesignChannelId {
   return (
     typeof value === 'string' &&
@@ -271,9 +270,11 @@ export function normalizeUiDesignChannelSettings(
 }
 
 export function loadUiDesignChannelSettings(): UiDesignChannelSettings {
-  if (!hasStorage()) return DEFAULT_UI_DESIGN_CHANNEL_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(UI_DESIGN_CHANNEL_STORAGE_KEY);
+    const raw = readSettingsRaw(
+      UI_DESIGN_CHANNEL_REL_PATH,
+      UI_DESIGN_CHANNEL_STORAGE_KEY,
+    );
     return normalizeUiDesignChannelSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_UI_DESIGN_CHANNEL_SETTINGS;
@@ -283,15 +284,18 @@ export function loadUiDesignChannelSettings(): UiDesignChannelSettings {
 export function saveUiDesignChannelSettings(
   settings: UiDesignChannelSettings,
 ): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      UI_DESIGN_CHANNEL_STORAGE_KEY,
-      JSON.stringify(normalizeUiDesignChannelSettings(settings)),
-    );
+  const payload = JSON.stringify(normalizeUiDesignChannelSettings(settings));
+  const ok = writeSettingsRaw(
+    UI_DESIGN_CHANNEL_REL_PATH,
+    UI_DESIGN_CHANNEL_STORAGE_KEY,
+    payload,
+  );
+  if (!ok) {
+    console.error('[uiDesignChannels] failed to persist settings');
+    return;
+  }
+  if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('fuc:ui-design-channel-settings-changed'));
-  } catch {
-    /* Settings persistence is best-effort. */
   }
 }
 

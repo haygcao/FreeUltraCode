@@ -16,6 +16,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Copy,
   Eye,
   File,
   Folder,
@@ -206,7 +207,9 @@ import UltracodeRunCard from '@/panels/UltracodeRunCard';
 import FileText from '@/components/ai/FileText';
 import FilePreviewDrawer from '@/components/ai/FilePreviewDrawer';
 import type { FileRef } from '@/components/ai/lib/filePath';
-import type { OpenFileIntent } from '@/components/ai/FileChip';
+import { displayFileRefLabel } from '@/components/ai/lib/filePath';
+import { scanFileRefs } from '@/components/ai/lib/fileScan';
+import FileChip, { type OpenFileIntent } from '@/components/ai/FileChip';
 import { shallow } from 'zustand/shallow';
 import {
   isActiveAiEditingSession,
@@ -730,6 +733,22 @@ function previousUserText(messages: Message[], messageId: string): string {
     if (message.role === 'user') return message.text.trim();
   }
   return '';
+}
+
+/**
+ * Serialize the current chat transcript to plain markdown for copy/export. Skips
+ * UI-only notes (localOnly) so the text mirrors the real dialogue. Each turn is
+ * prefixed with a role label so the dump stays readable outside the app.
+ */
+function serializeConversation(messages: Message[]): string {
+  return messages
+    .filter((m) => !m.localOnly)
+    .map((m) => {
+      const role =
+        m.role === 'user' ? '## 用户' : m.role === 'system' ? '## 系统' : '## 助手';
+      return `${role}\n\n${m.text.trim()}`;
+    })
+    .join('\n\n---\n\n');
 }
 
 /**
@@ -1689,6 +1708,7 @@ export default function AIDock({
   const searchMeshLibraryPrompt = useStore((s) => s.searchMeshLibraryPrompt);
   const runUltracodePrompt = useStore((s) => s.runUltracodePrompt);
   const appendChatNote = useStore((s) => s.appendChatNote);
+  const newSession = useStore((s) => s.newSession);
   const stopChat = useStore((s) => s.stopChat);
   const blockedSendTip = useStore((s) => s.blockedSendTip);
   const clearBlockedSendTip = useStore((s) => s.clearBlockedSendTip);
@@ -3041,6 +3061,26 @@ export default function AIDock({
     },
     [workspaceCwd],
   );
+
+  // File/image paths typed or pasted into the composer are just plain text
+  // inside the <textarea>, so they can't be clicked the way chips in a sent
+  // message can. Scan the draft for file references and surface them as a
+  // clickable strip below the input, so a pasted screenshot path (or any file
+  // path) can be previewed before the message is sent.
+  const draftFileRefs = useMemo<FileRef[]>(() => {
+    const text = draft.trim();
+    if (!text) return [];
+    const refs: FileRef[] = [];
+    const seen = new Set<string>();
+    for (const part of scanFileRefs(text)) {
+      if (typeof part === 'string') continue;
+      const key = displayFileRefLabel(part, workspaceCwd);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      refs.push(part);
+    }
+    return refs;
+  }, [draft, workspaceCwd]);
 
   // Heuristic "live bubble": the last assistant message is streaming while the
   // AI is editing or a run is in flight. Drives streaming-safe markdown repair
@@ -4746,6 +4786,109 @@ export default function AIDock({
       ? t(locale, 'dock.searchNoMatch')
       : `${activeSearchMatchIndex + 1}/${searchMatches.length}`
     : '';
+  const handleCopyConversation = useCallback(async () => {
+    if (messages.every((m) => m.localOnly)) {
+      setCaptureStatus({ kind: 'error', text: t(locale, 'dock.conversationEmpty') });
+      return;
+    }
+    const text = serializeConversation(messages);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        try {
+          ta.select();
+          document.execCommand('copy');
+        } finally {
+          if (ta.parentNode) ta.parentNode.removeChild(ta);
+        }
+      }
+      setCaptureStatus({ kind: 'done', text: t(locale, 'dock.conversationCopied') });
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  }, [messages, locale]);
+  const handleExportConversation = useCallback(async () => {
+    if (messages.every((m) => m.localOnly)) {
+      setCaptureStatus({ kind: 'error', text: t(locale, 'dock.conversationEmpty') });
+      return;
+    }
+    const text = serializeConversation(messages);
+    const safeTitle = (chatTitle || t(locale, 'dock.newSession'))
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .slice(0, 60);
+    const filename = `${safeTitle || 'conversation'}.md`;
+    try {
+      if (tauriAvailable()) {
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const picked = await save({
+          defaultPath: filename,
+          filters: [{ name: 'Markdown', extensions: ['md'] }],
+        });
+        if (!picked) return;
+        const target = typeof picked === 'string' ? picked : String(picked);
+        const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+        await writeTextFile(target, text);
+      } else {
+        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+      setCaptureStatus({ kind: 'done', text: t(locale, 'dock.conversationExported') });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCaptureStatus({
+        kind: 'error',
+        text: `${t(locale, 'dock.exportFailed')}: ${msg}`,
+      });
+    }
+  }, [messages, locale, chatTitle]);
+  const headerActionButtonClass =
+    'flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-panel-2 px-2 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40';
+  const conversationActions = isChat && (
+    <>
+      <button
+        type="button"
+        onClick={() => void handleCopyConversation()}
+        disabled={messages.length === 0}
+        title={t(locale, 'dock.copyConversation')}
+        className={headerActionButtonClass}
+      >
+        <Copy size={13} />
+        <span>{t(locale, 'dock.copyConversation')}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleExportConversation()}
+        disabled={messages.length === 0}
+        title={t(locale, 'dock.exportConversation')}
+        className={headerActionButtonClass}
+      >
+        <ArrowDownToLine size={13} />
+        <span>{t(locale, 'dock.exportConversation')}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => newSession()}
+        title={t(locale, 'dock.newSession')}
+        className={headerActionButtonClass}
+      >
+        <Plus size={13} />
+        <span>{t(locale, 'dock.newSession')}</span>
+      </button>
+    </>
+  );
   const searchToggleButton = (
     <button
       type="button"
@@ -5086,6 +5229,7 @@ export default function AIDock({
             </span>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            {conversationActions}
             {!isChat && searchToggleButton}
           </div>
           {returnSearchOpen && (
@@ -5874,6 +6018,22 @@ export default function AIDock({
               (isReadOnly ? 'cursor-not-allowed' : '')
             }
           />
+
+          {draftFileRefs.length > 0 && (
+            <div
+              data-testid="composer-file-refs"
+              className="flex flex-wrap items-center gap-1 px-2 pb-1"
+            >
+              {draftFileRefs.map((ref) => (
+                <FileChip
+                  key={displayFileRefLabel(ref, workspaceCwd)}
+                  refData={ref}
+                  onOpenFile={onOpenFile}
+                  cwd={workspaceCwd}
+                />
+              ))}
+            </div>
+          )}
 
           {blockedSendTipText && (
             <div

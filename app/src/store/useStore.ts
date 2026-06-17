@@ -1469,6 +1469,15 @@ function promptTranslationGatewayOptions(state: StoreState): {
   };
 }
 
+// Mirror historyStore's id format so an optimistic session and its persisted
+// record share the same id (no swap / flicker on reconcile).
+function randomSessionId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `s_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
+
 function makeSession(locale: Locale = DEFAULT_LOCALE): Session {
   const ts = Date.now();
   return {
@@ -3104,40 +3113,42 @@ async function createNewChatSession(): Promise<void> {
     return;
   }
 
-  const record = await historyStore.createSession({
+  // Optimistic, incremental new session.
+  //
+  // The old path awaited createSession -> listWorkspaces -> loadSessionTree
+  // (which rebuilt EVERY workspace's session index from disk, one IPC per
+  // session file) before switching the UI — that's the multi-second stall on
+  // "new session". Instead: build the session locally, switch immediately, and
+  // persist + reconcile in the background. The client-supplied id is reused by
+  // the store so there is no id swap / flicker.
+  const sessionId = randomSessionId();
+  const now = Date.now();
+  const session: Session = {
+    id: sessionId,
     workspaceId,
-    isWorkflow: false,
-    messages: [],
     title,
-  });
-  const session = sessionFromRecord(record);
-  const workspaces = await historyStore.listWorkspaces();
-  const sessionTree = await loadSessionTree(workspaces);
-  const nextWorkflow = chatWorkflow(record.title, state.locale);
+    createdAt: now,
+    updatedAt: now,
+    isWorkflow: false,
+    messageCount: 0,
+  };
+  const nextWorkflow = chatWorkflow(title, state.locale);
+  const workspace = state.workspaces.find((item) => item.id === workspaceId);
+  const fallbackComposer = defaultSessionComposer(
+    workspace?.path,
+    workspaceFoldersFromMetadata(workspace?.metadata),
+  );
   useStore.setState((s) => {
-    if (s.activeWorkspaceId !== workspaceId) {
-      return {
-        workspaces,
-        sessionTree,
-        sessions: s.activeWorkspaceId
-          ? sessionTree[s.activeWorkspaceId] ?? s.sessions
-          : s.sessions,
-      };
-    }
-    const sessionKey = {
-      workspaceId,
-      sessionId: session.id,
-    };
-    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (s.activeWorkspaceId !== workspaceId) return {};
+    const sessionKey = { workspaceId, sessionId };
     const composerPatch = composerPatchForSession(
       s,
       sessionKey,
       nextWorkflow,
-      defaultSessionComposer(
-        workspace?.path,
-        workspaceFoldersFromMetadata(workspace?.metadata),
-      ),
+      fallbackComposer,
     );
+    const existing = s.sessionTree[workspaceId] ?? s.sessions;
+    const sessions = [session, ...existing.filter((it) => it.id !== sessionId)];
     return {
       workflow: composerPatch.workflow,
       composer: composerPatch.composer,
@@ -3145,13 +3156,9 @@ async function createNewChatSession(): Promise<void> {
       selectedNodeId: null,
       dirty: false,
       ...emptyRunProgress(),
-      workspaces,
-      sessions: sessionTree[workspaceId] ?? [session],
-      sessionTree,
-      activeSessionId: session.id,
-      // Creating a session must not change the top switcher's pinned workspace.
-      // Only explicit workspace navigation may move the pin; here we just keep
-      // the existing pin (initializing it when none has been chosen yet).
+      sessions,
+      sessionTree: { ...s.sessionTree, [workspaceId]: sessions },
+      activeSessionId: sessionId,
       selectedWorkspaceId: s.selectedWorkspaceId ?? workspaceId,
       messages: [],
       canvasViewport: null,
@@ -3160,16 +3167,31 @@ async function createNewChatSession(): Promise<void> {
       ...composerDraftPatchForSession(s, sessionKey),
     };
   });
-  const current = useStore.getState();
-  if (
-    current.activeWorkspaceId === workspaceId &&
-    current.activeSessionId === session.id
-  ) {
-    await historyStore.patchConfig({
-      lastActiveWorkspaceId: workspaceId,
-      lastActiveSessionId: session.id,
-    });
-  }
+
+  // Persist + reconcile in the background. UI is already on the new session.
+  void (async () => {
+    try {
+      await historyStore.createSession({
+        workspaceId,
+        id: sessionId,
+        isWorkflow: false,
+        messages: [],
+        title,
+      });
+      const current = useStore.getState();
+      if (
+        current.activeWorkspaceId === workspaceId &&
+        current.activeSessionId === sessionId
+      ) {
+        await historyStore.patchConfig({
+          lastActiveWorkspaceId: workspaceId,
+          lastActiveSessionId: sessionId,
+        });
+      }
+    } catch (err) {
+      console.error('[new-session] failed to persist new chat session', err);
+    }
+  })();
 }
 
 async function createNewWorkflowSession(
@@ -8159,7 +8181,7 @@ function blueprintModePromptSystem(modeArgs: string | null | undefined): string 
     : '';
   return `你现在处于 UE 蓝图模式。目标是帮助用户创建、修改、验证 Unreal Engine Blueprint 资产，不是 OpenWorkflows workflow 蓝图。
 要求：
-- 优先检查当前工作区是否是 UE 项目、BlueprintMode 插件是否已安装；如未安装且本地 E:/ue-blueprint-mode 可用，按项目设置里的安装逻辑自动处理或给出最短可执行步骤。
+- 优先检查当前工作区是否是 UE 项目、BlueprintMode 插件是否已安装；如未安装，按项目设置里的安装逻辑从 GitHub 下载插件，或给出最短可执行步骤。
 - 如果可通过 UE 编辑器插件、MCP、Remote Control、Python 或本地命令实际完成，就直接完成；只在确实缺少目标蓝图名、父类、创建确认等关键信息时使用交互协议询问。
 - 蓝图不存在时，先提示用户确认是否创建；确认后默认按 Actor 蓝图创建，除非用户指定 Character、Pawn、GameMode、Widget、Function Library 等父类。
 - 输出或执行内容围绕 BlueprintMode 操作：target、context、checkpoint、BlueprintOp 计划、spawn node、connect pin、set property、compile、verify、commit/discard。

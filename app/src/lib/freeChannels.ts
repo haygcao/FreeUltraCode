@@ -10,6 +10,7 @@ import {
   writeSecureRecord,
   writeSecureSecret,
 } from '@/lib/secureStorage';
+import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
 
 /**
  * CONTRACT: catalog + helpers for the built-in "free channels" feature.
@@ -87,6 +88,13 @@ const KEYS_STORAGE = 'fuc_free_channel_keys_v1';
 const MODELS_STORAGE = 'fuc_free_channel_models_v1';
 const PORT_STORAGE = 'fuc_free_proxy_port_v1';
 const TOKEN_STORAGE = 'fuc_free_proxy_token_v1';
+// Non-secret blobs persisted to disk under Tauri (secrets stay in the OS
+// keychain). Maps a localStorage key to its disk rel-path; absent keys fall
+// back to localStorage only.
+const DISK_REL_PATH: Record<string, string> = {
+  [MODELS_STORAGE]: 'settings/freeChannelModels.v1.json',
+  [PORT_STORAGE]: 'settings/freeProxyPort.v1.json',
+};
 const LEGACY_RECORD_STORAGE: Record<string, string[]> = {
   [KEYS_STORAGE]: [
     'owf_free_channel_keys_v1',
@@ -473,11 +481,46 @@ export function freeChannelById(id: string): FreeChannel | undefined {
 
 const hasWindow = (): boolean => typeof window !== 'undefined';
 
+/** Read a non-secret blob, preferring the disk store when the key is mapped. */
+function readBlob(key: string): string | null {
+  const relPath = DISK_REL_PATH[key];
+  if (relPath) return readSettingsRaw(relPath, key);
+  try {
+    return hasWindow() ? window.localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Write a non-secret blob, preferring the disk store when the key is mapped. */
+function writeBlob(key: string, value: string): boolean {
+  const relPath = DISK_REL_PATH[key];
+  if (relPath) return writeSettingsRaw(relPath, key, value);
+  try {
+    if (!hasWindow()) return false;
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove a non-secret blob from disk (best-effort) and the localStorage mirror. */
+function removeBlob(key: string): void {
+  const relPath = DISK_REL_PATH[key];
+  if (relPath) writeSettingsRaw(relPath, key, '');
+  try {
+    if (hasWindow()) window.localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
 function readRecord(key: string): Record<string, string> {
   try {
     if (!hasWindow()) return {};
     const secureKeys = key === KEYS_STORAGE && secureStorageAvailable();
-    const raw = window.localStorage.getItem(key);
+    const raw = readBlob(key);
     const out: Record<string, string> = {};
 
     if (secureKeys) {
@@ -538,8 +581,8 @@ function writeRecord(key: string, value: Record<string, string>): boolean {
       if (changed) window.dispatchEvent(new Event('fuc:gateway-config-changed'));
       return changed;
     }
-    if (window.localStorage.getItem(key) === next) return false;
-    window.localStorage.setItem(key, next);
+    if (readBlob(key) === next) return false;
+    if (!writeBlob(key, next)) return false;
     window.dispatchEvent(new Event('fuc:gateway-config-changed'));
     return true;
   } catch {
@@ -805,7 +848,7 @@ export async function loadFreeChannelKeyFromAutoConfig(id: string): Promise<stri
 export function getCachedFreeProxyPort(): number {
   try {
     if (!hasWindow()) return DEFAULT_FREE_PROXY_PORT;
-    const raw = window.localStorage.getItem(PORT_STORAGE);
+    const raw = readBlob(PORT_STORAGE);
     if (!raw) return DEFAULT_FREE_PROXY_PORT;
     const port = Number.parseInt(raw, 10);
     if (
@@ -815,7 +858,7 @@ export function getCachedFreeProxyPort(): number {
     ) {
       return port;
     }
-    window.localStorage.removeItem(PORT_STORAGE);
+    removeBlob(PORT_STORAGE);
     return DEFAULT_FREE_PROXY_PORT;
   } catch {
     return DEFAULT_FREE_PROXY_PORT;
@@ -825,9 +868,9 @@ export function getCachedFreeProxyPort(): number {
 function setCachedFreeProxyPort(port: number): void {
   try {
     if (!hasWindow()) return;
-    const prev = window.localStorage.getItem(PORT_STORAGE);
+    const prev = readBlob(PORT_STORAGE);
     const next = String(port);
-    window.localStorage.setItem(PORT_STORAGE, next);
+    writeBlob(PORT_STORAGE, next);
     // The cached port is baked into every freecc:* provider baseUrl
     // (http://127.0.0.1:<port>/ch/<id>). If the proxy rebinds to a different
     // port, subscribers (NodeInspector run options / gateway hints) must

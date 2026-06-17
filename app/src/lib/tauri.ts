@@ -1233,14 +1233,13 @@ export async function unityMcpSetupProject(
 
 export interface BlueprintModeInstallRequest {
   rootPath: string;
-  sourceDir?: string | null;
   targetDir?: string | null;
   overwrite?: boolean;
 }
 
 export interface BlueprintModeInstallResult {
   ok: boolean;
-  sourceDir: string;
+  sourceUrl: string;
   targetDir: string;
   filesCopied: number;
   replacedExisting: boolean;
@@ -1251,7 +1250,7 @@ export interface BlueprintModeInstallResult {
 
 /**
  * Install the Blueprint Mode UE editor plugin into the detected Unreal project
- * by copying it from a local source directory into `<project>/Plugins/`.
+ * by downloading it from GitHub into `<project>/Plugins/`.
  */
 export async function blueprintModeInstall(
   request: BlueprintModeInstallRequest,
@@ -1414,6 +1413,21 @@ export async function readWorkspaceVcsStatusCache(
   return invoke<WorkspaceChanges | null>('workspace_vcs_status_cached', {
     rootPath,
     cacheKey,
+  });
+}
+
+/** Read VCS line-level diff for one file. Returns null when no VCS diff exists. */
+export async function workspaceFileDiff(
+  rootPath: string,
+  path: string,
+): Promise<WorkspaceChangeFile | null> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<WorkspaceChangeFile | null>('workspace_file_diff', {
+    rootPath,
+    path,
   });
 }
 

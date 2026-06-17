@@ -69,27 +69,30 @@ function findButtonContaining(
   return button!;
 }
 
-function modelPickerButton(container: HTMLElement): HTMLButtonElement {
-  const button = container.querySelector<HTMLButtonElement>(
-    'button[data-model-picker="default-channel-model"]',
+function modelListInput(container: HTMLElement): HTMLInputElement {
+  const input = container.querySelector<HTMLInputElement>(
+    'input[placeholder="输入自定义模型名…"]',
   );
-  expect(button).toBeInstanceOf(HTMLButtonElement);
-  return button!;
+  expect(input).toBeInstanceOf(HTMLInputElement);
+  return input!;
 }
 
-async function openModelPicker(container: HTMLElement): Promise<void> {
-  const button = modelPickerButton(container);
-  if (button.getAttribute('aria-expanded') === 'true') return;
+async function setInputValue(input: HTMLInputElement, value: string): Promise<void> {
   await act(async () => {
-    button.click();
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
 
-async function clickAddModel(container: HTMLElement): Promise<void> {
-  await openModelPicker(container);
-  const button = container.querySelector<HTMLButtonElement>(
-    'button[data-model-picker-add="default-channel-model"]',
-  );
+async function addModel(container: HTMLElement, model: string): Promise<void> {
+  const input = modelListInput(container);
+  await setInputValue(input, model);
+  const row = input.parentElement;
+  const button = row?.querySelector<HTMLButtonElement>('button');
   expect(button).toBeInstanceOf(HTMLButtonElement);
   await act(async () => {
     button?.click();
@@ -100,10 +103,17 @@ async function clickDeleteModel(
   container: HTMLElement,
   model: string,
 ): Promise<void> {
-  await openModelPicker(container);
-  const button = container.querySelector<HTMLButtonElement>(
-    `button[data-model-picker-delete="${model}"]`,
+  const label = modelListInput(container).closest('label');
+  const item = Array.from(label?.querySelectorAll<HTMLLIElement>('li') ?? []).find(
+    (candidate) =>
+      candidate
+        .querySelector<HTMLButtonElement>('button')
+        ?.textContent?.replace(/^●\s*/u, '')
+        .trim()
+        .toLowerCase() === model.toLowerCase(),
   );
+  expect(item).toBeInstanceOf(HTMLLIElement);
+  const button = item?.querySelectorAll<HTMLButtonElement>('button')[1];
   expect(button).toBeInstanceOf(HTMLButtonElement);
   await act(async () => {
     button?.click();
@@ -111,18 +121,30 @@ async function clickDeleteModel(
 }
 
 function optionLabels(container: HTMLElement): string[] {
-  const labels = Array.from(
-    container.querySelectorAll<HTMLElement>('[data-model-picker-option]'),
-  ).map((option) => option.getAttribute('data-model-picker-option') ?? '');
-  const add = container.querySelector<HTMLElement>(
-    '[data-model-picker-add="default-channel-model"]',
+  const label = modelListInput(container).closest('label');
+  const labels = Array.from(label?.querySelectorAll<HTMLLIElement>('li') ?? []).map(
+    (item) =>
+      item
+        .querySelector<HTMLButtonElement>('button')
+        ?.textContent?.replace(/^●\s*/u, '')
+        .trim() ?? '',
   );
+  const add = modelListInput(container).parentElement?.querySelector('button');
   if (add) labels.push(add.textContent?.trim() ?? '');
   return labels;
 }
 
+function selectedModelLabel(container: HTMLElement): string {
+  const label = modelListInput(container).closest('label');
+  const selected = Array.from(
+    label?.querySelectorAll<HTMLButtonElement>('li > button:first-child') ?? [],
+  ).find((button) => button.textContent?.trim().startsWith('●'));
+  expect(selected).toBeInstanceOf(HTMLButtonElement);
+  return selected!.textContent!.replace(/^●\s*/u, '').trim();
+}
+
 function providerCardForModelPicker(container: HTMLElement): HTMLElement {
-  let current = modelPickerButton(container).parentElement;
+  let current = modelListInput(container).parentElement;
   while (current) {
     if (
       current.classList.contains('rounded-lg') &&
@@ -204,44 +226,37 @@ describe('SettingsModal programming model selection', () => {
 
     try {
       await clickButtonByText(view.container, '编程渠道');
-      await openModelPicker(view.container);
 
       expect(providerCardForModelPicker(view.container).className).not.toContain(
         'overflow-hidden',
       );
-      expect(optionLabels(view.container)).toEqual(['glm-5', '添加模型']);
+      expect(optionLabels(view.container)).toEqual(['glm-5', '添加']);
 
-      const prompt = vi.spyOn(window, 'prompt').mockReturnValue('glm-5.2');
-      await clickAddModel(view.container);
+      await addModel(view.container, 'glm-5.2');
 
-      expect(modelPickerButton(view.container).textContent).toContain('glm-5.2');
-      await openModelPicker(view.container);
+      expect(selectedModelLabel(view.container)).toBe('glm-5.2');
       expect(optionLabels(view.container)).toEqual([
         'glm-5.2',
         'glm-5',
-        '添加模型',
+        '添加',
       ]);
 
-      prompt.mockReturnValue(' GLM-5.2 ');
-      await clickAddModel(view.container);
+      await addModel(view.container, ' GLM-5.2 ');
 
-      await openModelPicker(view.container);
       const finalLabels = optionLabels(view.container);
       expect(
         finalLabels.filter((label) => label.toLowerCase() === 'glm-5.2'),
       ).toHaveLength(1);
-      expect(finalLabels.at(-1)).toBe('添加模型');
+      expect(finalLabels.at(-1)).toBe('添加');
 
-      prompt.mockReturnValue('glm-5.3');
-      await clickAddModel(view.container);
+      await addModel(view.container, 'glm-5.3');
 
-      expect(modelPickerButton(view.container).textContent).toContain('glm-5.3');
-      await openModelPicker(view.container);
+      expect(selectedModelLabel(view.container)).toBe('glm-5.3');
       expect(optionLabels(view.container)).toEqual([
         'glm-5.3',
-        'glm-5.2',
+        'GLM-5.2',
         'glm-5',
-        '添加模型',
+        '添加',
       ]);
 
       const storedProviders = JSON.parse(
@@ -249,7 +264,7 @@ describe('SettingsModal programming model selection', () => {
       ) as Provider[];
       expect(storedProviders[0].models).toEqual([
         'glm-5.3',
-        'glm-5.2',
+        'GLM-5.2',
         'glm-5',
       ]);
 
@@ -258,13 +273,13 @@ describe('SettingsModal programming model selection', () => {
       expect(optionLabels(view.container)).toEqual([
         'glm-5.3',
         'glm-5',
-        '添加模型',
+        '添加',
       ]);
 
       await clickDeleteModel(view.container, 'glm-5.3');
 
-      expect(modelPickerButton(view.container).textContent).toContain('glm-5');
-      expect(optionLabels(view.container)).toEqual(['glm-5', '添加模型']);
+      expect(selectedModelLabel(view.container)).toBe('glm-5');
+      expect(optionLabels(view.container)).toEqual(['glm-5', '添加']);
     } finally {
       await view.cleanup();
     }

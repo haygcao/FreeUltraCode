@@ -15,6 +15,8 @@
 //                   search page with the query so the user can browse there
 //                   (Fab, Unity Asset Store, CGTrader, TurboSquid, Free3D, ...).
 
+import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
+
 export type BuiltInMeshLibraryId =
   | 'polyhaven'
   | 'sketchfab'
@@ -128,6 +130,7 @@ export interface MeshSearchQueryResolution {
 export type MeshSearchEnglishTranslator = (query: string) => Promise<string>;
 
 const STORAGE_KEY = 'freeultracode.meshLibrary.v1';
+const SETTINGS_REL_PATH = 'settings/meshLibrary.v1.json';
 
 export const MESH_LIBRARY_CATEGORY_LABELS: Record<MeshLibraryCategory, string> = {
   free: '免费 / CC0',
@@ -404,9 +407,6 @@ function normalizeCustomMeshLibraries(value: unknown): CustomMeshLibraryDefiniti
     .filter((item): item is CustomMeshLibraryDefinition => !!item);
 }
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
 
 export function normalizeMeshLibrarySettings(value: unknown): MeshLibraryAccountSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -445,9 +445,8 @@ export function normalizeMeshLibrarySettings(value: unknown): MeshLibraryAccount
 }
 
 export function loadMeshLibrarySettings(): MeshLibraryAccountSettings {
-  if (!hasStorage()) return { ...DEFAULT_MESH_LIBRARY_SETTINGS };
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     return normalizeMeshLibrarySettings(raw ? JSON.parse(raw) : null);
   } catch {
     return { ...DEFAULT_MESH_LIBRARY_SETTINGS };
@@ -455,15 +454,14 @@ export function loadMeshLibrarySettings(): MeshLibraryAccountSettings {
 }
 
 export function saveMeshLibrarySettings(settings: MeshLibraryAccountSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(normalizeMeshLibrarySettings(settings)),
-    );
+  const payload = JSON.stringify(normalizeMeshLibrarySettings(settings));
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    console.error('[meshLibrary] failed to persist settings');
+    return;
+  }
+  if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('fuc:mesh-library-settings-changed'));
-  } catch {
-    /* non-fatal */
   }
 }
 

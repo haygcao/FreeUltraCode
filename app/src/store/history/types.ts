@@ -245,7 +245,7 @@ export type WorkspaceSummary = Pick<
 export interface SessionRecord {
   id: string;
   workspaceId: string;
-  /** Display title - default = first user message[0..36], else '未命名会话'. */
+  /** Display title - default = first user message[0..36], else '新会话'. */
   title: string;
   /** True = workflow session (carries an IRGraph snapshot); false = chat-only. */
   isWorkflow: boolean;
@@ -393,6 +393,11 @@ export interface HistoryConfig {
 
 export interface SessionCreateInput {
   workspaceId: string;
+  /**
+   * Optional client-supplied id. Lets the UI switch to a new session
+   * optimistically and persist with the same id, avoiding an id swap / flicker.
+   */
+  id?: string;
   title?: string;
   isWorkflow: boolean;
   messages?: Message[];

@@ -178,6 +178,51 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// The MCP / LSP / Skills tabs were migrated to the global Settings modal, which
+// renders ProjectSettingsModal in embedded single-tab mode. These helpers render
+// that exact embedded content so the migrated behavior stays covered here.
+async function renderEmbeddedProjectTab(
+  embedTab: 'mcp' | 'lsp' | 'skills',
+  scan: ProjectEnvironmentScan = unrealScan(),
+  targetWorkspace: WorkspaceSummary = workspace,
+  tauri = false,
+): Promise<{
+  container: HTMLDivElement;
+  cleanup: () => Promise<void>;
+}> {
+  vi.mocked(tauriAvailable).mockReturnValue(tauri);
+  vi.mocked(scanProjectEnvironment).mockResolvedValue(scan);
+  useStore.setState({
+    locale: 'zh-CN',
+    gameExpertSettings: DEFAULT_GAME_EXPERT_SETTINGS,
+  });
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root: Root = createRoot(container);
+
+  await act(async () => {
+    root.render(
+      <ProjectSettingsModal
+        workspace={targetWorkspace}
+        embedTab={embedTab}
+        onClose={() => undefined}
+      />,
+    );
+  });
+  await settle();
+
+  return {
+    container,
+    cleanup: async () => {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    },
+  };
+}
+
 describe('ProjectSettingsModal game project tabs', () => {
   it('keeps the modal open when the backdrop is clicked', async () => {
     const view = await renderProjectSettingsModal();
@@ -227,12 +272,12 @@ describe('ProjectSettingsModal game project tabs', () => {
         '游戏专家',
         '蓝图',
         '命令',
-        'MCP',
-        'LSP',
-        'Skills',
         '权限/自动化',
       ]);
       expect(tabText).not.toContain('游戏功能');
+      expect(tabText).not.toContain('MCP');
+      expect(tabText).not.toContain('LSP');
+      expect(tabText).not.toContain('Skills');
     } finally {
       await view.cleanup();
     }
@@ -248,9 +293,6 @@ describe('ProjectSettingsModal game project tabs', () => {
 
       expect(tabText).toEqual([
         '概览',
-        'MCP',
-        'LSP',
-        'Skills',
         '权限/自动化',
       ]);
       expect(tabText).not.toContain('Mesh 渠道');
@@ -261,6 +303,9 @@ describe('ProjectSettingsModal game project tabs', () => {
       expect(tabText).not.toContain('游戏专家');
       expect(tabText).not.toContain('蓝图');
       expect(tabText).not.toContain('命令');
+      expect(tabText).not.toContain('MCP');
+      expect(tabText).not.toContain('LSP');
+      expect(tabText).not.toContain('Skills');
     } finally {
       await view.cleanup();
     }
@@ -400,21 +445,13 @@ describe('ProjectSettingsModal game project tabs', () => {
         },
       ],
     };
-    const view = await renderProjectSettingsModal(scan, {
+    const view = await renderEmbeddedProjectTab('skills', scan, {
       ...workspace,
       path: 'E:\\OpenWorkflows',
       name: 'OpenWorkflows',
     });
 
     try {
-      const skillsTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'Skills');
-
-      await act(async () => {
-        (skillsTab as HTMLButtonElement).click();
-      });
-
       expect(view.container.textContent).toContain(
         '项目中 Codex Skill 数目是 0',
       );
@@ -638,17 +675,9 @@ describe('ProjectSettingsModal game project tabs', () => {
   });
 
   it('renders recommended LSP servers under the LSP tab', async () => {
-    const view = await renderProjectSettingsModal();
+    const view = await renderEmbeddedProjectTab('lsp');
 
     try {
-      const lspTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'LSP');
-
-      await act(async () => {
-        (lspTab as HTMLButtonElement).click();
-      });
-
       const registrySubTab = Array.from(
         view.container.querySelectorAll('button'),
       ).find((button) => button.textContent?.trim().startsWith('仓库'));
@@ -665,37 +694,27 @@ describe('ProjectSettingsModal game project tabs', () => {
   });
 
   it('keeps MCP and LSP project switches off for unconfigured projects', async () => {
-    const view = await renderProjectSettingsModal(unknownScan());
+    const mcpView = await renderEmbeddedProjectTab('mcp', unknownScan());
 
     try {
-      const mcpTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'MCP');
-
-      await act(async () => {
-        (mcpTab as HTMLButtonElement).click();
-      });
-
-      const mcpSwitch = view.container.querySelector(
+      const mcpSwitch = mcpView.container.querySelector(
         'input[type="checkbox"]',
       ) as HTMLInputElement | null;
       expect(mcpSwitch?.checked).toBe(false);
+    } finally {
+      await mcpView.cleanup();
+    }
 
-      const lspTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'LSP');
+    const lspView = await renderEmbeddedProjectTab('lsp', unknownScan());
 
-      await act(async () => {
-        (lspTab as HTMLButtonElement).click();
-      });
-
-      const lspSwitch = view.container.querySelector(
+    try {
+      const lspSwitch = lspView.container.querySelector(
         'input[type="checkbox"]',
       ) as HTMLInputElement | null;
       expect(lspSwitch?.checked).toBe(false);
-      expect(view.container.textContent).toMatch(/已启用\s*0/);
+      expect(lspView.container.textContent).toMatch(/已启用\s*0/);
     } finally {
-      await view.cleanup();
+      await lspView.cleanup();
     }
   });
 
@@ -759,22 +778,9 @@ describe('ProjectSettingsModal game project tabs', () => {
   });
 
   it('shows one-click Unity MCP setup for Unity projects', async () => {
-    const view = await renderProjectSettingsModal(unityScan());
+    const view = await renderEmbeddedProjectTab('mcp', unityScan());
 
     try {
-      const tabText = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).map((tab) => tab.textContent?.trim());
-      expect(tabText).not.toContain('蓝图');
-
-      const mcpTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'MCP');
-
-      await act(async () => {
-        (mcpTab as HTMLButtonElement).click();
-      });
-
       expect(view.container.textContent).toContain('Unity MCP');
       expect(view.container.textContent).toContain(
         'Packages/manifest.json',
@@ -786,17 +792,9 @@ describe('ProjectSettingsModal game project tabs', () => {
   });
 
   it('always shows all game MCP candidates even when the project engine is unknown', async () => {
-    const view = await renderProjectSettingsModal(unknownScan());
+    const view = await renderEmbeddedProjectTab('mcp', unknownScan());
 
     try {
-      const mcpTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'MCP');
-
-      await act(async () => {
-        (mcpTab as HTMLButtonElement).click();
-      });
-
       expect(view.container.textContent).toContain('游戏 MCP 候选');
       expect(view.container.textContent).toContain('Unity MCP');
       expect(view.container.textContent).toContain('Unreal MCP');
@@ -832,17 +830,13 @@ describe('ProjectSettingsModal game project tabs', () => {
         },
       },
     };
-    const view = await renderProjectSettingsModal(unrealScan(), configuredWorkspace);
+    const view = await renderEmbeddedProjectTab(
+      'lsp',
+      unrealScan(),
+      configuredWorkspace,
+    );
 
     try {
-      const lspTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'LSP');
-
-      await act(async () => {
-        (lspTab as HTMLButtonElement).click();
-      });
-
       expect(view.container.textContent).toMatch(/已启用\s*0/);
       const checkboxes = Array.from(
         view.container.querySelectorAll('input[type="checkbox"]'),
@@ -854,33 +848,43 @@ describe('ProjectSettingsModal game project tabs', () => {
   });
 
   it('auto-detects available recommended LSP commands without enabling them', async () => {
-    const view = await renderProjectSettingsModal();
+    vi.mocked(tauriAvailable).mockReturnValue(true);
+    vi.mocked(probeProjectLspServer).mockResolvedValue({
+      serverId: 'clangd',
+      ok: true,
+      status: 'available',
+      message: '命令可用：C:\\Program Files\\LLVM\\bin\\clangd.exe',
+      resolvedCommand: 'C:\\Program Files\\LLVM\\bin\\clangd.exe',
+      checkedAtMs: 1,
+    });
+    const view = await renderEmbeddedProjectTab('lsp');
 
     try {
-      vi.mocked(tauriAvailable).mockReturnValue(true);
-      vi.mocked(probeProjectLspServer).mockResolvedValue({
-        serverId: 'clangd',
-        ok: true,
-        status: 'available',
-        message: '命令可用：C:\\Program Files\\LLVM\\bin\\clangd.exe',
-        resolvedCommand: 'C:\\Program Files\\LLVM\\bin\\clangd.exe',
-        checkedAtMs: 1,
-      });
-
-      const lspTab = Array.from(
-        view.container.querySelectorAll('nav [role="tab"]'),
-      ).find((tab) => tab.textContent?.trim() === 'LSP');
-
-      await act(async () => {
-        (lspTab as HTMLButtonElement).click();
-      });
-      await settle();
-
+      // The probe effect skips while Tauri is unavailable. Switch to the registry
+      // sub-tab, enable Tauri, then change the LSP search query (an effect
+      // dependency) to re-run availability probes — mirroring the former
+      // tab-switch trigger before the migration.
       const registrySubTab = Array.from(
         view.container.querySelectorAll('button'),
       ).find((button) => button.textContent?.trim().startsWith('仓库'));
       await act(async () => {
         (registrySubTab as HTMLButtonElement).click();
+      });
+      await settle();
+
+      vi.mocked(tauriAvailable).mockReturnValue(true);
+      const searchInput = view.container.querySelector(
+        'input[placeholder*="搜索语言"]',
+      ) as HTMLInputElement | null;
+      await act(async () => {
+        if (searchInput) {
+          const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value',
+          )?.set;
+          setter?.call(searchInput, 'clang');
+          searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
       });
       await settle();
 

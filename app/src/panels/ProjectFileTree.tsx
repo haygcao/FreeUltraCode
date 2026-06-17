@@ -55,6 +55,11 @@ import {
   updateProjectFileDragPoint,
 } from '@/lib/projectFileDrag';
 import {
+  PROJECT_FILE_TREE_MIN_WIDTH,
+  projectFileTreeDefaultWidth,
+  projectFileTreeMaxWidth,
+} from '@/lib/projectFileTreeSizing';
+import {
   // 文件修改状态扫描功能已停用：这些 P4/VCS 扫描接口会对服务器（尤其是
   // Perforce 大型 depot）发起海量 reconcile 请求，存在压垮服务器的风险，
   // 因此整个“扫描文件修改状态”功能连同其后台扫描调用一并注释关闭。
@@ -1039,9 +1044,9 @@ export default function ProjectFileTree() {
 
   const { width, onResizeStart } = useResizableWidth({
     storageKey: 'freeultracode.projectFileTreeWidth.v1',
-    defaultWidth: 280,
-    min: 220,
-    max: 520,
+    defaultWidth: projectFileTreeDefaultWidth(),
+    min: PROJECT_FILE_TREE_MIN_WIDTH,
+    max: projectFileTreeMaxWidth(),
     edge: 'left',
   });
 

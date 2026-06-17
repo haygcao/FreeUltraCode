@@ -35,6 +35,7 @@ import {
   saveGatewayConfig,
   setActiveGatewaySelection,
 } from '@/lib/gatewayConfig';
+import { tauriAvailable } from '@/lib/tauri';
 import type { RuntimeAdapterId } from '@/lib/adapters';
 import type { GatewayProvider, GatewayTransport } from '@/lib/modelGateway/types';
 
@@ -112,6 +113,58 @@ export const BASE_URL_STORAGE = 'fuc_anthropic_base_url';
 
 const hasWindow = (): boolean => typeof window !== 'undefined';
 
+/**
+ * Provider metadata used to live only in localStorage, whose ~5MB quota is
+ * shared with everything else. Once it fills, `setItem` throws, the write is
+ * silently lost, and a freshly-added channel "vanishes" on reopen. So — exactly
+ * like `gatewayConfig` and `generationSettingsStore` — under Tauri these keys
+ * are persisted durably to disk (the source of truth), with localStorage kept
+ * as a synchronous mirror so reads stay sync and the browser/dev build keeps
+ * working unchanged.
+ */
+const DISK_BACKED_PATHS: Readonly<Record<string, string>> = {
+  [PROVIDERS_STORAGE]: 'settings/providers.v1.json',
+  [ACTIVE_PROVIDER_BY_KIND_STORAGE]: 'settings/activeProviderByKind.v1.json',
+  [ACTIVE_PROVIDER_STORAGE]: 'settings/activeProvider.v1.json',
+};
+
+// key -> serialized value. Authoritative in-memory view for disk-backed keys
+// once initializeApiConfigStore() has run under Tauri.
+const diskCache = new Map<string, string>();
+let diskReady = false;
+
+function tauriBacked(): boolean {
+  return diskReady && tauriAvailable();
+}
+
+async function getInvoke() {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke;
+}
+
+// Serialize write-behind per disk key. Each scheduled flush writes the CURRENT
+// cache value (not a stale snapshot), so even when two writes to the same key
+// race within one operation — e.g. loadProviders() migrating `[]` and then
+// addProvider() saving `[new]` — the last-set cache value always wins on disk.
+const pendingFlush = new Map<string, Promise<void>>();
+
+function diskWriteSoon(key: string, relPath: string): void {
+  if (!tauriAvailable()) return;
+  const prev = pendingFlush.get(key) ?? Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(async () => {
+      const value = diskCache.has(key) ? diskCache.get(key)! : 'null';
+      try {
+        const invoke = await getInvoke();
+        await invoke<void>('history_write_json', { relPath, json: value });
+      } catch (err) {
+        console.error('[apiConfig] disk write failed', relPath, err);
+      }
+    });
+  pendingFlush.set(key, next);
+}
+
 /** Generate a stable id; `crypto.randomUUID` with a best-effort fallback. */
 function genId(): string {
   try {
@@ -124,7 +177,21 @@ function genId(): string {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function localStorageSet(key: string, value: string): boolean {
+  try {
+    if (!hasWindow()) return false;
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function rawGet(key: string): string | null {
+  if (tauriBacked() && key in DISK_BACKED_PATHS) {
+    const cached = diskCache.get(key);
+    if (cached != null) return cached && cached !== 'null' ? cached : null;
+  }
   try {
     if (!hasWindow()) return null;
     return window.localStorage.getItem(key);
@@ -134,18 +201,26 @@ function rawGet(key: string): string | null {
 }
 
 function rawSet(key: string, value: string): void {
-  try {
-    if (!hasWindow()) return;
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* ignore */
+  const relPath = DISK_BACKED_PATHS[key];
+  if (relPath && tauriAvailable()) {
+    // Disk is the durable sink; cache+disk always accept the write even when
+    // the localStorage mirror is full, so a new channel never silently vanishes.
+    diskCache.set(key, value);
+    localStorageSet(key, value); // best-effort mirror
+    diskWriteSoon(key, relPath);
+    return;
   }
+  localStorageSet(key, value);
 }
 
 function rawRemove(key: string): void {
+  const relPath = DISK_BACKED_PATHS[key];
+  if (relPath && tauriAvailable()) {
+    diskCache.delete(key);
+    diskWriteSoon(key, relPath);
+  }
   try {
-    if (!hasWindow()) return;
-    window.localStorage.removeItem(key);
+    if (hasWindow()) window.localStorage.removeItem(key);
   } catch {
     /* ignore */
   }
@@ -158,6 +233,57 @@ function notifyProviderConfigChanged(): void {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Boot-time hydrate of the disk-backed provider keys into the in-memory cache
+ * so the synchronous loaders see durable data. Migrates an existing
+ * localStorage value to disk once when disk has nothing yet. Must be awaited
+ * before the store seed / first render reads providers. No-op in the browser.
+ */
+export async function initializeApiConfigStore(): Promise<void> {
+  if (diskReady) return;
+  if (!tauriAvailable()) return;
+  try {
+    const invoke = await getInvoke();
+    await Promise.all(
+      Object.entries(DISK_BACKED_PATHS).map(async ([key, relPath]) => {
+        const fromDisk = await invoke<string | null>('history_read_json', {
+          relPath,
+        });
+        if (fromDisk != null && fromDisk !== '' && fromDisk !== 'null') {
+          diskCache.set(key, fromDisk);
+          // Keep the localStorage mirror in sync for any sync reader.
+          localStorageSet(key, fromDisk);
+          return;
+        }
+        // One-time migration: seed disk from the legacy localStorage value.
+        let legacy: string | null = null;
+        try {
+          legacy = hasWindow() ? window.localStorage.getItem(key) : null;
+        } catch {
+          legacy = null;
+        }
+        if (legacy != null) {
+          diskCache.set(key, legacy);
+          diskWriteSoon(key, relPath);
+        }
+      }),
+    );
+  } catch (err) {
+    console.warn(
+      '[apiConfig] disk init failed; keeping localStorage fallback',
+      err,
+    );
+  } finally {
+    diskReady = true;
+  }
+}
+
+/** Test-only: reset the in-memory disk cache between cases. */
+export function resetApiConfigStoreForTests(): void {
+  diskCache.clear();
+  diskReady = false;
 }
 
 const PROVIDER_KINDS: ProviderKind[] = ['anthropic', 'codex', 'gemini'];

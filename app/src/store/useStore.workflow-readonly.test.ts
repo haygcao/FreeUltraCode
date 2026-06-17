@@ -1017,7 +1017,7 @@ describe('workflow read-only guard', () => {
 
     const state = useStore.getState();
     const expectedName =
-      state.locale === 'en-US' ? 'Untitled Session' : '未命名会话';
+      state.locale === 'en-US' ? 'New Session' : '新会话';
     expect(state.workflow.meta.simple).toBe(true);
     expect(state.workflow.meta.name).toBe(expectedName);
     expect(state.activeSessionId).not.toBe(ACTIVE_SESSION_KEY.sessionId);

@@ -1,13 +1,16 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { FileCode, FolderOpen } from 'lucide-react';
+import { FileCode, FolderOpen, ImageOff, Loader2 } from 'lucide-react';
 import {
   displayFileRefLabel,
   displayFileRefPath,
   fileRefLineSuffix,
+  isImageFileRef,
   type FileRef,
 } from './lib/filePath';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
+import { previewLocalFile } from '@/lib/tauri';
+import { createObjectUrlFromBase64, revokeObjectUrl } from '@/lib/objectUrl';
 
 export interface OpenFileIntent {
   reveal?: boolean;
@@ -42,6 +45,64 @@ function contextMenuPosition(event: ReactMouseEvent): ContextMenuPosition {
   };
 }
 
+type ThumbState =
+  | { status: 'loading' }
+  | { status: 'ready'; url: string }
+  | { status: 'error' };
+
+/**
+ * Lazily load a small in-memory preview of an image file reference so the chip
+ * can show its thumbnail. Reuses the same `preview_local_file` backend command
+ * the right-side drawer relies on, and revokes the object URL on cleanup.
+ */
+function useImageThumbnail(
+  path: string | null,
+  cwd: string | undefined,
+): ThumbState {
+  const [state, setState] = useState<ThumbState>({ status: 'loading' });
+
+  useEffect(() => {
+    if (!path) {
+      setState({ status: 'error' });
+      return;
+    }
+
+    let disposed = false;
+    let createdUrl: string | null = null;
+    setState({ status: 'loading' });
+
+    void previewLocalFile(path, { cwd })
+      .then(async (file) => {
+        if (disposed) return;
+        if (file.kind !== 'image' || !file.base64 || !file.mime) {
+          setState({ status: 'error' });
+          return;
+        }
+        try {
+          const url = await createObjectUrlFromBase64(file.base64, file.mime);
+          if (disposed) {
+            revokeObjectUrl(url);
+            return;
+          }
+          createdUrl = url;
+          setState({ status: 'ready', url });
+        } catch {
+          if (!disposed) setState({ status: 'error' });
+        }
+      })
+      .catch(() => {
+        if (!disposed) setState({ status: 'error' });
+      });
+
+    return () => {
+      disposed = true;
+      revokeObjectUrl(createdUrl);
+    };
+  }, [path, cwd]);
+
+  return state;
+}
+
 /**
  * A clickable chip for a local file reference (e.g. `src/store/useStore.ts:42`).
  * Shows the basename + optional `:line` suffix; the full path is in the tooltip.
@@ -64,6 +125,8 @@ export default function FileChip({
   const displayPath = displayFileRefPath(refData, cwd);
   const label = displayFileRefLabel(refData, cwd);
   const interactive = typeof onOpenFile === 'function';
+  const isImage = isImageFileRef(refData);
+  const thumb = useImageThumbnail(isImage ? displayPath : null, cwd);
 
   useEffect(() => {
     if (!menu) return;
@@ -100,6 +163,68 @@ export default function FileChip({
     setMenu(contextMenuPosition(event));
   };
 
+  const contextMenu = menu && (
+    <div
+      role="menu"
+      className="ai-file-chip-menu fixed z-[70] min-w-[168px] rounded-md border border-border bg-panel py-1 text-xs text-fg shadow-xl"
+      style={{ left: menu.x, top: menu.y }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        onClick={revealFile}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-border-soft"
+      >
+        <FolderOpen size={13} className="shrink-0 text-fg-faint" />
+        <span className="truncate">{t(locale, 'chat.reveal')}</span>
+      </button>
+    </div>
+  );
+
+  // Image references render as a clickable thumbnail card instead of a path
+  // chip. Clicking still routes through onOpenFile so the right-side preview
+  // drawer opens exactly as before. If the thumbnail can't be loaded (browser
+  // mode, missing file) we fall through to the plain path chip below.
+  if (isImage && thumb.status !== 'error') {
+    return (
+      <span className="relative inline-flex max-w-full align-top">
+        <button
+          type="button"
+          disabled={!interactive}
+          onClick={interactive ? openFile : undefined}
+          onContextMenu={openContextMenu}
+          title={
+            interactive
+              ? `${label}\n${t(locale, 'chat.revealHint')}`
+              : label
+          }
+          className={
+            'ai-file-chip-thumb group relative inline-flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-panel-2 align-top ' +
+            (interactive ? 'cursor-pointer hover:border-accent' : 'cursor-default')
+          }
+        >
+          {thumb.status === 'ready' ? (
+            <img
+              src={thumb.url}
+              alt={refData.basename}
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <Loader2 size={16} className="animate-spin text-accent" />
+          )}
+        </button>
+        {contextMenu}
+      </span>
+    );
+  }
+
   return (
     <span className="relative inline-flex max-w-full align-baseline">
       <button
@@ -119,7 +244,11 @@ export default function FileChip({
             : 'cursor-default text-fg-dim')
         }
       >
-        <FileCode size={11} className="shrink-0 opacity-70" />
+        {isImage ? (
+          <ImageOff size={11} className="shrink-0 opacity-70" />
+        ) : (
+          <FileCode size={11} className="shrink-0 opacity-70" />
+        )}
         <span className="ai-file-chip__label min-w-0 whitespace-normal break-all text-left">
           {displayPath}
           {lineSuffix && (
@@ -129,29 +258,7 @@ export default function FileChip({
           )}
         </span>
       </button>
-      {menu && (
-        <div
-          role="menu"
-          className="ai-file-chip-menu fixed z-[70] min-w-[168px] rounded-md border border-border bg-panel py-1 text-xs text-fg shadow-xl"
-          style={{ left: menu.x, top: menu.y }}
-          onPointerDown={(event) => event.stopPropagation()}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={revealFile}
-            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-border-soft"
-          >
-            <FolderOpen size={13} className="shrink-0 text-fg-faint" />
-            <span className="truncate">{t(locale, 'chat.reveal')}</span>
-          </button>
-        </div>
-      )}
+      {contextMenu}
     </span>
   );
 }

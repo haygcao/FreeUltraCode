@@ -56,6 +56,24 @@ export function displayFileRefLabel(ref: FileRef, cwd?: string): string {
   return `${displayFileRefPath(ref, cwd)}${fileRefLineSuffix(ref)}`;
 }
 
+/** Browser-previewable raster/vector image extensions (kept in sync with KNOWN_EXT). */
+const IMAGE_EXT = new Set([
+  'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'pjpeg', 'pjp', 'gif', 'webp',
+  'bmp', 'dib', 'ico', 'cur', 'svg', 'avif',
+]);
+
+/** True when the reference points at an image we can show as an inline thumbnail. */
+export function isImageFileRef(ref: Pick<FileRef, 'path'>): boolean {
+  // Derive the extension straight from the path's basename. We can't reuse
+  // extensionOf() here because it splits on ":" to drop a :line suffix, which
+  // would truncate a Windows drive path (`E:\...`) to just the drive letter.
+  // A parsed FileRef.path never carries a line suffix, so the basename is safe.
+  const base = basenameOf(ref.path).replace(/[\\/]+$/, '');
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0 || dot === base.length - 1) return false;
+  return IMAGE_EXT.has(base.slice(dot + 1).toLowerCase());
+}
+
 export interface FileRefParseOptions {
   /** Markdown links / inline code are explicit file surfaces, so spaces are OK. */
   allowSpaces?: boolean;

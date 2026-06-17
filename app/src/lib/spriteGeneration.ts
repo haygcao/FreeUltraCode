@@ -5,6 +5,7 @@ import {
   type ImageGenerationSettings,
   type ImageProviderId,
 } from './imageGeneration';
+import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
 
 export type SpriteProviderId = 'ludo-sprite' | 'local-comfyui-sprite';
 
@@ -87,6 +88,7 @@ export interface SpriteGenerationResult {
 }
 
 const STORAGE_KEY = 'freeultracode.spriteGeneration.v1';
+const SETTINGS_REL_PATH = 'settings/spriteGeneration.v1.json';
 const MIN_FRAME_COUNT = 1;
 const MAX_FRAME_COUNT = 64;
 const MIN_FRAME_SIZE = 16;
@@ -165,10 +167,6 @@ export const DEFAULT_SPRITE_GENERATION_SETTINGS: SpriteGenerationSettings = {
   rejectEdgeTouch: true,
   fitScale: 0.92,
 };
-
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
 
 export function isSpriteProviderId(value: unknown): value is SpriteProviderId {
   return typeof value === 'string' && SPRITE_PROVIDER_BY_ID.has(value as SpriteProviderId);
@@ -340,9 +338,8 @@ export function normalizeSpriteGenerationSettings(
 }
 
 export function loadSpriteGenerationSettings(): SpriteGenerationSettings {
-  if (!hasStorage()) return DEFAULT_SPRITE_GENERATION_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     return normalizeSpriteGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_SPRITE_GENERATION_SETTINGS;
@@ -350,15 +347,14 @@ export function loadSpriteGenerationSettings(): SpriteGenerationSettings {
 }
 
 export function saveSpriteGenerationSettings(settings: SpriteGenerationSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(normalizeSpriteGenerationSettings(settings)),
-    );
+  const payload = JSON.stringify(normalizeSpriteGenerationSettings(settings));
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    console.error('[spriteGeneration] failed to persist settings');
+    return;
+  }
+  if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('fuc:sprite-generation-settings-changed'));
-  } catch {
-    /* non-fatal */
   }
 }
 

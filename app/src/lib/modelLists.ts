@@ -9,12 +9,15 @@ import {
   type FreeChannel,
 } from '@/lib/freeChannels';
 import { listLocalModels, listRemoteModels, tauriAvailable } from '@/lib/tauri';
+import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
 
 const MODEL_LIST_CACHE_STORAGE = 'fuc_model_list_cache_v1';
+const MODEL_LIST_CACHE_REL_PATH = 'settings/modelListCache.v1.json';
 // Models the user explicitly removed (via the × button), keyed by the same cache
 // key. These stay hidden even if they are built-in catalog entries or come back
 // from a later "fetch models" call, so a deleted/outdated model does not reappear.
 const MODEL_LIST_HIDDEN_STORAGE = 'fuc_model_list_hidden_v1';
+const MODEL_LIST_HIDDEN_REL_PATH = 'settings/modelListHidden.v1.json';
 
 interface CachedModelList {
   models: string[];
@@ -40,7 +43,7 @@ function hasWindow(): boolean {
 function readCache(): Record<string, CachedModelList> {
   try {
     if (!hasWindow()) return {};
-    const raw = window.localStorage.getItem(MODEL_LIST_CACHE_STORAGE);
+    const raw = readSettingsRaw(MODEL_LIST_CACHE_REL_PATH, MODEL_LIST_CACHE_STORAGE);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'object' || parsed === null) return {};
@@ -65,15 +68,16 @@ function readCache(): Record<string, CachedModelList> {
 }
 
 function writeCache(cache: Record<string, CachedModelList>): void {
-  try {
-    if (!hasWindow()) return;
-    const next = JSON.stringify(cache);
-    if (window.localStorage.getItem(MODEL_LIST_CACHE_STORAGE) === next) return;
-    window.localStorage.setItem(MODEL_LIST_CACHE_STORAGE, next);
-    window.dispatchEvent(new Event('fuc:model-list-changed'));
-  } catch {
-    /* ignore */
+  if (!hasWindow()) return;
+  const next = JSON.stringify(cache);
+  if (readSettingsRaw(MODEL_LIST_CACHE_REL_PATH, MODEL_LIST_CACHE_STORAGE) === next) {
+    return;
   }
+  if (!writeSettingsRaw(MODEL_LIST_CACHE_REL_PATH, MODEL_LIST_CACHE_STORAGE, next)) {
+    console.error('[modelLists] failed to persist model cache');
+    return;
+  }
+  window.dispatchEvent(new Event('fuc:model-list-changed'));
 }
 
 function sameModels(a: string[], b: string[]): boolean {
@@ -142,7 +146,10 @@ export function removeCachedModel(key: string, model: string): CachedModelList |
 function readHidden(): Record<string, string[]> {
   try {
     if (!hasWindow()) return {};
-    const raw = window.localStorage.getItem(MODEL_LIST_HIDDEN_STORAGE);
+    const raw = readSettingsRaw(
+      MODEL_LIST_HIDDEN_REL_PATH,
+      MODEL_LIST_HIDDEN_STORAGE,
+    );
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -163,15 +170,20 @@ function readHidden(): Record<string, string[]> {
 }
 
 function writeHidden(hidden: Record<string, string[]>): void {
-  try {
-    if (!hasWindow()) return;
-    const next = JSON.stringify(hidden);
-    if (window.localStorage.getItem(MODEL_LIST_HIDDEN_STORAGE) === next) return;
-    window.localStorage.setItem(MODEL_LIST_HIDDEN_STORAGE, next);
-    window.dispatchEvent(new Event('fuc:model-list-changed'));
-  } catch {
-    /* ignore */
+  if (!hasWindow()) return;
+  const next = JSON.stringify(hidden);
+  if (
+    readSettingsRaw(MODEL_LIST_HIDDEN_REL_PATH, MODEL_LIST_HIDDEN_STORAGE) === next
+  ) {
+    return;
   }
+  if (
+    !writeSettingsRaw(MODEL_LIST_HIDDEN_REL_PATH, MODEL_LIST_HIDDEN_STORAGE, next)
+  ) {
+    console.error('[modelLists] failed to persist hidden models');
+    return;
+  }
+  window.dispatchEvent(new Event('fuc:model-list-changed'));
 }
 
 function hiddenSet(key: string): Set<string> {
@@ -234,7 +246,7 @@ export function removeUserModel(key: string, model: string): void {
 }
 
 
-/** Cache key for image/music provider model lists (keyed by base URL). */
+/** Cache key for generation provider model lists (keyed by base URL). */
 export function endpointModelCacheKey(
   scope: 'image' | 'music' | 'video' | 'sprite' | 'speech' | 'mesh',
   providerId: string,

@@ -130,6 +130,16 @@ describe('AIDock pasted clipboard images', () => {
     tauriMocks.saveClipboardImage.mockResolvedValue(
       'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
     );
+    tauriMocks.previewLocalFile.mockResolvedValue({
+      path: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      fileName: 'shot.png',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 3,
+      truncated: false,
+      text: null,
+      base64: 'AQID',
+    });
     const view = await renderDock();
 
     try {
@@ -166,6 +176,16 @@ describe('AIDock pasted clipboard images', () => {
     tauriMocks.saveClipboardImage.mockResolvedValue(
       'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
     );
+    tauriMocks.previewLocalFile.mockResolvedValue({
+      path: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      fileName: 'shot.png',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 3,
+      truncated: false,
+      text: null,
+      base64: 'AQID',
+    });
     const view = await renderDock();
 
     try {
@@ -246,6 +266,51 @@ describe('AIDock pasted clipboard images', () => {
       );
       expect(view.container.textContent).toContain(
         'E:\\OpenWorkflows\\app\\src\\App.tsx',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('renders an unsent draft path as a clickable preview chip', async () => {
+    resetStore();
+    useStore.setState({
+      composerDraft:
+        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png 没什么',
+    });
+    tauriMocks.previewLocalFile.mockResolvedValue({
+      path: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      fileName: 'shot.png',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 3,
+      truncated: false,
+      text: null,
+      base64: 'AQID',
+    });
+    const view = await renderDock();
+
+    try {
+      const strip = view.container.querySelector(
+        '[data-testid="composer-file-refs"]',
+      );
+      expect(strip).not.toBeNull();
+      // Image references render as a clickable thumbnail card; the full path
+      // rides along in the button's title/alt rather than its text content.
+      const chip = strip!.querySelector<HTMLButtonElement>('.ai-file-chip-thumb');
+      expect(chip).not.toBeNull();
+      expect(chip!.title).toContain(
+        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      );
+
+      await act(async () => {
+        chip!.click();
+        await flushAsync();
+      });
+
+      expect(tauriMocks.previewLocalFile).toHaveBeenCalledWith(
+        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+        { cwd: 'E:\\OpenWorkflows' },
       );
     } finally {
       await view.cleanup();

@@ -57,7 +57,6 @@ import {
   personalInstructionsKey,
   personalInstructionsSample,
   selectionFromPersonalInstructionsKey,
-  shouldInjectPersonalInstructions,
   type PersonalInstructionsByModel,
 } from '@/core/personalInstructions';
 import {
@@ -84,7 +83,6 @@ import {
   runtimeAdapterLabel,
   type RuntimeAdapterId,
 } from '@/lib/adapters';
-import { DEFAULT_MODEL } from '@/lib/anthropic';
 import {
   addProvider,
   deleteProvider,
@@ -116,6 +114,10 @@ import {
 } from '@/lib/slashCommands';
 import LocalModelSetupDialog from '@/components/LocalModelSetupDialog';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import ProjectSettingsModal, {
+  type ProjectEmbedTab,
+} from '@/panels/ProjectSettingsModal';
+import type { WorkspaceSummary } from '@/store/history/types';
 import { EditableModelSelect } from '@/components/EditableModelSelect';
 import {
   APP_VERSION,
@@ -190,7 +192,9 @@ import {
 import {
   canRefreshFreeChannelModels,
   endpointModelCacheKey,
+  freeChannelModelCacheKey,
   freeChannelModelOptions,
+  providerModelCacheKey,
   providerModelOptions,
   refreshEndpointModels,
   refreshFreeChannelModels,
@@ -328,6 +332,9 @@ type SettingsTab =
   | 'gameExperts'
   | 'consensus'
   | 'commands'
+  | 'mcp'
+  | 'lsp'
+  | 'skills'
   | 'shortcuts'
   | 'appearance'
   | 'about';
@@ -347,6 +354,9 @@ const tabs: { id: SettingsTab; labelKey: TranslationKey; Icon: LucideIcon }[] = 
   { id: 'videoGeneration', labelKey: 'settings.tabs.videoGeneration', Icon: Video },
   { id: 'speechGeneration', labelKey: 'settings.tabs.speechGeneration', Icon: Volume2 },
   { id: 'commands', labelKey: 'settings.tabs.commands', Icon: SlashSquare },
+  { id: 'mcp', labelKey: 'settings.tabs.mcp', Icon: Terminal },
+  { id: 'lsp', labelKey: 'settings.tabs.lsp', Icon: Languages },
+  { id: 'skills', labelKey: 'settings.tabs.skills', Icon: Box },
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', Icon: Keyboard },
   { id: 'appearance', labelKey: 'settings.tabs.appearance', Icon: Palette },
   { id: 'about', labelKey: 'settings.tabs.about', Icon: Info },
@@ -698,6 +708,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <ConsensusSettings locale={locale} />
               ) : tab === 'commands' ? (
                 <CommandsSettings locale={locale} />
+              ) : tab === 'mcp' || tab === 'lsp' || tab === 'skills' ? (
+                <ErrorBoundary label={t(locale, `settings.tabs.${tab}`)}>
+                  <ProjectToolsSettings locale={locale} embedTab={tab} />
+                </ErrorBoundary>
               ) : tab === 'shortcuts' ? (
                 <ShortcutsSettings
                   locale={locale}
@@ -714,6 +728,52 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Hosts the project-scoped MCP / LSP / Skills tabs inside the global Settings
+ * modal. It resolves the active workspace and renders ProjectSettingsModal in
+ * embedded mode (only the requested tab's content), so the UI and behavior are
+ * identical to the former project-settings tabs. When no workspace is active,
+ * it shows a short hint instead.
+ */
+function ProjectToolsSettings({
+  locale,
+  embedTab,
+}: {
+  locale: Locale;
+  embedTab: ProjectEmbedTab;
+}) {
+  const activeWorkspaceId = useStore((s) => s.activeWorkspaceId);
+  const workspaces = useStore((s) => s.workspaces);
+  const workspace = useMemo<WorkspaceSummary | null>(() => {
+    if (activeWorkspaceId) {
+      const match = workspaces.find((item) => item.id === activeWorkspaceId);
+      if (match) return match;
+    }
+    return workspaces[0] ?? null;
+  }, [activeWorkspaceId, workspaces]);
+
+  if (!workspace) {
+    return (
+      <div className="rounded-md border border-border-soft bg-bg-alt px-4 py-6 text-center text-sm text-fg-faint">
+        {locale === 'zh-CN'
+          ? '请先打开或选择一个项目，再配置 MCP / LSP / Skills。'
+          : 'Open or select a project first to configure MCP / LSP / Skills.'}
+      </div>
+    );
+  }
+
+  return (
+    <ProjectSettingsModal
+      // Remount when the active workspace changes so project-scoped state
+      // (scan, settings, lifecycle) re-initializes for the new workspace.
+      key={`${workspace.id}:${embedTab}`}
+      workspace={workspace}
+      embedTab={embedTab}
+      onClose={() => undefined}
+    />
   );
 }
 
@@ -1259,7 +1319,6 @@ function PersonalizationModelCard({
   onSave: () => void;
 }) {
   const dirty = draft !== savedInstructions;
-  const injects = shouldInjectPersonalInstructions(entry.selection.adapter);
   return (
     <div className="rounded-lg border border-border bg-bg-alt p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -1274,11 +1333,6 @@ function PersonalizationModelCard({
         {entry.saved && (
           <span className="rounded-md border border-border bg-panel px-2 py-0.5 text-[11px] text-fg-dim">
             {t(locale, 'settings.personalizationSaved')}
-          </span>
-        )}
-        {!injects && (
-          <span className="rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[11px] text-amber-200">
-            {t(locale, 'settings.personalizationCodexSkipped')}
           </span>
         )}
       </div>
@@ -2406,9 +2460,7 @@ function DefaultChannelRow({
     canUseCliFallback: runtime.canUseCliFallback,
   });
   const modelOptions = providerModelOptions(draftProvider);
-  const modelSelectValue = modelOptions.includes(modelValue.trim())
-    ? modelValue.trim()
-    : '';
+  const modelCacheKey = providerModelCacheKey(draftProvider);
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const commitProvider = (patch: Partial<ProviderDraft>): boolean => {
@@ -2443,10 +2495,36 @@ function DefaultChannelRow({
       apiKey: next.apiKey,
       baseUrl: next.baseUrl,
       model: next.model,
+      models: next.models,
       transport: next.transport,
     });
     onChange();
     return true;
+  };
+
+  const commitModelList = ({
+    add,
+    remove,
+    select,
+  }: {
+    add?: string;
+    remove?: string;
+    select?: string;
+  }) => {
+    let models = draftProvider.models ?? [];
+    if (add !== undefined) {
+      models = uniqueStringOptions([add, modelValue, ...models]);
+    }
+    if (remove !== undefined) {
+      models = removeGenerationModelOption(models, remove);
+    }
+    if (select !== undefined && select.trim()) {
+      models = uniqueStringOptions([select, ...models]);
+    }
+    commitProvider({
+      model: select !== undefined ? select.trim() || undefined : draftProvider.model,
+      models: models.length > 0 ? models : undefined,
+    });
   };
 
   const refreshModels = async () => {
@@ -2466,9 +2544,7 @@ function DefaultChannelRow({
   };
 
   return (
-    <div
-      className="relative space-y-3 overflow-hidden rounded-lg border border-border bg-bg-alt p-4 transition-colors"
-    >
+    <div className="relative space-y-3 rounded-lg border border-border bg-bg-alt p-4 transition-colors">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <GroupDot className={dotClassName} />
@@ -2578,52 +2654,30 @@ function DefaultChannelRow({
           </div>
         </label>
 
-        <label className="block space-y-1 lg:col-span-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.freeChannels.modelLabel')}
-            </span>
-            <button
-              type="button"
-              onClick={() => void refreshModels()}
-              disabled={modelRefresh.loading}
-              className="inline-flex items-center gap-1 rounded border border-border bg-panel px-2 py-0.5 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <RefreshCw
-                size={11}
-                strokeWidth={2}
-                className={modelRefresh.loading ? 'animate-spin' : undefined}
-              />
-              {t(locale, 'settings.models.fetchModels')}
-            </button>
-          </div>
-          <select
-            value={modelSelectValue}
-            onChange={(event) => {
-              if (!event.target.value) return;
-              setModelValue(event.target.value);
-              commitProvider({ model: event.target.value });
-            }}
-            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-          >
-            <option value="">{t(locale, 'settings.models.selectModel')}</option>
-            {modelOptions.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
-          {modelRefresh.error && (
-            <p className="text-[11px] leading-relaxed text-amber-300">
-              {modelRefresh.error}
-            </p>
-          )}
-          {duplicateError && (
-            <p className="text-[11px] leading-relaxed text-rose-300">
-              {duplicateError}
-            </p>
-          )}
-        </label>
+        <EditableModelSelect
+          cacheKey={modelCacheKey}
+          builtins={modelOptions}
+          value={modelValue.trim()}
+          label={t(locale, 'settings.freeChannels.modelLabel')}
+          locale={locale}
+          loading={modelRefresh.loading}
+          error={modelRefresh.error}
+          canRefresh={true}
+          onChange={(next) => {
+            setModelValue(next);
+            commitModelList({ select: next });
+          }}
+          onAddModel={(next) => commitModelList({ add: next, select: next })}
+          onRemoveModel={(removed, nextValue) =>
+            commitModelList({ remove: removed, select: nextValue })
+          }
+          onRefresh={() => void refreshModels()}
+        />
+        {duplicateError && (
+          <p className="text-[11px] leading-relaxed text-rose-300 lg:col-span-2">
+            {duplicateError}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -2801,6 +2855,32 @@ function ProviderEditor({
       });
     }
   };
+  const modelCacheKey = providerModelCacheKey(editor.draft);
+  const modelOptions = providerModelOptions(editor.draft);
+  const patchModelList = ({
+    add,
+    remove,
+    select,
+  }: {
+    add?: string;
+    remove?: string;
+    select?: string;
+  }) => {
+    let models = editor.draft.models ?? [];
+    if (add !== undefined) {
+      models = uniqueStringOptions([add, editor.draft.model ?? '', ...models]);
+    }
+    if (remove !== undefined) {
+      models = removeGenerationModelOption(models, remove);
+    }
+    if (select !== undefined && select.trim()) {
+      models = uniqueStringOptions([select, ...models]);
+    }
+    patchDraft({
+      model: select !== undefined ? select.trim() || undefined : editor.draft.model,
+      models: models.length > 0 ? models : undefined,
+    });
+  };
 
   const handleSave = () => {
     const next = trimProviderDraft(editor.draft);
@@ -2946,19 +3026,26 @@ function ProviderEditor({
               mono
               fullWidth
             />
-            <ModelTextField
+            <EditableModelSelect
+              className="block space-y-1 sm:col-span-2"
+              cacheKey={modelCacheKey}
+              builtins={modelOptions}
               label={t(locale, 'settings.models.defaultModel')}
               value={editor.draft.model ?? ''}
-              onChange={(value) => patchDraft({ model: value })}
-              placeholder={DEFAULT_MODEL}
-              description={t(locale, 'settings.models.modelMetadataHelp')}
-              options={providerModelOptions(editor.draft)}
+              locale={locale}
               loading={modelRefresh.loading}
               error={modelRefresh.error}
-              refreshLabel={t(locale, 'settings.models.fetchModels')}
-              selectLabel={t(locale, 'settings.models.selectModel')}
-              onRefresh={refreshModels}
+              canRefresh={true}
+              onChange={(next) => patchModelList({ select: next })}
+              onAddModel={(next) => patchModelList({ add: next, select: next })}
+              onRemoveModel={(removed, nextValue) =>
+                patchModelList({ remove: removed, select: nextValue })
+              }
+              onRefresh={() => void refreshModels()}
             />
+            <p className="-mt-3 text-[11px] leading-relaxed text-fg-faint sm:col-span-2">
+              {t(locale, 'settings.models.modelMetadataHelp')}
+            </p>
             <div className="block space-y-1 sm:col-span-2">
               <div className="flex items-center justify-between gap-3">
                 <label
@@ -3053,11 +3140,13 @@ function providerDraft(provider: ProviderDraft): ProviderDraft {
     baseUrl: provider.baseUrl,
     transport: provider.transport,
     model: provider.model ?? '',
+    models: uniqueStringOptions(provider.models ?? []),
   };
 }
 
 function trimProviderDraft(draft: ProviderDraft): ProviderDraft {
   const model = draft.model?.trim();
+  const models = uniqueStringOptions(draft.models ?? []);
   const transport =
     draft.kind === 'anthropic' ? draft.transport ?? 'direct' : 'cli';
   return {
@@ -3067,19 +3156,24 @@ function trimProviderDraft(draft: ProviderDraft): ProviderDraft {
     baseUrl: draft.baseUrl.trim(),
     transport,
     ...(model ? { model } : {}),
+    ...(models.length > 0 ? { models } : {}),
   };
 }
 
 function providerDraftChanged(a: ProviderDraft, b: ProviderDraft): boolean {
   const left = trimProviderDraft(a);
   const right = trimProviderDraft(b);
+  const leftModels = left.models ?? [];
+  const rightModels = right.models ?? [];
   return (
     left.kind !== right.kind ||
     left.name !== right.name ||
     left.apiKey !== right.apiKey ||
     left.baseUrl !== right.baseUrl ||
     (left.transport ?? '') !== (right.transport ?? '') ||
-    (left.model ?? '') !== (right.model ?? '')
+    (left.model ?? '') !== (right.model ?? '') ||
+    leftModels.length !== rightModels.length ||
+    leftModels.some((model, index) => model !== rightModels[index])
   );
 }
 
@@ -3171,86 +3265,6 @@ function TextField({
   );
 }
 
-function ModelTextField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  description,
-  options,
-  loading,
-  error,
-  refreshLabel,
-  selectLabel,
-  onRefresh,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  description?: string;
-  options: string[];
-  loading: boolean;
-  error: string | null;
-  refreshLabel: string;
-  selectLabel: string;
-  onRefresh: () => void;
-}) {
-  const modelOptions = uniqueStringOptions([value, ...options]);
-  const selectValue = modelOptions.includes(value.trim()) ? value.trim() : '';
-  return (
-    <label className="block space-y-1 sm:col-span-2">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[11px] font-medium text-fg-dim">{label}</span>
-        <button
-          type="button"
-          onClick={() => void onRefresh()}
-          disabled={loading}
-          className="inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <RefreshCw
-            size={12}
-            strokeWidth={2}
-            className={loading ? 'animate-spin' : undefined}
-          />
-          {refreshLabel}
-        </button>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)]">
-        <input
-          type="text"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          autoComplete="off"
-          spellCheck={false}
-          className="w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-        />
-        <select
-          value={selectValue}
-          onChange={(event) => {
-            if (event.target.value) onChange(event.target.value);
-          }}
-          className="h-[31px] w-full rounded border border-border bg-bg px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-        >
-          <option value="">{selectLabel}</option>
-          {modelOptions.map((model) => (
-            <option key={model} value={model}>
-              {model}
-            </option>
-          ))}
-        </select>
-      </div>
-      {description && (
-        <p className="text-[11px] leading-relaxed text-fg-faint">{description}</p>
-      )}
-      {error && (
-        <p className="text-[11px] leading-relaxed text-amber-300">{error}</p>
-      )}
-    </label>
-  );
-}
-
 function uniqueStringOptions(values: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -3263,6 +3277,25 @@ function uniqueStringOptions(values: string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+function persistCustomGenerationModelOption(
+  models: string[],
+  candidate: string,
+  builtins: string[],
+): string[] {
+  const value = candidate.trim();
+  if (!value) return models;
+  const builtIn = builtins.some(
+    (item) => item.trim().toLowerCase() === value.toLowerCase(),
+  );
+  return builtIn ? models : uniqueStringOptions([value, ...models]);
+}
+
+function removeGenerationModelOption(models: string[], model: string): string[] {
+  const removed = model.trim().toLowerCase();
+  if (!removed) return models;
+  return models.filter((item) => item.trim().toLowerCase() !== removed);
 }
 
 type CustomGenerationProviderDraft = {
@@ -3599,6 +3632,7 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerAccountIds: { ...settings.providerAccountIds },
       providerBaseUrls: { ...settings.providerBaseUrls, [id]: draft.baseUrl },
       providerModels: { ...settings.providerModels, [id]: draft.model },
+      providerModelLists: { ...settings.providerModelLists, [id]: draft.models },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
     const ok = saveImageGenerationSettings(next);
@@ -3616,10 +3650,12 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
     const providerAccountIds = { ...settings.providerAccountIds };
     const providerBaseUrls = { ...settings.providerBaseUrls };
     const providerModels = { ...settings.providerModels };
+    const providerModelLists = { ...settings.providerModelLists };
     delete providerKeys[id];
     delete providerAccountIds[id];
     delete providerBaseUrls[id];
     delete providerModels[id];
+    delete providerModelLists[id];
     const next: ImageGenerationSettings = {
       ...settings,
       preferredProviderId:
@@ -3631,6 +3667,7 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerAccountIds,
       providerBaseUrls,
       providerModels,
+      providerModelLists,
     };
     saveImageGenerationSettings(next);
     setSettings(loadImageGenerationSettings());
@@ -3841,6 +3878,18 @@ function ImageProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('image', provider.id, effectiveBaseUrl);
+  const modelOptions = uniqueStringOptions([
+    ...(settings.providerModelLists[provider.id] ?? []),
+    ...provider.models,
+  ]);
+  const persistProviderModelOption = (models: string[], candidate: string) => {
+    const value = candidate.trim();
+    if (!value) return models;
+    const builtIn = provider.models.some(
+      (item) => item.trim().toLowerCase() === value.toLowerCase(),
+    );
+    return builtIn ? models : uniqueStringOptions([value, ...models]);
+  };
   const canRefresh =
     !!effectiveBaseUrl && (!provider.needsKey || keyValue.trim().length > 0);
 
@@ -3858,6 +3907,7 @@ function ImageProviderSettingsRow({
       providerAccountIds: { ...settings.providerAccountIds },
       providerBaseUrls: { ...settings.providerBaseUrls },
       providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
     };
     if (patch.key !== undefined) {
       const value = patch.key.trim();
@@ -3876,6 +3926,43 @@ function ImageProviderSettingsRow({
     }
     if (patch.model !== undefined) {
       const value = patch.model.trim();
+      let models = next.providerModelLists[provider.id] ?? [];
+      models = persistProviderModelOption(models, model);
+      models = persistProviderModelOption(models, value);
+      if (models.length > 0) next.providerModelLists[provider.id] = models;
+      else delete next.providerModelLists[provider.id];
+      if (value) next.providerModels[provider.id] = value;
+      else delete next.providerModels[provider.id];
+    }
+    onChange(next);
+  };
+
+  const patchProviderModelList = ({
+    add,
+    remove,
+    select,
+  }: {
+    add?: string;
+    remove?: string;
+    select?: string;
+  }) => {
+    const next: ImageGenerationSettings = {
+      ...settings,
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+    };
+    let models = settings.providerModelLists[provider.id] ?? [];
+    if (add !== undefined) {
+      models = uniqueStringOptions([add, ...models]);
+    }
+    if (remove !== undefined) {
+      const removed = remove.trim().toLowerCase();
+      models = models.filter((item) => item.trim().toLowerCase() !== removed);
+    }
+    if (models.length > 0) next.providerModelLists[provider.id] = models;
+    else delete next.providerModelLists[provider.id];
+    if (select !== undefined) {
+      const value = select.trim();
       if (value) next.providerModels[provider.id] = value;
       else delete next.providerModels[provider.id];
     }
@@ -4094,7 +4181,7 @@ function ImageProviderSettingsRow({
         <div className="lg:col-span-2">
           <EditableModelSelect
             cacheKey={cacheKey}
-            builtins={provider.models}
+            builtins={modelOptions}
             value={model}
             label={t(locale, 'settings.freeChannels.modelLabel')}
             locale={locale}
@@ -4102,6 +4189,10 @@ function ImageProviderSettingsRow({
             error={modelRefresh.error}
             canRefresh={canRefresh}
             onChange={(next) => patchProvider({ model: next })}
+            onAddModel={(next) => patchProviderModelList({ add: next, select: next })}
+            onRemoveModel={(removed, nextValue) =>
+              patchProviderModelList({ remove: removed, select: nextValue })
+            }
             onRefresh={() => void refreshModels()}
           />
         </div>
@@ -4206,6 +4297,7 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerKeys: { ...settings.providerKeys },
       providerBaseUrls: { ...settings.providerBaseUrls, [id]: draft.baseUrl },
       providerModels: { ...settings.providerModels, [id]: draft.model },
+      providerModelLists: { ...settings.providerModelLists, [id]: draft.models },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
     if (!saveMusicGenerationSettings(next)) return false;
@@ -4218,9 +4310,11 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
     const providerKeys = { ...settings.providerKeys };
     const providerBaseUrls = { ...settings.providerBaseUrls };
     const providerModels = { ...settings.providerModels };
+    const providerModelLists = { ...settings.providerModelLists };
     delete providerKeys[id];
     delete providerBaseUrls[id];
     delete providerModels[id];
+    delete providerModelLists[id];
     const next: MusicGenerationSettings = {
       ...settings,
       preferredProviderId:
@@ -4231,6 +4325,7 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerKeys,
       providerBaseUrls,
       providerModels,
+      providerModelLists,
     };
     saveMusicGenerationSettings(next);
     setSettings(loadMusicGenerationSettings());
@@ -4434,6 +4529,10 @@ function MusicProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('music', provider.id, effectiveBaseUrl);
+  const modelOptions = uniqueStringOptions([
+    ...(settings.providerModelLists[provider.id] ?? []),
+    ...provider.models,
+  ]);
   const canRefresh =
     !!effectiveBaseUrl && (!provider.needsKey || keyValue.trim().length > 0);
 
@@ -4449,6 +4548,7 @@ function MusicProviderSettingsRow({
       providerKeys: { ...settings.providerKeys },
       providerBaseUrls: { ...settings.providerBaseUrls },
       providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
     };
     if (patch.key !== undefined) {
       const value = patch.key.trim();
@@ -4462,6 +4562,11 @@ function MusicProviderSettingsRow({
     }
     if (patch.model !== undefined) {
       const value = patch.model.trim();
+      let models = next.providerModelLists[provider.id] ?? [];
+      models = persistCustomGenerationModelOption(models, model, provider.models);
+      models = persistCustomGenerationModelOption(models, value, provider.models);
+      if (models.length > 0) next.providerModelLists[provider.id] = models;
+      else delete next.providerModelLists[provider.id];
       if (value) next.providerModels[provider.id] = value;
       else delete next.providerModels[provider.id];
     }
@@ -4474,6 +4579,37 @@ function MusicProviderSettingsRow({
     onChange(next);
   };
 
+  const patchProviderModelList = ({
+    add,
+    remove,
+    select,
+  }: {
+    add?: string;
+    remove?: string;
+    select?: string;
+  }) => {
+    const next: MusicGenerationSettings = {
+      ...settings,
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+    };
+    let models = settings.providerModelLists[provider.id] ?? [];
+    if (add !== undefined) {
+      models = uniqueStringOptions([add, ...models]);
+    }
+    if (remove !== undefined) {
+      models = removeGenerationModelOption(models, remove);
+    }
+    if (models.length > 0) next.providerModelLists[provider.id] = models;
+    else delete next.providerModelLists[provider.id];
+    if (select !== undefined) {
+      const value = select.trim();
+      if (value) next.providerModels[provider.id] = value;
+      else delete next.providerModels[provider.id];
+    }
+    onChange(next);
+  };
+
   const refreshModels = async () => {
     if (!canRefresh || modelRefresh.loading) return;
     setModelRefresh({ loading: true, error: null });
@@ -4482,7 +4618,7 @@ function MusicProviderSettingsRow({
         cacheKey,
         baseUrl: effectiveBaseUrl,
         apiKey: keyValue,
-        fallback: [model, ...provider.models],
+        fallback: [model, ...modelOptions],
       });
       setModelRefresh({ loading: false, error: result.error ?? null });
     } catch (err) {
@@ -4613,7 +4749,7 @@ function MusicProviderSettingsRow({
         <div className="lg:col-span-2">
           <EditableModelSelect
             cacheKey={cacheKey}
-            builtins={provider.models}
+            builtins={modelOptions}
             value={model}
             label={t(locale, 'settings.freeChannels.modelLabel')}
             locale={locale}
@@ -4621,6 +4757,10 @@ function MusicProviderSettingsRow({
             error={modelRefresh.error}
             canRefresh={canRefresh}
             onChange={(next) => patchProvider({ model: next })}
+            onAddModel={(next) => patchProviderModelList({ add: next, select: next })}
+            onRemoveModel={(removed, nextValue) =>
+              patchProviderModelList({ remove: removed, select: nextValue })
+            }
             onRefresh={() => void refreshModels()}
           />
         </div>
@@ -4684,6 +4824,7 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerKeys: { ...settings.providerKeys },
       providerBaseUrls: { ...settings.providerBaseUrls, [id]: draft.baseUrl },
       providerModels: { ...settings.providerModels, [id]: draft.model },
+      providerModelLists: { ...settings.providerModelLists, [id]: draft.models },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
     if (!saveVideoGenerationSettings(next)) return false;
@@ -4696,9 +4837,11 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
     const providerKeys = { ...settings.providerKeys };
     const providerBaseUrls = { ...settings.providerBaseUrls };
     const providerModels = { ...settings.providerModels };
+    const providerModelLists = { ...settings.providerModelLists };
     delete providerKeys[id];
     delete providerBaseUrls[id];
     delete providerModels[id];
+    delete providerModelLists[id];
     const next: VideoGenerationSettings = {
       ...settings,
       preferredProviderId:
@@ -4707,6 +4850,7 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerKeys,
       providerBaseUrls,
       providerModels,
+      providerModelLists,
     };
     saveVideoGenerationSettings(next);
     setSettings(loadVideoGenerationSettings());
@@ -4910,6 +5054,10 @@ function VideoProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('video', provider.id, effectiveBaseUrl);
+  const modelOptions = uniqueStringOptions([
+    ...(settings.providerModelLists[provider.id] ?? []),
+    ...provider.models,
+  ]);
   const canRefresh =
     !!effectiveBaseUrl && (!provider.needsKey || keyValue.trim().length > 0);
 
@@ -4925,6 +5073,7 @@ function VideoProviderSettingsRow({
       providerKeys: { ...settings.providerKeys },
       providerBaseUrls: { ...settings.providerBaseUrls },
       providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
     };
     if (patch.key !== undefined) {
       const value = patch.key.trim();
@@ -4938,6 +5087,11 @@ function VideoProviderSettingsRow({
     }
     if (patch.model !== undefined) {
       const value = patch.model.trim();
+      let models = next.providerModelLists[provider.id] ?? [];
+      models = persistCustomGenerationModelOption(models, model, provider.models);
+      models = persistCustomGenerationModelOption(models, value, provider.models);
+      if (models.length > 0) next.providerModelLists[provider.id] = models;
+      else delete next.providerModelLists[provider.id];
       if (value) next.providerModels[provider.id] = value;
       else delete next.providerModels[provider.id];
     }
@@ -4950,6 +5104,37 @@ function VideoProviderSettingsRow({
     onChange(next);
   };
 
+  const patchProviderModelList = ({
+    add,
+    remove,
+    select,
+  }: {
+    add?: string;
+    remove?: string;
+    select?: string;
+  }) => {
+    const next: VideoGenerationSettings = {
+      ...settings,
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+    };
+    let models = settings.providerModelLists[provider.id] ?? [];
+    if (add !== undefined) {
+      models = uniqueStringOptions([add, ...models]);
+    }
+    if (remove !== undefined) {
+      models = removeGenerationModelOption(models, remove);
+    }
+    if (models.length > 0) next.providerModelLists[provider.id] = models;
+    else delete next.providerModelLists[provider.id];
+    if (select !== undefined) {
+      const value = select.trim();
+      if (value) next.providerModels[provider.id] = value;
+      else delete next.providerModels[provider.id];
+    }
+    onChange(next);
+  };
+
   const refreshModels = async () => {
     if (!canRefresh || modelRefresh.loading) return;
     setModelRefresh({ loading: true, error: null });
@@ -4958,7 +5143,7 @@ function VideoProviderSettingsRow({
         cacheKey,
         baseUrl: effectiveBaseUrl,
         apiKey: keyValue,
-        fallback: [model, ...provider.models],
+        fallback: [model, ...modelOptions],
       });
       setModelRefresh({ loading: false, error: result.error ?? null });
     } catch (err) {
@@ -5091,7 +5276,7 @@ function VideoProviderSettingsRow({
         <div className="lg:col-span-2">
           <EditableModelSelect
             cacheKey={cacheKey}
-            builtins={provider.models}
+            builtins={modelOptions}
             value={model}
             label={t(locale, 'settings.freeChannels.modelLabel')}
             locale={locale}
@@ -5099,6 +5284,10 @@ function VideoProviderSettingsRow({
             error={modelRefresh.error}
             canRefresh={canRefresh}
             onChange={(next) => patchProvider({ model: next })}
+            onAddModel={(next) => patchProviderModelList({ add: next, select: next })}
+            onRemoveModel={(removed, nextValue) =>
+              patchProviderModelList({ remove: removed, select: nextValue })
+            }
             onRefresh={() => void refreshModels()}
           />
         </div>
@@ -5165,6 +5354,7 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerAccountIds: { ...settings.providerAccountIds },
       providerBaseUrls: { ...settings.providerBaseUrls, [id]: draft.baseUrl },
       providerModels: { ...settings.providerModels, [id]: draft.model },
+      providerModelLists: { ...settings.providerModelLists, [id]: draft.models },
       providerVoices: { ...settings.providerVoices },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
@@ -5179,11 +5369,13 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
     const providerAccountIds = { ...settings.providerAccountIds };
     const providerBaseUrls = { ...settings.providerBaseUrls };
     const providerModels = { ...settings.providerModels };
+    const providerModelLists = { ...settings.providerModelLists };
     const providerVoices = { ...settings.providerVoices };
     delete providerKeys[id];
     delete providerAccountIds[id];
     delete providerBaseUrls[id];
     delete providerModels[id];
+    delete providerModelLists[id];
     delete providerVoices[id];
     const next: SpeechGenerationSettings = {
       ...settings,
@@ -5194,6 +5386,7 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerAccountIds,
       providerBaseUrls,
       providerModels,
+      providerModelLists,
       providerVoices,
     };
     saveSpeechGenerationSettings(next);
@@ -5400,6 +5593,10 @@ function SpeechProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('speech', provider.id, effectiveBaseUrl);
+  const modelOptions = uniqueStringOptions([
+    ...(settings.providerModelLists[provider.id] ?? []),
+    ...provider.models,
+  ]);
   const voiceOptions = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -5429,6 +5626,7 @@ function SpeechProviderSettingsRow({
       providerAccountIds: { ...settings.providerAccountIds },
       providerBaseUrls: { ...settings.providerBaseUrls },
       providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
       providerVoices: { ...settings.providerVoices },
     };
     if (patch.key !== undefined) {
@@ -5448,6 +5646,11 @@ function SpeechProviderSettingsRow({
     }
     if (patch.model !== undefined) {
       const value = patch.model.trim();
+      let models = next.providerModelLists[provider.id] ?? [];
+      models = persistCustomGenerationModelOption(models, model, provider.models);
+      models = persistCustomGenerationModelOption(models, value, provider.models);
+      if (models.length > 0) next.providerModelLists[provider.id] = models;
+      else delete next.providerModelLists[provider.id];
       if (value) next.providerModels[provider.id] = value;
       else delete next.providerModels[provider.id];
     }
@@ -5465,6 +5668,37 @@ function SpeechProviderSettingsRow({
     onChange(next);
   };
 
+  const patchProviderModelList = ({
+    add,
+    remove,
+    select,
+  }: {
+    add?: string;
+    remove?: string;
+    select?: string;
+  }) => {
+    const next: SpeechGenerationSettings = {
+      ...settings,
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+    };
+    let models = settings.providerModelLists[provider.id] ?? [];
+    if (add !== undefined) {
+      models = uniqueStringOptions([add, ...models]);
+    }
+    if (remove !== undefined) {
+      models = removeGenerationModelOption(models, remove);
+    }
+    if (models.length > 0) next.providerModelLists[provider.id] = models;
+    else delete next.providerModelLists[provider.id];
+    if (select !== undefined) {
+      const value = select.trim();
+      if (value) next.providerModels[provider.id] = value;
+      else delete next.providerModels[provider.id];
+    }
+    onChange(next);
+  };
+
   const refreshModels = async () => {
     if (!canRefresh || modelRefresh.loading) return;
     setModelRefresh({ loading: true, error: null });
@@ -5473,7 +5707,7 @@ function SpeechProviderSettingsRow({
         cacheKey,
         baseUrl: effectiveBaseUrl,
         apiKey: keyValue,
-        fallback: [model, ...provider.models],
+        fallback: [model, ...modelOptions],
       });
       setModelRefresh({ loading: false, error: result.error ?? null });
     } catch (err) {
@@ -5648,7 +5882,7 @@ function SpeechProviderSettingsRow({
         <div className="lg:col-span-2">
           <EditableModelSelect
             cacheKey={cacheKey}
-            builtins={provider.models}
+            builtins={modelOptions}
             value={model}
             label={t(locale, 'settings.freeChannels.modelLabel')}
             locale={locale}
@@ -5656,6 +5890,10 @@ function SpeechProviderSettingsRow({
             error={modelRefresh.error}
             canRefresh={canRefresh}
             onChange={(next) => patchProvider({ model: next })}
+            onAddModel={(next) => patchProviderModelList({ add: next, select: next })}
+            onRemoveModel={(removed, nextValue) =>
+              patchProviderModelList({ remove: removed, select: nextValue })
+            }
             onRefresh={() => void refreshModels()}
           />
         </div>
@@ -7653,9 +7891,7 @@ function FreeChannelRow({
 
   const KeyIcon = showKey ? EyeOff : Eye;
   const modelOptions = freeChannelModelOptions(channel);
-  const modelSelectValue = modelOptions.includes(modelValue.trim())
-    ? modelValue.trim()
-    : '';
+  const modelCacheKey = freeChannelModelCacheKey(channel.id);
   const canRefreshModels = canRefreshFreeChannelModels(channel);
 
   return (
@@ -7774,51 +8010,29 @@ function FreeChannelRow({
             </div>
           </label>
         )}
-        <label className="block space-y-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.freeChannels.modelLabel')}
-            </span>
-            <button
-              type="button"
-              onClick={() => void refreshModels()}
-              disabled={!canRefreshModels || modelRefresh.loading}
-              title={
-                canRefreshModels
-                  ? t(locale, 'settings.models.fetchModels')
-                  : t(locale, 'settings.models.fetchModelsUnavailable')
-              }
-              className="inline-flex items-center gap-1 rounded border border-border bg-panel px-2 py-0.5 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <RefreshCw
-                size={11}
-                strokeWidth={2}
-                className={modelRefresh.loading ? 'animate-spin' : undefined}
-              />
-              {t(locale, 'settings.models.fetchModels')}
-            </button>
-          </div>
-          <select
-            value={modelSelectValue}
-            onChange={(event) => {
-              if (!event.target.value) return;
-              if (commitModel(event.target.value)) reproxy();
-            }}
-            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-          >
-            <option value="">{t(locale, 'settings.models.selectModel')}</option>
-            {modelOptions.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
-          {modelRefresh.error && (
-            <p className="text-[11px] leading-relaxed text-amber-300">
-              {modelRefresh.error}
-            </p>
-          )}
-        </label>
+        <EditableModelSelect
+          className="block space-y-1 sm:col-span-2"
+          cacheKey={modelCacheKey}
+          builtins={modelOptions}
+          value={modelValue.trim()}
+          label={t(locale, 'settings.freeChannels.modelLabel')}
+          locale={locale}
+          loading={modelRefresh.loading}
+          error={modelRefresh.error}
+          canRefresh={canRefreshModels}
+          onChange={(next) => {
+            if (commitModel(next)) reproxy();
+          }}
+          onAddModel={(next) => {
+            if (commitModel(next)) reproxy();
+          }}
+          onRemoveModel={(_removed, nextValue) => {
+            if (nextValue !== modelValue.trim() && commitModel(nextValue)) {
+              reproxy();
+            }
+          }}
+          onRefresh={() => void refreshModels()}
+        />
       </div>
 
       {channel.note && (

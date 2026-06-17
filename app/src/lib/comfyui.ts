@@ -18,6 +18,7 @@ import {
   loadImageGenerationSettings,
   type ImageGenerationSettings,
 } from './imageGeneration';
+import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
 
 export interface ComfyNodeInputs {
   [key: string]: ComfyInputValue;
@@ -92,6 +93,7 @@ export interface ComfyNodeError {
 }
 
 const STORAGE_KEY = 'freeultracode.comfyui.v1';
+const SETTINGS_REL_PATH = 'settings/comfyui.v1.json';
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8188';
 
 export interface ComfyUiSettings {
@@ -102,14 +104,9 @@ export const DEFAULT_COMFYUI_SETTINGS: ComfyUiSettings = {
   baseUrl: DEFAULT_BASE_URL,
 };
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
-
 export function loadComfyUiSettings(): ComfyUiSettings {
-  if (!hasStorage()) return DEFAULT_COMFYUI_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     if (!raw) return DEFAULT_COMFYUI_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<ComfyUiSettings>;
     const baseUrl =
@@ -123,15 +120,16 @@ export function loadComfyUiSettings(): ComfyUiSettings {
 }
 
 export function saveComfyUiSettings(settings: ComfyUiSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ baseUrl: settings.baseUrl.trim().replace(/\/+$/, '') }),
-    );
+  const payload = JSON.stringify({
+    baseUrl: settings.baseUrl.trim().replace(/\/+$/, ''),
+  });
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    console.error('[comfyui] failed to persist settings');
+    return;
+  }
+  if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('fuc:comfyui-settings-changed'));
-  } catch {
-    /* non-fatal */
   }
 }
 

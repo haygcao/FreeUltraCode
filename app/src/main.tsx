@@ -8,6 +8,7 @@ import './styles/global.css';
 import { initializeSecureStorage } from '@/lib/secureStorage';
 import { initializeGenerationSettingsStore } from '@/lib/generationSettingsStore';
 import { initializeGatewayConfigStore } from '@/lib/gatewayConfig';
+import { initializeApiConfigStore } from '@/lib/apiConfig';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {
@@ -23,6 +24,10 @@ async function bootstrap(): Promise<void> {
     initializeGenerationSettingsStore(),
     initializeGatewayConfigStore(),
   ]);
+  // Provider metadata disk store migrates from localStorage, which secure
+  // storage strips API keys out of above — so hydrate it afterwards to avoid
+  // persisting stale secrets into the disk-backed metadata file.
+  await initializeApiConfigStore();
   const [{ default: App }, { applyAppearance }, { useStore }] = await Promise.all([
     import('./App'),
     import('@/lib/appearance'),

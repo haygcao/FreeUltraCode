@@ -43,7 +43,7 @@ describe('MessageContent integration', () => {
         onOpenFile: () => {},
       }),
     );
-    expect(html).toMatch(/ai-file-chip--interactive/);
+    expect(html).toMatch(/ai-file-chip-thumb/);
     // The `.freeultracode` separator must survive: no `OpenWorkflow.freeultracode` collapse.
     expect(html).not.toMatch(/OpenWorkflow\.freeultracode/);
     expect(html).toMatch(/OpenWorkflow\\\.freeultracode\\clipboard-images/);
@@ -297,7 +297,7 @@ describe('MessageContent integration', () => {
       }),
     );
 
-    expect(html).toMatch(/ai-file-chip--interactive/);
+    expect(html).toMatch(/ai-file-chip-thumb/);
     expect(html).toMatch(/Open Workflow/);
     expect(html).toMatch(/session-captures/);
   });

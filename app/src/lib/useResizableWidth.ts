@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { loadPaneWidth, savePaneWidth } from './composerStorage';
 
@@ -25,9 +25,17 @@ export function useResizableWidth(opts: {
   edge: 'left' | 'right';
 }): ResizableWidth {
   const { storageKey, defaultWidth, min, max, edge } = opts;
-  const [width, setWidth] = useState<number>(
-    () => loadPaneWidth(storageKey) ?? defaultWidth,
+  const clamp = useCallback(
+    (w: number) => Math.min(Math.max(w, min), max),
+    [min, max],
   );
+  const [width, setWidth] = useState<number>(
+    () => clamp(loadPaneWidth(storageKey) ?? defaultWidth),
+  );
+
+  useEffect(() => {
+    setWidth((w) => clamp(w));
+  }, [clamp]);
 
   const onResizeStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -39,7 +47,6 @@ export function useResizableWidth(opts: {
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'col-resize';
 
-      const clamp = (w: number) => Math.min(Math.max(w, min), max);
       const onMove = (ev: MouseEvent) => {
         const delta = ev.clientX - startX;
         setWidth(clamp(edge === 'right' ? startWidth + delta : startWidth - delta));
@@ -57,7 +64,7 @@ export function useResizableWidth(opts: {
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     },
-    [width, edge, min, max, storageKey],
+    [width, edge, clamp, storageKey],
   );
 
   return { width, onResizeStart };

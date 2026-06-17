@@ -98,6 +98,7 @@ export interface VideoGenerationSettings {
   providerKeys: Partial<Record<VideoProviderId, string>>;
   providerBaseUrls: Partial<Record<VideoProviderId, string>>;
   providerModels: Partial<Record<VideoProviderId, string>>;
+  providerModelLists: Partial<Record<VideoProviderId, string[]>>;
 }
 
 export interface VideoGenerationResult {
@@ -599,6 +600,7 @@ export const DEFAULT_VIDEO_GENERATION_SETTINGS: VideoGenerationSettings = {
   providerKeys: {},
   providerBaseUrls: {},
   providerModels: {},
+  providerModelLists: {},
 };
 
 function isKnownVideoProviderId(
@@ -618,6 +620,29 @@ function cleanRecord<T extends string>(
     if (!validKey(key) || typeof raw !== 'string') continue;
     const trimmed = raw.trim();
     if (trimmed) out[key] = trimmed;
+  }
+  return out;
+}
+
+function cleanModelListRecord<T extends string>(
+  value: unknown,
+  validKey: (key: unknown) => key is T,
+): Partial<Record<T, string[]>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Partial<Record<T, string[]>> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!validKey(key) || !Array.isArray(raw)) continue;
+    const models: string[] = [];
+    const seen = new Set<string>();
+    for (const item of raw) {
+      if (typeof item !== 'string') continue;
+      const model = item.trim();
+      const dedupeKey = model.toLowerCase();
+      if (!model || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      models.push(model);
+    }
+    if (models.length > 0) out[key] = models;
   }
   return out;
 }
@@ -770,6 +795,7 @@ export function normalizeVideoGenerationSettings(value: unknown): VideoGeneratio
     providerKeys: cleanRecord(source.providerKeys, validKey),
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
+    providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
   };
 }
 

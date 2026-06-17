@@ -2,12 +2,13 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import FilePreviewDrawer from './FilePreviewDrawer';
-import { previewLocalFile } from '@/lib/tauri';
+import { previewLocalFile, workspaceFileDiff } from '@/lib/tauri';
 
 vi.mock('@/lib/tauri', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/tauri')>()),
   openLocalPath: vi.fn(),
   previewLocalFile: vi.fn(),
+  workspaceFileDiff: vi.fn(),
 }));
 
 describe('FilePreviewDrawer', () => {
@@ -24,6 +25,8 @@ describe('FilePreviewDrawer', () => {
     originalRevokeObjectUrl = URL.revokeObjectURL;
     vi.useRealTimers();
     vi.mocked(previewLocalFile).mockReset();
+    vi.mocked(workspaceFileDiff).mockReset();
+    vi.mocked(workspaceFileDiff).mockResolvedValue(null);
   });
 
   afterEach(async () => {
@@ -58,6 +61,78 @@ describe('FilePreviewDrawer', () => {
       container.querySelector('button[aria-label="关闭文件预览"]'),
     ).toBeNull();
     expect(container.querySelector('aside')).not.toBeNull();
+  });
+
+  it('can expand the preview to the app window and restore drawer width', async () => {
+    vi.mocked(previewLocalFile).mockResolvedValue({
+      path: 'E:\\OpenWorkflows\\src\\main.ts',
+      fileName: 'main.ts',
+      kind: 'text',
+      mime: 'text/typescript',
+      sizeBytes: 18,
+      truncated: false,
+      text: 'console.log(1);\n',
+      base64: null,
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(FilePreviewDrawer, {
+          refData: { path: 'src/main.ts', basename: 'main.ts' },
+          cwd: 'E:\\OpenWorkflows',
+          onClose: vi.fn(),
+        }),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const aside = container.querySelector<HTMLElement>('aside');
+    expect(aside?.style.width).not.toBe('');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="占满窗口"]')?.click();
+    });
+
+    expect(container.querySelector('button[aria-label="还原预览宽度"]')).not.toBeNull();
+    expect(aside?.style.width).toBe('');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="还原预览宽度"]')?.click();
+    });
+
+    expect(container.querySelector('button[aria-label="占满窗口"]')).not.toBeNull();
+    expect(aside?.style.width).not.toBe('');
+  });
+
+  it('closes when the user clicks outside the preview drawer', async () => {
+    vi.mocked(previewLocalFile).mockReturnValue(new Promise(() => {}));
+    const onClose = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(FilePreviewDrawer, {
+          refData: { path: 'screen.png', basename: 'screen.png' },
+          onClose,
+        }),
+      );
+    });
+    // Let the deferred listener registration run.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const aside = container.querySelector<HTMLElement>('aside');
+    await act(async () => {
+      aside?.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('renders image previews through a blob URL instead of a large data URL', async () => {
@@ -112,5 +187,61 @@ describe('FilePreviewDrawer', () => {
       );
     });
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:preview-image');
+  });
+
+  it('renders VCS diff marks for text previews', async () => {
+    vi.mocked(previewLocalFile).mockResolvedValue({
+      path: 'E:\\OpenWorkflows\\src\\main.ts',
+      fileName: 'main.ts',
+      kind: 'text',
+      mime: 'text/typescript',
+      sizeBytes: 32,
+      truncated: false,
+      text: 'const oldValue = 1;\nconst nextValue = 2;\n',
+      base64: null,
+    });
+    vi.mocked(workspaceFileDiff).mockResolvedValue({
+      path: 'src/main.ts',
+      oldPath: null,
+      status: 'modified',
+      binary: false,
+      truncated: false,
+      lines: [
+        {
+          kind: 'replacedDeleted',
+          oldLine: 2,
+          newLine: null,
+          content: 'const oldValue = 2;',
+        },
+        {
+          kind: 'replacedAdded',
+          oldLine: null,
+          newLine: 2,
+          content: 'const nextValue = 2;',
+        },
+      ],
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(FilePreviewDrawer, {
+          refData: { path: 'src/main.ts', basename: 'main.ts' },
+          cwd: 'E:\\OpenWorkflows',
+          onClose: vi.fn(),
+        }),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(workspaceFileDiff).toHaveBeenCalledWith('E:\\OpenWorkflows', 'src/main.ts');
+    expect(
+      container.querySelector('[data-vcs-kind="replacedAdded"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-vcs-kind="replacedDeleted"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('.ai-file-preview-diff__minimap')).not.toBeNull();
   });
 });

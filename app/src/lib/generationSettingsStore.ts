@@ -1,7 +1,9 @@
-// CONTRACT: disk-backed store for the small "generation settings" blobs (image,
-// video, music, 3D, speech). It exists to lift these settings off the browser's
-// ~5MB localStorage quota: in the Tauri desktop shell they are persisted to disk
-// under `.freeultracode/settings/*.json` via the same atomic history commands the
+// CONTRACT: disk-backed store for small settings/config blobs (image, video,
+// music, 3D, speech generation, plus the UI-design / sprite / ComfyUI / mesh
+// channels, free-channel model overrides + proxy port, and the model-list
+// cache). It exists to lift these settings off the browser's ~5MB localStorage
+// quota: in the Tauri desktop shell they are persisted to disk under
+// `.freeultracode/settings/*.json` via the same atomic history commands the
 // session store uses, while the browser/dev build falls back to localStorage.
 //
 // The hard problem is that every `load*Settings()` is SYNCHRONOUS (called inside
@@ -20,6 +22,14 @@ const MANAGED_SETTINGS: ReadonlyArray<readonly [relPath: string, legacyKey: stri
   ['settings/musicGeneration.v1.json', 'freeultracode.musicGeneration.v1'],
   ['settings/threeDGeneration.v1.json', 'freeultracode.threeDGeneration.v1'],
   ['settings/speechGeneration.v1.json', 'freeultracode.speechGeneration.v1'],
+  ['settings/uiDesignChannels.v1.json', 'freeultracode.uiDesignChannels.v1'],
+  ['settings/spriteGeneration.v1.json', 'freeultracode.spriteGeneration.v1'],
+  ['settings/comfyui.v1.json', 'freeultracode.comfyui.v1'],
+  ['settings/meshLibrary.v1.json', 'freeultracode.meshLibrary.v1'],
+  ['settings/freeChannelModels.v1.json', 'fuc_free_channel_models_v1'],
+  ['settings/freeProxyPort.v1.json', 'fuc_free_proxy_port_v1'],
+  ['settings/modelListCache.v1.json', 'fuc_model_list_cache_v1'],
+  ['settings/modelListHidden.v1.json', 'fuc_model_list_hidden_v1'],
 ];
 
 // relPath -> serialized JSON. Authoritative in-memory view once `diskReady`.

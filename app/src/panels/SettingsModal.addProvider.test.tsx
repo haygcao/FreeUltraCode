@@ -131,7 +131,7 @@ describe('SettingsModal default channel add', () => {
       (input) => input.placeholder === 'https://api.anthropic.com',
     );
     const modelInput = inputs.find(
-      (input) => input.placeholder === 'claude-sonnet-4-6',
+      (input) => input.placeholder === '输入自定义模型名…',
     );
     const apiKeyInput = editor!.querySelector<HTMLInputElement>('#provider-api-key');
 
@@ -140,6 +140,14 @@ describe('SettingsModal default channel add', () => {
       setInputValue(baseUrlInput!, 'https://api.example.com/v1');
       setInputValue(modelInput!, 'test-model');
       setInputValue(apiKeyInput!, 'sk-test');
+    });
+
+    // The model field is an editable combobox: type a name then click 添加.
+    const addModelButton = Array.from(
+      editor!.querySelectorAll<HTMLButtonElement>('button'),
+    ).find((button) => button.textContent?.trim() === '添加');
+    await act(async () => {
+      addModelButton?.click();
     });
 
     const saveButton = Array.from(

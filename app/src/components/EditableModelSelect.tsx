@@ -8,7 +8,8 @@ import {
 } from '@/lib/modelLists';
 
 /**
- * Editable model picker shared by the image/music/video/speech/3D provider rows.
+ * Editable model picker shared by the programming/image/music/video/speech/3D
+ * provider rows.
  *
  * - A text input + "add" button above lets the user type a custom model name.
  * - The list below shows every option (selected + fetched/added + built-in
@@ -30,7 +31,10 @@ export function EditableModelSelect({
   loading,
   error,
   canRefresh,
+  className,
   onChange,
+  onAddModel,
+  onRemoveModel,
   onRefresh,
 }: {
   cacheKey: string;
@@ -41,7 +45,10 @@ export function EditableModelSelect({
   loading: boolean;
   error: string | null;
   canRefresh: boolean;
+  className?: string;
   onChange: (model: string) => void;
+  onAddModel?: (model: string) => void;
+  onRemoveModel?: (model: string, nextValue: string) => void;
   onRefresh: () => void;
 }) {
   const [draft, setDraft] = useState('');
@@ -60,21 +67,28 @@ export function EditableModelSelect({
     if (!next) return;
     addUserModel(cacheKey, next);
     setDraft('');
-    onChange(next);
+    if (onAddModel) onAddModel(next);
+    else onChange(next);
   };
 
   const remove = (model: string) => {
     removeUserModel(cacheKey, model);
+    const selected = model.trim().toLowerCase() === value.trim().toLowerCase();
+    const remaining = editableModelOptions(cacheKey, builtins, '').filter(
+      (m) => m.toLowerCase() !== model.trim().toLowerCase(),
+    );
+    const nextValue = selected ? remaining[0] ?? '' : value;
+    if (onRemoveModel) {
+      onRemoveModel(model, nextValue);
+      return;
+    }
     if (model.trim().toLowerCase() === value.trim().toLowerCase()) {
-      const remaining = editableModelOptions(cacheKey, builtins, '').filter(
-        (m) => m.toLowerCase() !== model.trim().toLowerCase(),
-      );
-      onChange(remaining[0] ?? '');
+      onChange(nextValue);
     }
   };
 
   return (
-    <label className="block space-y-1 lg:col-span-2">
+    <label className={className ?? 'block space-y-1 lg:col-span-2'}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-medium text-fg-dim">{label}</span>
         <button

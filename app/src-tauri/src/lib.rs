@@ -4582,16 +4582,18 @@ async fn unity_mcp_setup_project(
 
 // ===== Blueprint Mode plugin one-click install =====
 
-const BLUEPRINT_MODE_DEFAULT_SOURCE: &str = "E:/ue-blueprint-mode";
+const BLUEPRINT_MODE_SOURCE_URL: &str = "https://github.com/wellingfeng/ue-blueprint-mode";
+const BLUEPRINT_MODE_ARCHIVE_URL: &str =
+    "https://codeload.github.com/wellingfeng/ue-blueprint-mode/zip/refs/heads/main";
 const BLUEPRINT_MODE_PLUGIN_DIRNAME: &str = "BlueprintMode";
+const BLUEPRINT_MODE_DOWNLOAD_LIMIT: usize = 64 * 1024 * 1024;
+const BLUEPRINT_MODE_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BlueprintModeInstallRequest {
     /// UE project root (the folder that contains the .uproject file).
     root_path: String,
-    /// Optional source plugin directory; defaults to the local checkout.
-    source_dir: Option<String>,
     /// Optional explicit target directory; defaults to <project>/Plugins/<name>.
     target_dir: Option<String>,
     /// Overwrite an existing install when true.
@@ -4602,8 +4604,8 @@ struct BlueprintModeInstallRequest {
 #[serde(rename_all = "camelCase")]
 struct BlueprintModeInstallResult {
     ok: bool,
-    /// Source directory that was copied from.
-    source_dir: String,
+    /// GitHub repository used as the plugin source.
+    source_url: String,
     /// Resolved install destination.
     target_dir: String,
     /// Number of files copied.
@@ -4615,56 +4617,100 @@ struct BlueprintModeInstallResult {
     error: Option<String>,
 }
 
-fn blueprint_mode_validate_source(source: &Path) -> Result<(), String> {
-    if !source.is_dir() {
-        return Err(format!(
-            "插件源目录不存在：{}",
-            source.to_string_lossy()
-        ));
+fn blueprint_mode_download_archive() -> Result<Vec<u8>, String> {
+    let response = ureq::get(BLUEPRINT_MODE_ARCHIVE_URL)
+        .timeout(BLUEPRINT_MODE_DOWNLOAD_TIMEOUT)
+        .set("User-Agent", "FreeUltraCode")
+        .set(
+            "Accept",
+            "application/zip,application/octet-stream,*/*;q=0.8",
+        )
+        .call()
+        .map_err(|err| match err {
+            ureq::Error::Status(code, _) => format!("BlueprintMode 下载失败：HTTP {code}。"),
+            other => format!("BlueprintMode 下载失败：{other}"),
+        })?;
+    let mut reader = response.into_reader();
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut reader)
+        .take((BLUEPRINT_MODE_DOWNLOAD_LIMIT as u64) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("读取 BlueprintMode 下载内容失败：{e}"))?;
+    if bytes.is_empty() {
+        return Err("BlueprintMode 下载内容为空。".to_string());
     }
-    let has_uplugin = std::fs::read_dir(source)
-        .map_err(|e| format!("读取源目录失败：{e}"))?
-        .flatten()
-        .any(|entry| {
-            entry
-                .path()
-                .extension()
-                .map(|ext| ext.eq_ignore_ascii_case("uplugin"))
-                .unwrap_or(false)
-        });
-    if !has_uplugin {
-        return Err(format!(
-            "源目录不是合法的 UE 插件（缺少 .uplugin）：{}",
-            source.to_string_lossy()
-        ));
+    if bytes.len() > BLUEPRINT_MODE_DOWNLOAD_LIMIT {
+        return Err("BlueprintMode 下载内容超出大小上限。".to_string());
     }
-    Ok(())
+    Ok(bytes)
 }
 
-fn blueprint_mode_copy_dir(src: &Path, dst: &Path) -> Result<usize, String> {
-    let mut copied = 0usize;
-    std::fs::create_dir_all(dst).map_err(|e| {
-        format!("创建目录失败 {}：{e}", dst.to_string_lossy())
-    })?;
-    for entry in std::fs::read_dir(src)
-        .map_err(|e| format!("读取目录失败 {}：{e}", src.to_string_lossy()))?
-    {
-        let entry = entry.map_err(|e| format!("枚举目录项失败：{e}"))?;
-        let path = entry.path();
-        let file_name = entry.file_name();
-        let target = dst.join(&file_name);
-        if path.is_dir() {
-            copied += blueprint_mode_copy_dir(&path, &target)?;
-        } else {
-            std::fs::copy(&path, &target).map_err(|e| {
-                format!(
-                    "复制文件失败 {} -> {}：{e}",
-                    path.to_string_lossy(),
-                    target.to_string_lossy()
-                )
-            })?;
-            copied += 1;
+fn blueprint_mode_archive_plugin_root<R: Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+) -> Result<PathBuf, String> {
+    for i in 0..archive.len() {
+        let file = archive
+            .by_index(i)
+            .map_err(|e| format!("读取 BlueprintMode 压缩包失败：{e}"))?;
+        let Some(path) = file.enclosed_name() else {
+            continue;
+        };
+        if path
+            .extension()
+            .map(|ext| ext.eq_ignore_ascii_case("uplugin"))
+            .unwrap_or(false)
+        {
+            return Ok(path.parent().map(Path::to_path_buf).unwrap_or_default());
         }
+    }
+    Err("BlueprintMode 压缩包不是合法 UE 插件（缺少 .uplugin）。".to_string())
+}
+
+fn blueprint_mode_extract_archive(bytes: &[u8], dst: &Path) -> Result<usize, String> {
+    let reader = std::io::Cursor::new(bytes);
+    let mut archive =
+        zip::ZipArchive::new(reader).map_err(|e| format!("打开 BlueprintMode 压缩包失败：{e}"))?;
+    let plugin_root = blueprint_mode_archive_plugin_root(&mut archive)?;
+    let mut copied = 0usize;
+
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("创建目录失败 {}：{e}", dst.to_string_lossy()))?;
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("读取 BlueprintMode 压缩包失败：{e}"))?;
+        let Some(path) = file.enclosed_name() else {
+            continue;
+        };
+        let rel = if plugin_root.as_os_str().is_empty() {
+            path.as_path()
+        } else {
+            match path.strip_prefix(&plugin_root) {
+                Ok(rel) => rel,
+                Err(_) => continue,
+            }
+        };
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let target = dst.join(rel);
+        if file.is_dir() {
+            std::fs::create_dir_all(&target)
+                .map_err(|e| format!("创建目录失败 {}：{e}", target.to_string_lossy()))?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录失败 {}：{e}", parent.to_string_lossy()))?;
+        }
+        let mut out = std::fs::File::create(&target)
+            .map_err(|e| format!("创建文件失败 {}：{e}", target.to_string_lossy()))?;
+        std::io::copy(&mut file, &mut out)
+            .map_err(|e| format!("写入文件失败 {}：{e}", target.to_string_lossy()))?;
+        copied += 1;
+    }
+    if copied == 0 {
+        return Err("BlueprintMode 压缩包没有可安装文件。".to_string());
     }
     Ok(copied)
 }
@@ -4680,7 +4726,7 @@ fn blueprint_mode_install_blocking(
     if engine.engine != "unreal" {
         return Ok(BlueprintModeInstallResult {
             ok: false,
-            source_dir: String::new(),
+            source_url: BLUEPRINT_MODE_SOURCE_URL.to_string(),
             target_dir: String::new(),
             files_copied: 0,
             replaced_existing: false,
@@ -4690,39 +4736,13 @@ fn blueprint_mode_install_blocking(
         });
     }
 
-    let source = req
-        .source_dir
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(BLUEPRINT_MODE_DEFAULT_SOURCE));
-    let source = std::fs::canonicalize(&source).unwrap_or(source);
-    blueprint_mode_validate_source(&source)?;
-
-    // Default target: <project>/Plugins/<source leaf name>.
-    let leaf = source
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| BLUEPRINT_MODE_PLUGIN_DIRNAME.to_string());
     let target = req
         .target_dir
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("Plugins").join(&leaf));
-
-    // Guard against source == target.
-    if let (Ok(s), Ok(t)) = (
-        std::fs::canonicalize(&source),
-        std::fs::canonicalize(target.parent().unwrap_or(&target)),
-    ) {
-        if t.join(&leaf) == s {
-            return Err("安装目标与源目录相同，已取消。".to_string());
-        }
-    }
+        .unwrap_or_else(|| root.join("Plugins").join(BLUEPRINT_MODE_PLUGIN_DIRNAME));
 
     let overwrite = req.overwrite.unwrap_or(false);
     let mut replaced_existing = false;
@@ -4730,7 +4750,7 @@ fn blueprint_mode_install_blocking(
         if !overwrite {
             return Ok(BlueprintModeInstallResult {
                 ok: false,
-                source_dir: source.to_string_lossy().to_string(),
+                source_url: BLUEPRINT_MODE_SOURCE_URL.to_string(),
                 target_dir: target.to_string_lossy().to_string(),
                 files_copied: 0,
                 replaced_existing: false,
@@ -4742,16 +4762,47 @@ fn blueprint_mode_install_blocking(
                 )),
             });
         }
-        std::fs::remove_dir_all(&target).map_err(|e| {
-            format!("删除旧版本失败 {}：{e}", target.to_string_lossy())
-        })?;
+    }
+
+    let parent = target
+        .parent()
+        .ok_or_else(|| "安装目标目录无效。".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("创建目录失败 {}：{e}", parent.to_string_lossy()))?;
+
+    let target_name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| BLUEPRINT_MODE_PLUGIN_DIRNAME.to_string());
+    let staging = parent.join(format!(".{target_name}.download"));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)
+            .map_err(|e| format!("清理临时安装目录失败 {}：{e}", staging.to_string_lossy()))?;
+    }
+
+    let archive = blueprint_mode_download_archive()?;
+    let files_copied = match blueprint_mode_extract_archive(&archive, &staging) {
+        Ok(files_copied) => files_copied,
+        Err(err) => {
+            std::fs::remove_dir_all(&staging).ok();
+            return Err(err);
+        }
+    };
+
+    if target.exists() {
+        std::fs::remove_dir_all(&target)
+            .map_err(|e| format!("删除旧版本失败 {}：{e}", target.to_string_lossy()))?;
         replaced_existing = true;
         notes.push("已删除旧版本插件目录。".to_string());
     }
 
-    let files_copied = blueprint_mode_copy_dir(&source, &target)?;
+    std::fs::rename(&staging, &target).map_err(|e| {
+        std::fs::remove_dir_all(&staging).ok();
+        format!("保存插件目录失败 {}：{e}", target.to_string_lossy())
+    })?;
     notes.push(format!(
-        "已复制 {files_copied} 个文件到 {}。",
+        "已从 GitHub 下载并安装 {files_copied} 个文件到 {}。",
         target.to_string_lossy()
     ));
     notes.push("请重启 Unreal Editor 以加载插件。".to_string());
@@ -4759,7 +4810,7 @@ fn blueprint_mode_install_blocking(
 
     Ok(BlueprintModeInstallResult {
         ok: true,
-        source_dir: source.to_string_lossy().to_string(),
+        source_url: BLUEPRINT_MODE_SOURCE_URL.to_string(),
         target_dir: target.to_string_lossy().to_string(),
         files_copied,
         replaced_existing,
@@ -7543,6 +7594,425 @@ fn git_workspace_diff_changes(
     }
 }
 
+fn workspace_change_file_matches_relative_path(
+    file: &WorkspaceChangeFile,
+    relative_path: &str,
+) -> bool {
+    let needle = normalize_vcs_status_path(relative_path);
+    normalize_vcs_status_path(&file.path) == needle
+        || file
+            .old_path
+            .as_deref()
+            .map(|old_path| normalize_vcs_status_path(old_path) == needle)
+            .unwrap_or(false)
+}
+
+fn filter_workspace_change_files_for_path(
+    files: Vec<WorkspaceChangeFile>,
+    relative_path: &str,
+) -> Vec<WorkspaceChangeFile> {
+    files
+        .into_iter()
+        .filter(|file| workspace_change_file_matches_relative_path(file, relative_path))
+        .collect()
+}
+
+fn workspace_file_diff_relative_path(root: &Path, path: &str) -> Result<String, String> {
+    let normalized = normalize_preview_separators(path.trim());
+    if normalized.trim().is_empty() {
+        return Err("缺少文件路径。".to_string());
+    }
+
+    if normalized.starts_with("//") {
+        return Ok(normalize_p4_mapping_path(&normalized));
+    }
+
+    let candidate = PathBuf::from(&normalized);
+    if candidate.is_absolute() {
+        if let Some(relative) = local_status_path_from_root(root, &normalized) {
+            return Ok(relative);
+        }
+        if let Ok(canonical) = std::fs::canonicalize(&candidate) {
+            if let Some(relative) = local_status_path_from_root(root, &canonical.to_string_lossy())
+            {
+                return Ok(relative);
+            }
+        }
+        return Err("文件不在工作区内。".to_string());
+    }
+
+    let relative = normalize_vcs_status_path(&normalized);
+    if relative.is_empty() {
+        return Err("缺少文件路径。".to_string());
+    }
+    let relative_path = PathBuf::from(&relative);
+    if relative_path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err("文件不在工作区内。".to_string());
+    }
+    Ok(relative)
+}
+
+fn workspace_single_change_from_status_and_diff(
+    root: &Path,
+    status_files: Vec<WorkspaceChangeFile>,
+    diff_files: Vec<WorkspaceChangeFile>,
+    relative_path: &str,
+) -> Option<WorkspaceChangeFile> {
+    let status_files = filter_workspace_change_files_for_path(status_files, relative_path);
+    let diff_files = filter_workspace_change_files_for_path(diff_files, relative_path);
+    let mut files = merge_workspace_status_files_with_diff(root, status_files, diff_files);
+    files.retain(|file| workspace_change_file_matches_relative_path(file, relative_path));
+    if files.is_empty() {
+        return None;
+    }
+
+    files.sort_by(|a, b| {
+        a.path
+            .cmp(&b.path)
+            .then_with(|| a.old_path.cmp(&b.old_path))
+    });
+    let mut file = files.remove(0);
+    if file.status == "added" && file.lines.is_empty() {
+        if let Some(filled) = workspace_change_file_from_current_path(root, &file) {
+            file = filled;
+        }
+    }
+    Some(file)
+}
+
+fn parse_unified_workspace_diff_lines(stdout: &str) -> (Vec<WorkspaceChangeLine>, bool) {
+    let mut out = Vec::new();
+    let mut hunk = Vec::new();
+    let mut old_line = 0_u32;
+    let mut new_line = 0_u32;
+    let mut in_hunk = false;
+    let mut binary = false;
+
+    for line in stdout.lines() {
+        if line.starts_with("Binary files ")
+            || line.starts_with("Binary file ")
+            || line.contains("Cannot display: file marked as a binary type")
+        {
+            binary = true;
+            continue;
+        }
+        if let Some((old_start, new_start)) = parse_git_hunk_header(line) {
+            flush_change_hunk(&mut out, &mut hunk);
+            old_line = old_start;
+            new_line = new_start;
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        if line == r"\ No newline at end of file" {
+            continue;
+        }
+        if let Some(content) = line.strip_prefix('+') {
+            hunk.push(WorkspaceChangeLine {
+                kind: "added".to_string(),
+                old_line: None,
+                new_line: Some(new_line),
+                content: content.to_string(),
+            });
+            new_line = new_line.saturating_add(1);
+        } else if let Some(content) = line.strip_prefix('-') {
+            hunk.push(WorkspaceChangeLine {
+                kind: "deleted".to_string(),
+                old_line: Some(old_line),
+                new_line: None,
+                content: content.to_string(),
+            });
+            old_line = old_line.saturating_add(1);
+        } else if line.starts_with(' ') {
+            flush_change_hunk(&mut out, &mut hunk);
+            old_line = old_line.saturating_add(1);
+            new_line = new_line.saturating_add(1);
+        }
+    }
+
+    flush_change_hunk(&mut out, &mut hunk);
+    (out, binary)
+}
+
+fn workspace_change_file_from_unified_diff(
+    path: &str,
+    status: &str,
+    stdout: &str,
+) -> Option<WorkspaceChangeFile> {
+    if stdout.trim().is_empty() {
+        return None;
+    }
+    let (lines, binary) = parse_unified_workspace_diff_lines(stdout);
+    Some(WorkspaceChangeFile {
+        path: normalize_vcs_status_path(path),
+        old_path: None,
+        status: status.to_string(),
+        binary,
+        truncated: binary,
+        lines,
+    })
+}
+
+fn git_workspace_file_diff_changes(
+    root: &Path,
+    prefix: &str,
+    relative_path: &str,
+) -> Result<Vec<WorkspaceChangeFile>, String> {
+    let head_args = vec![
+        "diff",
+        "--no-ext-diff",
+        "--no-color",
+        "--unified=0",
+        "HEAD",
+        "--",
+        relative_path,
+    ];
+    let head_diff = run_workspace_status_command(root, "git", &head_args)
+        .map_err(|err| format!("Git diff 读取失败: {err}"))?;
+    if head_diff.timed_out {
+        return Err("Git diff 读取超时".to_string());
+    }
+    if head_diff.success {
+        return Ok(parse_git_diff_workspace_changes(&head_diff.stdout, prefix));
+    }
+
+    let mut files = Vec::new();
+    let mut any_success = false;
+    let arg_sets = [
+        vec![
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--unified=0",
+            "--",
+            relative_path,
+        ],
+        vec![
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--no-color",
+            "--unified=0",
+            "--",
+            relative_path,
+        ],
+    ];
+    for args in arg_sets {
+        let output = run_workspace_status_command(root, "git", &args)
+            .map_err(|err| format!("Git diff 读取失败: {err}"))?;
+        if output.timed_out {
+            return Err("Git diff 读取超时".to_string());
+        }
+        if output.success {
+            any_success = true;
+            files.extend(parse_git_diff_workspace_changes(&output.stdout, prefix));
+        }
+    }
+
+    if any_success {
+        Ok(files)
+    } else {
+        Err(format!(
+            "Git diff 读取失败: {}",
+            workspace_status_error(&head_diff)
+        ))
+    }
+}
+
+fn git_workspace_file_change(
+    root: &Path,
+    relative_path: &str,
+) -> Option<Result<Option<WorkspaceChangeFile>, String>> {
+    let probe =
+        match run_workspace_status_command(root, "git", &["rev-parse", "--is-inside-work-tree"]) {
+            Ok(output) => output,
+            Err(_) => return None,
+        };
+    if probe.timed_out {
+        return Some(Err("Git 状态收集超时".to_string()));
+    }
+    if !probe.success || probe.stdout.trim() != "true" {
+        return None;
+    }
+
+    let prefix = match run_workspace_status_command(root, "git", &["rev-parse", "--show-prefix"]) {
+        Ok(output) if output.timed_out => return Some(Err("Git 工作区前缀读取超时".to_string())),
+        Ok(output) if output.success => output.stdout.trim().to_string(),
+        _ => String::new(),
+    };
+    let status_args = vec![
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--",
+        relative_path,
+    ];
+    let status = match run_workspace_status_command(root, "git", &status_args) {
+        Ok(output) => output,
+        Err(err) => return Some(Err(format!("Git 状态读取失败: {err}"))),
+    };
+    if status.timed_out {
+        return Some(Err("Git 状态收集超时".to_string()));
+    }
+    if !status.success {
+        return Some(Err(format!(
+            "Git 状态读取失败: {}",
+            workspace_status_error(&status)
+        )));
+    }
+
+    let status_files = parse_git_workspace_changes(&status.stdout, &prefix);
+    let diff_files =
+        git_workspace_file_diff_changes(root, &prefix, relative_path).unwrap_or_default();
+    Some(Ok(workspace_single_change_from_status_and_diff(
+        root,
+        status_files,
+        diff_files,
+        relative_path,
+    )))
+}
+
+fn svn_workspace_file_change(
+    root: &Path,
+    relative_path: &str,
+) -> Option<Result<Option<WorkspaceChangeFile>, String>> {
+    let probe = match run_workspace_status_command(root, "svn", &["info"]) {
+        Ok(output) => output,
+        Err(_) => return None,
+    };
+    if probe.timed_out {
+        return Some(Err("SVN 状态收集超时".to_string()));
+    }
+    if !probe.success {
+        return None;
+    }
+
+    let status_args = vec!["status", "--ignore-externals", "--", relative_path];
+    let status = match run_workspace_status_command(root, "svn", &status_args) {
+        Ok(output) => output,
+        Err(err) => return Some(Err(format!("SVN 状态读取失败: {err}"))),
+    };
+    if status.timed_out {
+        return Some(Err("SVN 状态收集超时".to_string()));
+    }
+    if !status.success {
+        return Some(Err(format!(
+            "SVN 状态读取失败: {}",
+            workspace_status_error(&status)
+        )));
+    }
+
+    let status_files = parse_svn_workspace_changes(&status.stdout);
+    let status_for_diff = status_files
+        .iter()
+        .find(|file| workspace_change_file_matches_relative_path(file, relative_path))
+        .map(|file| file.status.as_str())
+        .unwrap_or("modified");
+    let diff_args = vec!["diff", "--internal-diff", "-x", "-U0", "--", relative_path];
+    let diff_files = match run_workspace_status_command(root, "svn", &diff_args) {
+        Ok(output) if output.timed_out => return Some(Err("SVN diff 读取超时".to_string())),
+        Ok(output) => {
+            workspace_change_file_from_unified_diff(relative_path, status_for_diff, &output.stdout)
+                .into_iter()
+                .collect()
+        }
+        Err(_) => Vec::new(),
+    };
+
+    Some(Ok(workspace_single_change_from_status_and_diff(
+        root,
+        status_files,
+        diff_files,
+        relative_path,
+    )))
+}
+
+fn p4_workspace_file_change(
+    root: &Path,
+    relative_path: &str,
+) -> Option<Result<Option<WorkspaceChangeFile>, String>> {
+    let status_changes = match p4_workspace_changes_for_specs(
+        root,
+        vec![p4_normalize_file_spec(relative_path)],
+        "file",
+    )? {
+        Ok(changes) => changes,
+        Err(err) => return Some(Err(err)),
+    };
+    let status_files = status_changes.files;
+    let status_for_diff = status_files
+        .iter()
+        .find(|file| workspace_change_file_matches_relative_path(file, relative_path))
+        .map(|file| file.status.as_str())
+        .unwrap_or("modified");
+    let diff_args = p4_file_diff_args(relative_path);
+    let diff_files = match run_workspace_status_command_owned_with_timeout(
+        root,
+        "p4",
+        &diff_args,
+        p4_status_command_timeout(),
+    ) {
+        Ok(output) if output.timed_out => return Some(Err("P4 diff 读取超时".to_string())),
+        Ok(output) => {
+            workspace_change_file_from_unified_diff(relative_path, status_for_diff, &output.stdout)
+                .into_iter()
+                .collect()
+        }
+        Err(_) => Vec::new(),
+    };
+
+    Some(Ok(workspace_single_change_from_status_and_diff(
+        root,
+        status_files,
+        diff_files,
+        relative_path,
+    )))
+}
+
+fn p4_file_diff_args(relative_path: &str) -> Vec<String> {
+    vec![
+        "diff".to_string(),
+        "-f".to_string(),
+        "-du0".to_string(),
+        relative_path.to_string(),
+    ]
+}
+
+fn vcs_workspace_file_change(
+    root: &Path,
+    relative_path: &str,
+) -> Result<Option<WorkspaceChangeFile>, String> {
+    if let Some(result) = git_workspace_file_change(root, relative_path) {
+        return result;
+    }
+    if let Some(result) = svn_workspace_file_change(root, relative_path) {
+        return result;
+    }
+    if let Some(result) = p4_workspace_file_change(root, relative_path) {
+        return result;
+    }
+    Ok(None)
+}
+
+fn workspace_file_diff_blocking(
+    root_path: String,
+    path: String,
+) -> Result<Option<WorkspaceChangeFile>, String> {
+    let (root, _) = workspace_tree_resolve_dir(&root_path, "")?;
+    let relative_path = workspace_file_diff_relative_path(&root, &path)?;
+    vcs_workspace_file_change(&root, &relative_path)
+}
+
 fn parse_svn_workspace_changes(stdout: &str) -> Vec<WorkspaceChangeFile> {
     let mut files = Vec::new();
     for line in stdout.lines() {
@@ -8358,6 +8828,16 @@ async fn workspace_vcs_status_shallow(root_path: String) -> Result<WorkspaceChan
     tauri::async_runtime::spawn_blocking(move || workspace_vcs_status_shallow_blocking(root_path))
         .await
         .map_err(|e| format!("VCS 状态读取任务失败: {e}"))?
+}
+
+#[tauri::command]
+async fn workspace_file_diff(
+    root_path: String,
+    path: String,
+) -> Result<Option<WorkspaceChangeFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace_file_diff_blocking(root_path, path))
+        .await
+        .map_err(|e| format!("文件差异读取任务失败: {e}"))?
 }
 
 /// Return the last cached full VCS status snapshot for a workspace, if any.
@@ -14199,6 +14679,43 @@ mod tests {
     }
 
     #[test]
+    fn parse_unified_workspace_diff_lines_marks_replacements() {
+        let (lines, binary) = parse_unified_workspace_diff_lines(
+            "Index: src/main.cpp\n\
+             ===================================================================\n\
+             --- src/main.cpp\t(revision 1)\n\
+             +++ src/main.cpp\t(working copy)\n\
+             @@ -8,2 +8,2 @@\n\
+             -old one\n\
+             -old two\n\
+             +new one\n\
+             +new two\n",
+        );
+
+        assert!(!binary);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].kind, "replacedDeleted");
+        assert_eq!(lines[0].old_line, Some(8));
+        assert_eq!(lines[2].kind, "replacedAdded");
+        assert_eq!(lines[2].new_line, Some(8));
+    }
+
+    #[test]
+    fn workspace_change_file_from_unified_diff_detects_binary() {
+        let file = workspace_change_file_from_unified_diff(
+            "Content/Logo.uasset",
+            "modified",
+            "Cannot display: file marked as a binary type.\n",
+        )
+        .expect("binary diff marker should still produce a file");
+
+        assert_eq!(file.path, "Content/Logo.uasset");
+        assert!(file.binary);
+        assert!(file.truncated);
+        assert!(file.lines.is_empty());
+    }
+
+    #[test]
     fn parse_svn_workspace_changes_maps_statuses() {
         let files =
             parse_svn_workspace_changes("M       edited.ts\n?       new.ts\n!       missing.ts\n");
@@ -14328,6 +14845,15 @@ mod tests {
             .any(|args| args.first().is_some_and(|command| {
                 matches!(*command, "add" | "edit" | "delete" | "revert" | "submit")
             })));
+    }
+
+    #[test]
+    fn p4_file_diff_args_force_unopened_files() {
+        let args = p4_file_diff_args("Source/Edit.cpp");
+
+        assert!(args.contains(&"-f".to_string()));
+        assert!(args.contains(&"-du0".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("Source/Edit.cpp"));
     }
 
     #[test]
@@ -14634,6 +15160,7 @@ pub fn run() {
             workspace_changes,
             workspace_vcs_status,
             workspace_vcs_status_shallow,
+            workspace_file_diff,
             workspace_vcs_status_cached,
             workspace_vcs_status_scan,
             workspace_changes_cached,

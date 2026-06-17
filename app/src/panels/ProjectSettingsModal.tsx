@@ -126,6 +126,7 @@ import {
 import {
   COCOS_MCP_SERVER_ID,
   GODOT_MCP_SERVER_ID,
+  blueprintModeInstall,
   listWorkspaceDirectory,
   cocosMcpSetupProject,
   godotMcpSetupProject,
@@ -152,6 +153,7 @@ import {
   type ProjectLspProbeResult,
   type ProjectMcpProbeResult,
   type GenericProjectMcpSetupResult,
+  type BlueprintModeInstallResult,
   type SkillInstallTarget,
   type SlashCatalogEntry,
   type UnityMcpSetupResult,
@@ -187,6 +189,7 @@ const PROJECT_SETTINGS_EN: Record<string, string> = {
   '安装中': 'Installing',
   '安装中...': 'Installing…',
   '绑定渠道': 'Rigging channel',
+  '蓝图': 'Blueprint',
   '抓帧/性能': 'Capture / performance',
   '保存': 'Save',
   '保存中...': 'Saving…',
@@ -377,6 +380,7 @@ type ProjectSettingsTab =
   | 'rigging'
   | 'capturePerf'
   | 'gameExperts'
+  | 'blueprint'
   | 'commands'
   | 'mcp'
   | 'lsp'
@@ -392,17 +396,29 @@ const tabs: { id: ProjectSettingsTab; label: string; Icon: LucideIcon }[] = [
   { id: 'rigging', label: '绑定渠道', Icon: Bone },
   { id: 'capturePerf', label: '抓帧/性能', Icon: Activity },
   { id: 'gameExperts', label: '游戏专家', Icon: Gamepad2 },
+  { id: 'blueprint', label: '蓝图', Icon: FileText },
   { id: 'commands', label: '命令', Icon: SlashSquare },
-  { id: 'mcp', label: 'MCP', Icon: Terminal },
-  { id: 'lsp', label: 'LSP', Icon: Languages },
-  { id: 'skills', label: 'Skills', Icon: Box },
   { id: 'automation', label: '权限/自动化', Icon: SlidersHorizontal },
 ];
+
+/**
+ * Tabs that can be embedded standalone (without the project-settings modal
+ * chrome) inside the global Settings modal. These render the exact same content
+ * as the in-modal tabs — only the surrounding modal/nav/footer is dropped.
+ */
+export type ProjectEmbedTab = 'mcp' | 'lsp' | 'skills';
 
 interface ProjectSettingsModalProps {
   workspace: WorkspaceSummary;
   onClose: () => void;
   onWorkspaceUpdated?: (workspace: WorkspaceSummary) => void;
+  /**
+   * When set, the component renders only this tab's content inline (no modal
+   * dialog, header, nav, or footer). Used by the global Settings modal to host
+   * the MCP / LSP / Skills tabs while reusing all the project-scoped state,
+   * handlers, and lifecycle defined here.
+   */
+  embedTab?: ProjectEmbedTab;
 }
 
 function describeError(err: unknown): string {
@@ -572,6 +588,7 @@ const GAME_FEATURE_TABS: ReadonlySet<ProjectSettingsTab> = new Set([
   'rigging',
   'capturePerf',
   'gameExperts',
+  'blueprint',
   'commands',
 ]);
 
@@ -3095,8 +3112,9 @@ export default function ProjectSettingsModal({
   workspace,
   onClose,
   onWorkspaceUpdated,
+  embedTab,
 }: ProjectSettingsModalProps) {
-  const [tab, setTab] = useState<ProjectSettingsTab>('overview');
+  const [tab, setTab] = useState<ProjectSettingsTab>(embedTab ?? 'overview');
   const locale = useStore((s) => s.locale);
   const gameExpertSettings = useStore((s) => s.gameExpertSettings);
   const setGameExpertSettings = useStore((s) => s.setGameExpertSettings);
@@ -3214,6 +3232,13 @@ export default function ProjectSettingsModal({
   const [ueSetupStep, setUeSetupStep] = useState<string | null>(null);
   const [ueSetupResult, setUeSetupResult] = useState<UeMcpSetupResult | null>(null);
   const [ueSetupError, setUeSetupError] = useState<string | null>(null);
+  const [blueprintInstallBusy, setBlueprintInstallBusy] = useState(false);
+  const [blueprintInstallResult, setBlueprintInstallResult] =
+    useState<BlueprintModeInstallResult | null>(null);
+  const [blueprintInstallError, setBlueprintInstallError] = useState<string | null>(
+    null,
+  );
+  const [blueprintInstallOverwrite, setBlueprintInstallOverwrite] = useState(false);
   const [godotSetupBusy, setGodotSetupBusy] = useState(false);
   const [godotSetupStep, setGodotSetupStep] = useState<string | null>(null);
   const [godotSetupResult, setGodotSetupResult] =
@@ -3238,14 +3263,20 @@ export default function ProjectSettingsModal({
     [record?.metadata, scan, workspace],
   );
   const showGameFeatures = shouldShowGameFeatures(settings);
+  const detectedOrConfiguredEngine = scan?.engine.engine ?? settings.engine;
   const changeSkillSubTab = useCallback((id: ProjectSubTabId) => {
     skillSubTabTouchedRef.current = true;
     setSkillSubTab(id);
   }, []);
   const visibleTabs = useMemo(
     () =>
-      tabs.filter((item) => !GAME_FEATURE_TABS.has(item.id) || showGameFeatures),
-    [showGameFeatures],
+      tabs.filter((item) => {
+        if (item.id === 'blueprint') {
+          return showGameFeatures && detectedOrConfiguredEngine === 'unreal';
+        }
+        return !GAME_FEATURE_TABS.has(item.id) || showGameFeatures;
+      }),
+    [detectedOrConfiguredEngine, showGameFeatures],
   );
   const rankedLspServers = useMemo(
     () => rankLspServers(languageScan.languages, lspQuery),
@@ -3706,10 +3737,11 @@ export default function ProjectSettingsModal({
   }, [onClose]);
 
   useEffect(() => {
-    if (GAME_FEATURE_TABS.has(tab) && !showGameFeatures) {
+    if (embedTab) return;
+    if (!visibleTabs.some((item) => item.id === tab)) {
       setTab('overview');
     }
-  }, [showGameFeatures, tab]);
+  }, [embedTab, tab, visibleTabs]);
 
   useEffect(() => {
     if (tab !== 'lsp' || !tauriAvailable()) return;
@@ -4255,7 +4287,6 @@ export default function ProjectSettingsModal({
     ],
   );
 
-  const detectedOrConfiguredEngine = scan?.engine.engine ?? settings.engine;
   const isUnrealProject = detectedOrConfiguredEngine === 'unreal';
   const isUnityProject = detectedOrConfiguredEngine === 'unity';
   const isGodotProject = detectedOrConfiguredEngine === 'godot';
@@ -4576,6 +4607,51 @@ export default function ProjectSettingsModal({
     }
   }, [persistSettings, settings, workspacePath, locale]);
 
+  const installBlueprintModePlugin = useCallback(async () => {
+    if (!tauriAvailable()) {
+      setBlueprintInstallError(tr('一键安装需要在桌面应用中运行。', locale));
+      return;
+    }
+    if (!workspacePath.trim()) {
+      setBlueprintInstallError(tr('未指定工作区路径。', locale));
+      return;
+    }
+    setBlueprintInstallBusy(true);
+    setBlueprintInstallError(null);
+    setBlueprintInstallResult(null);
+    setStatus(null);
+    try {
+      const result = await blueprintModeInstall({
+        rootPath: workspacePath,
+        targetDir: null,
+        overwrite: blueprintInstallOverwrite,
+      });
+      setBlueprintInstallResult(result);
+      if (!result.ok) {
+        setBlueprintInstallError(
+          result.error ||
+            (locale === 'zh-CN'
+              ? 'BlueprintMode 插件安装失败。'
+              : 'BlueprintMode plugin install failed.'),
+        );
+        return;
+      }
+      setStatus(
+        locale === 'zh-CN'
+          ? 'BlueprintMode 插件已安装；重启 Unreal Editor 后生效。'
+          : 'BlueprintMode plugin installed; restart Unreal Editor to load it.',
+      );
+    } catch (err) {
+      setBlueprintInstallError(describeError(err));
+    } finally {
+      setBlueprintInstallBusy(false);
+    }
+  }, [
+    blueprintInstallOverwrite,
+    locale,
+    workspacePath,
+  ]);
+
   const setupGodotMcp = useCallback(async () => {
     if (!tauriAvailable()) {
       setGodotSetupError(tr('一键安装需要在桌面应用中运行。', locale));
@@ -4823,8 +4899,8 @@ export default function ProjectSettingsModal({
                 label={locale === 'zh-CN' ? '这是游戏项目' : 'This is a game project'}
                 hint={
                   locale === 'zh-CN'
-                    ? '开启后显示 Mesh、在线模型库、UI、绑骨、抓帧/性能、游戏专家和游戏命令等游戏项目 Tab。自动检测会识别 Unity、Unreal Engine、Godot 和 Cocos；其他引擎可在这里手动开启。'
-                    : 'Shows game project tabs such as Mesh, online model library, UI, rigging, capture/performance, Game Experts, and game commands. Auto-detect recognizes Unity, Unreal Engine, Godot, and Cocos; enable this manually for other engines.'
+                    ? '开启后显示 Mesh、在线模型库、UI、绑骨、抓帧/性能、游戏专家、UE 蓝图和游戏命令等游戏项目 Tab。自动检测会识别 Unity、Unreal Engine、Godot 和 Cocos；其他引擎可在这里手动开启。'
+                    : 'Shows game project tabs such as Mesh, online model library, UI, rigging, capture/performance, Game Experts, UE Blueprint, and game commands. Auto-detect recognizes Unity, Unreal Engine, Godot, and Cocos; enable this manually for other engines.'
                 }
                 checked={settings.gameFeatures.isGameProject}
                 onChange={setGameProjectEnabled}
@@ -4871,13 +4947,6 @@ export default function ProjectSettingsModal({
                 </div>
                 <div className="mt-1 text-xs text-fg-faint">{health.detail}</div>
               </div>
-              <button
-                type="button"
-                onClick={() => setTab('mcp')}
-                className="rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg"
-              >
-                {locale === 'zh-CN' ? '配置' : 'Configure'}
-              </button>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <div className="rounded border border-border-soft bg-bg-alt p-3">
@@ -4921,13 +4990,6 @@ export default function ProjectSettingsModal({
                     : tr('尚未识别编程语言', locale)}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setTab('lsp')}
-                className="rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg"
-              >
-                {locale === 'zh-CN' ? '配置' : 'Configure'}
-              </button>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <div className="rounded border border-border-soft bg-bg-alt p-3">
@@ -5330,6 +5392,157 @@ export default function ProjectSettingsModal({
             setSettings={setGameExpertSettings}
             embedded
           />
+        </div>
+      );
+    }
+
+    if (tab === 'blueprint') {
+      const desktop = tauriAvailable();
+      const ueMcpServer = settings.mcp.servers.find(
+        (server) => server.id === UE_MCP_SERVER_ID,
+      );
+      const ueMcpConnected =
+        settings.mcp.enabled && ueMcpServer?.enabled && ueMcpServer.lastProbe?.ok;
+      const ueMcpConfigured = Boolean(ueMcpServer);
+
+      return (
+        <div className="grid gap-4">
+          <section className="rounded-md border border-border bg-panel-2 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">
+                  {locale === 'zh-CN' ? 'UE 蓝图模式' : 'UE Blueprint mode'}
+                </div>
+                <div className="mt-1 text-xs leading-relaxed text-fg-faint">
+                  {locale === 'zh-CN'
+                    ? '仅 Unreal Engine 项目显示。这里安装 BlueprintMode 插件，并通过 /blueprint-mode-start 让对话按蓝图创建、连线、编译和校验来处理。'
+                    : 'Shown only for Unreal Engine projects. Install the BlueprintMode plugin here, then use /blueprint-mode-start for Blueprint creation, wiring, compilation, and verification.'}
+                </div>
+              </div>
+              <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-300">
+                Unreal Engine
+              </span>
+            </div>
+          </section>
+
+          <div className="grid gap-3 rounded-md border border-border bg-panel-2 p-4">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded border border-border-soft bg-bg-alt p-3">
+                <div className="text-[11px] text-fg-faint">
+                  {locale === 'zh-CN' ? '项目类型' : 'Project type'}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-fg">
+                  {scan?.engine.label ?? projectEngineLabel(settings.engine)}
+                </div>
+              </div>
+              <div className="rounded border border-border-soft bg-bg-alt p-3">
+                <div className="text-[11px] text-fg-faint">Unreal MCP</div>
+                <div className="mt-1 text-sm font-semibold text-fg">
+                  {ueMcpConnected
+                    ? tr('已连接', locale)
+                    : ueMcpConfigured
+                      ? tr('已配置', locale)
+                      : tr('未配置', locale)}
+                </div>
+              </div>
+              <div className="rounded border border-border-soft bg-bg-alt p-3">
+                <div className="text-[11px] text-fg-faint">BlueprintMode</div>
+                <div className="mt-1 text-sm font-semibold text-fg">
+                  {blueprintInstallResult?.ok
+                    ? tr('已安装', locale)
+                    : locale === 'zh-CN'
+                      ? '待安装'
+                      : 'Needs install'}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-xs text-fg-faint">
+              {locale === 'zh-CN'
+                ? '插件会从 GitHub 下载，并安装到项目 Plugins 目录。'
+                : 'The plugin is downloaded from GitHub and installed under the project Plugins directory.'}
+            </div>
+
+            <ToggleRow
+              label={locale === 'zh-CN' ? '覆盖已有插件目录' : 'Overwrite existing plugin'}
+              hint={
+                locale === 'zh-CN'
+                  ? '目标目录已存在时才需要开启。'
+                  : 'Enable only when the target directory already exists.'
+              }
+              checked={blueprintInstallOverwrite}
+              onChange={setBlueprintInstallOverwrite}
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void installBlueprintModePlugin()}
+                disabled={!desktop || blueprintInstallBusy}
+                className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-fg hover:bg-accent/25 disabled:border-border disabled:bg-bg-alt disabled:text-fg-faint"
+              >
+                <Download size={13} />
+                {blueprintInstallBusy
+                  ? tr('安装中...', locale)
+                  : locale === 'zh-CN'
+                    ? '安装 BlueprintMode'
+                    : 'Install BlueprintMode'}
+              </button>
+            </div>
+
+            {!desktop ? (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                {tr('一键安装需要在桌面应用中运行。', locale)}
+              </div>
+            ) : null}
+            {blueprintInstallError ? (
+              <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                {blueprintInstallError}
+              </div>
+            ) : null}
+            {blueprintInstallResult ? (
+              <div className="grid gap-1 rounded-md border border-border-soft bg-bg-alt px-3 py-2 text-[11px] leading-relaxed text-fg-faint">
+                <div>
+                  {locale === 'zh-CN' ? '来源：' : 'Source: '}
+                  {blueprintInstallResult.sourceUrl || tr('未指定', locale)}
+                </div>
+                <div>
+                  {locale === 'zh-CN' ? '目标：' : 'Target: '}
+                  {blueprintInstallResult.targetDir || tr('未指定', locale)}
+                </div>
+                {blueprintInstallResult.notes.map((note) => (
+                  <div key={note}>{note}</div>
+                ))}
+                {blueprintInstallResult.warnings.map((warning) => (
+                  <div key={warning} className="text-amber-200">
+                    {warning}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <section className="grid gap-2 rounded-md border border-border bg-panel-2 p-4 text-xs leading-relaxed text-fg-faint">
+            <div className="text-sm font-semibold text-fg">
+              {locale === 'zh-CN' ? '使用方式' : 'Usage'}
+            </div>
+            <div>
+              {locale === 'zh-CN'
+                ? '开始：'
+                : 'Start: '}
+              <code className="rounded border border-border-soft bg-bg-alt px-1.5 py-0.5 text-accent">
+                /blueprint-mode-start --target BP_Player --context full
+              </code>
+            </div>
+            <div>
+              {locale === 'zh-CN'
+                ? '结束：'
+                : 'End: '}
+              <code className="rounded border border-border-soft bg-bg-alt px-1.5 py-0.5 text-accent">
+                /blueprint-mode-end --compile --verify
+              </code>
+            </div>
+          </section>
         </div>
       );
     }
@@ -6463,10 +6676,24 @@ export default function ProjectSettingsModal({
     );
   })();
 
+  // Embedded mode: render only the requested tab's content inline so the global
+  // Settings modal can host MCP / LSP / Skills without duplicating any of the
+  // project-scoped state, handlers, or scan/save lifecycle defined above. The
+  // content is the exact same IIFE output as the in-modal tabs.
+  if (embedTab) {
+    if (loading) {
+      return (
+        <div className="flex min-h-[12rem] items-center justify-center text-sm text-fg-faint">
+          {tr('检测中...', locale)}
+        </div>
+      );
+    }
+    return <div className="w-full">{content}</div>;
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6"
-      onClick={onClose}
     >
       <div
         role="dialog"

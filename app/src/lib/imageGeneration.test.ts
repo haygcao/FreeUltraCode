@@ -62,12 +62,17 @@ describe('image generation settings and routing', () => {
       preferredProviderId: 'pollinations',
       providerKeys: { pollinations: ' token ', unknown: 'x' },
       providerModels: { pollinations: ' flux ' },
+      providerModelLists: {
+        pollinations: [' custom-image ', 'CUSTOM-IMAGE', '', 42],
+        unknown: ['ignored'],
+      },
     });
     expect(settings.enabled).toBe(false);
     expect(settings.showComposerModelSelect).toBe(true);
     expect(settings.preferredProviderId).toBe('pollinations');
     expect(settings.providerKeys.pollinations).toBe('token');
     expect(settings.providerModels.pollinations).toBe('flux');
+    expect(settings.providerModelLists.pollinations).toEqual(['custom-image']);
   });
 
   it('normalizes custom image providers and keeps them selectable', () => {

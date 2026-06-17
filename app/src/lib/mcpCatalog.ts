@@ -692,6 +692,62 @@ export const MCP_CATALOG: McpServerDefinition[] = [
     trust: 'community',
     requiresUserApproval: true,
   },
+  {
+    id: '3dsmax-mcp',
+    title: '3ds Max MCP',
+    category: 'game',
+    description:
+      '连接 Autodesk 3ds Max（2023–2027），用自然语言创建对象、构建材质、管理修改器/控制器、捕获视口并驱动 MAXScript/插件工作流。',
+    transport: 'stdio',
+    command: 'uv',
+    args: ['run', '--directory', '{workspace}/3dsmax-mcp', '3dsmax-mcp'],
+    env: {},
+    install:
+      '需要 uv / Python 3.10+ 与 3ds Max 2023–2027；先 git clone wellingfeng/3dsmax-mcp 并执行 uv sync 与 uv run python install.py，再把 --directory 指向克隆目录后重启 3ds Max。',
+    sourceUrl: 'https://github.com/wellingfeng/3dsmax-mcp',
+    tags: ['3dsmax', '3ds max', 'autodesk', 'maxscript', 'dcc', 'modeling', 'game', 'wellingfeng', 'community'],
+    recommendationPriority: 70,
+    trust: 'community',
+    requiresUserApproval: true,
+  },
+  {
+    id: 'maya-mcp',
+    title: 'Maya MCP',
+    category: 'game',
+    description:
+      '通过 Maya 命令端口连接 Autodesk Maya（2023 / 2025），用自然语言创建对象、材质、曲线，执行建模操作并生成完整场景。',
+    transport: 'stdio',
+    command: 'python',
+    args: ['{workspace}/MayaMCP/src/maya_mcp_server.py'],
+    env: {},
+    install:
+      '需要 Python 3.10+；先 git clone wellingfeng/MayaMCP，创建 venv 并 pip install -r requirements.txt，再把 command 指向该 venv 的 python、参数指向 maya_mcp_server.py。Maya 端首次连接需点击 Allow All。',
+    sourceUrl: 'https://github.com/wellingfeng/MayaMCP',
+    tags: ['maya', 'autodesk', 'mel', 'python', 'dcc', 'modeling', 'game', 'wellingfeng', 'community'],
+    recommendationPriority: 69,
+    trust: 'community',
+    requiresUserApproval: true,
+  },
+  {
+    id: 'vibeue-mcp',
+    title: 'VibeUE (Unreal)',
+    category: 'game',
+    description:
+      '在 Unreal Engine 5.7+ 内通过本地 MCP 代理操作蓝图、材质、控件、地形、动画与关卡，并可捕获视口截图做可视化自检。',
+    transport: 'streamable-http',
+    command: '',
+    args: [],
+    env: {},
+    url: 'http://127.0.0.1:8089/mcp',
+    install:
+      '需要在 UE 项目中安装 VibeUE 插件并填写 VibeUE API Key（vibeue.com 免费申请）；在插件设置与 vibeue-proxy.json 中设置同一 bearer token，启动本地代理后连接 http://127.0.0.1:8089/mcp。',
+    sourceUrl: 'https://github.com/kevinpbuckley/VibeUE',
+    connectionUrl: 'http://127.0.0.1:8089/mcp',
+    tags: ['unreal', 'ue5', 'vibeue', 'blueprint', 'material', 'editor', 'game', 'engine', 'community'],
+    recommendationPriority: 73,
+    trust: 'community',
+    requiresUserApproval: true,
+  },
 ];
 
 function searchableMcpText(server: McpServerDefinition): string {

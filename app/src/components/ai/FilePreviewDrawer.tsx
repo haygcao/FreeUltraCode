@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Code2,
   ExternalLink,
@@ -7,19 +7,27 @@ import {
   Globe2,
   Image as ImageIcon,
   Loader2,
+  Maximize2,
+  Minimize2,
   X,
 } from 'lucide-react';
 import {
   openLocalPath,
   previewLocalFile,
+  workspaceFileDiff,
   type LocalFilePreview,
+  type WorkspaceChangeFile,
+  type WorkspaceChangeLine,
+  type WorkspaceChangeLineKind,
 } from '@/lib/tauri';
+import { cn } from '@/lib/cn';
 import { createObjectUrlFromBase64, revokeObjectUrl } from '@/lib/objectUrl';
 import { useResizableWidth } from '@/lib/useResizableWidth';
 import {
   displayFileRefPath,
   type FileRef,
 } from './lib/filePath';
+import { highlightCode } from './lib/highlight';
 import Markdown from './Markdown';
 import DocumentPreview from './DocumentPreview';
 
@@ -29,134 +37,11 @@ type PreviewState =
   | { status: 'ready'; file: LocalFilePreview }
   | { status: 'error'; message: string };
 
-const EXT_TO_LANG: Record<string, string> = {
-  ts: 'ts',
-  tsx: 'tsx',
-  mts: 'ts',
-  cts: 'ts',
-  js: 'js',
-  jsx: 'jsx',
-  mjs: 'js',
-  cjs: 'js',
-  json: 'json',
-  jsonc: 'json',
-  json5: 'json',
-  map: 'json',
-  webmanifest: 'json',
-  ipynb: 'json',
-  ndjson: 'json',
-  jsonl: 'json',
-  geojson: 'json',
-  topojson: 'json',
-  har: 'json',
-  css: 'css',
-  scss: 'css',
-  sass: 'css',
-  less: 'css',
-  pcss: 'css',
-  postcss: 'css',
-  styl: 'css',
-  html: 'html',
-  htm: 'html',
-  xhtml: 'html',
-  shtml: 'html',
-  xht: 'html',
-  hta: 'html',
-  mjml: 'html',
-  vue: 'vue',
-  svelte: 'html',
-  astro: 'html',
-  svg: 'svg',
-  xml: 'xml',
-  xsd: 'xml',
-  xsl: 'xml',
-  xslt: 'xml',
-  dtd: 'xml',
-  rss: 'xml',
-  atom: 'xml',
-  wsdl: 'xml',
-  csproj: 'xml',
-  fsproj: 'xml',
-  vbproj: 'xml',
-  vcxproj: 'xml',
-  md: 'md',
-  mdx: 'md',
-  markdown: 'md',
-  mkd: 'md',
-  mkdn: 'md',
-  mdown: 'md',
-  mdwn: 'md',
-  mdtxt: 'md',
-  mdtext: 'md',
-  rmd: 'md',
-  qmd: 'md',
-  yml: 'yaml',
-  yaml: 'yaml',
-  toml: '',
-  py: 'py',
-  pyw: 'py',
-  pyi: 'py',
-  rs: 'rs',
-  sh: 'bash',
-  bash: 'bash',
-  zsh: 'bash',
-  fish: 'bash',
-  ksh: 'bash',
-  ps1: '',
-  psm1: '',
-  psd1: '',
-  bat: '',
-  cmd: '',
-  sql: '',
-  gql: '',
-  graphql: '',
-  proto: '',
-  hcl: '',
-  tf: '',
-  tfvars: '',
-  nix: '',
-  go: '',
-  java: '',
-  kt: '',
-  kts: '',
-  c: 'c',
-  h: 'c',
-  cc: 'cpp',
-  cpp: 'cpp',
-  cxx: 'cpp',
-  hpp: 'cpp',
-  hh: 'cpp',
-  hxx: 'cpp',
-  cs: 'cs',
-  php: '',
-  swift: '',
-  scala: '',
-  dart: '',
-  lua: '',
-  glsl: 'glsl',
-  vert: 'glsl',
-  frag: 'glsl',
-  geom: 'glsl',
-  tesc: 'glsl',
-  tese: 'glsl',
-  comp: 'glsl',
-  hlsl: 'hlsl',
-  fx: 'hlsl',
-  fxh: 'hlsl',
-  usf: 'hlsl',
-  ush: 'hlsl',
-  cginc: 'hlsl',
-  diff: 'diff',
-  patch: 'diff',
-  rej: 'diff',
-  mmd: 'md',
-  mermaid: '',
-  puml: '',
-  plantuml: '',
-  dot: '',
-  gv: '',
-  drawio: 'xml',
-};
+type DiffState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ready'; diff: WorkspaceChangeFile | null }
+  | { status: 'error'; message: string };
 
 const HTML_PREVIEW_EXT = new Set(['html', 'htm', 'xhtml', 'xht', 'shtml', 'hta']);
 const MARKDOWN_PREVIEW_EXT = new Set([
@@ -200,7 +85,32 @@ function extensionFromPath(path: string): string {
 }
 
 function languageFromPath(path: string): string {
-  return EXT_TO_LANG[extensionFromPath(path)] ?? '';
+  const ext = extensionFromPath(path);
+  if (ext === 'ts' || ext === 'tsx' || ext === 'mts' || ext === 'cts') return 'typescript';
+  if (ext === 'js' || ext === 'jsx' || ext === 'mjs' || ext === 'cjs') return 'javascript';
+  if (ext === 'json' || ext === 'jsonc' || ext === 'json5') return 'json';
+  if (ext === 'css' || ext === 'scss' || ext === 'sass' || ext === 'less') return 'css';
+  if (ext === 'html' || ext === 'htm' || ext === 'xml' || ext === 'svg' || ext === 'vue') {
+    return 'xml';
+  }
+  if (MARKDOWN_PREVIEW_EXT.has(ext)) return 'markdown';
+  if (ext === 'yml' || ext === 'yaml') return 'yaml';
+  if (ext === 'py' || ext === 'pyw' || ext === 'pyi') return 'python';
+  if (ext === 'rs') return 'rust';
+  if (ext === 'sh' || ext === 'bash' || ext === 'zsh') return 'bash';
+  if (ext === 'ps1' || ext === 'psm1' || ext === 'psd1') return 'powershell';
+  if (ext === 'bat' || ext === 'cmd') return 'dos';
+  if (ext === 'c' || ext === 'h') return 'c';
+  if (ext === 'cc' || ext === 'cpp' || ext === 'cxx' || ext === 'hpp' || ext === 'hh') {
+    return 'cpp';
+  }
+  if (ext === 'cs') return 'csharp';
+  if (ext === 'glsl' || ext === 'vert' || ext === 'frag') return 'glsl';
+  if (ext === 'hlsl' || ext === 'fx' || ext === 'fxh' || ext === 'usf' || ext === 'ush') {
+    return 'hlsl';
+  }
+  if (ext === 'diff' || ext === 'patch' || ext === 'rej') return 'diff';
+  return 'plaintext';
 }
 
 function textPreviewModeFromPath(path: string, mime?: string | null): TextPreviewMode {
@@ -211,13 +121,6 @@ function textPreviewModeFromPath(path: string, mime?: string | null): TextPrevie
     return 'markdown';
   }
   return 'code';
-}
-
-function codeFence(text: string, language: string): string {
-  const longestFence =
-    Math.max(2, ...Array.from(text.matchAll(/`{3,}/g), (m) => m[0].length)) + 1;
-  const fence = '`'.repeat(longestFence);
-  return `${fence}${language}\n${text}${text.endsWith('\n') ? '' : '\n'}${fence}`;
 }
 
 function formatBytes(bytes: number): string {
@@ -278,6 +181,203 @@ function useBase64ObjectUrl(
   return url;
 }
 
+type DiffLineTone = 'added' | 'deleted' | 'replacedAdded' | 'replacedDeleted';
+
+interface DiffPreviewRow {
+  key: string;
+  text: string;
+  newLine: number | null;
+  oldLine: number | null;
+  anchorLine: number;
+  tone: DiffLineTone | null;
+  marker: string;
+  virtual: boolean;
+}
+
+function splitPreviewLines(text: string): string[] {
+  if (text.length === 0) return [''];
+  const lines = text.split(/\r\n|\r|\n/);
+  if (/[ \t]*\r?\n$/.test(text) && lines.length > 1) lines.pop();
+  return lines.length > 0 ? lines : [''];
+}
+
+function isAddedDiffKind(kind: WorkspaceChangeLineKind): boolean {
+  return kind === 'added' || kind === 'replacedAdded';
+}
+
+function isDeletedDiffKind(kind: WorkspaceChangeLineKind): boolean {
+  return kind === 'deleted' || kind === 'replacedDeleted';
+}
+
+function clampLine(line: number, totalLines: number): number {
+  return Math.max(1, Math.min(Math.max(1, totalLines + 1), line));
+}
+
+function deletedAnchorLine(
+  diffLines: WorkspaceChangeLine[],
+  index: number,
+  totalLines: number,
+): number {
+  for (let next = index + 1; next < diffLines.length; next += 1) {
+    const newLine = diffLines[next]?.newLine;
+    if (typeof newLine === 'number' && newLine > 0) {
+      return clampLine(newLine, totalLines);
+    }
+  }
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    const newLine = diffLines[previous]?.newLine;
+    if (typeof newLine === 'number' && newLine > 0) {
+      return clampLine(newLine + 1, totalLines);
+    }
+  }
+  const oldLine = diffLines[index]?.oldLine;
+  return clampLine(typeof oldLine === 'number' && oldLine > 0 ? oldLine : 1, totalLines);
+}
+
+function buildDiffPreviewRows(text: string, diff: WorkspaceChangeFile | null): DiffPreviewRow[] {
+  const lines = splitPreviewLines(text);
+  const totalLines = lines.length;
+  const currentLineKinds = new Map<number, DiffLineTone>();
+  const deletedBefore = new Map<number, WorkspaceChangeLine[]>();
+
+  for (let index = 0; index < (diff?.lines.length ?? 0); index += 1) {
+    const line = diff?.lines[index];
+    if (!line) continue;
+    if (isAddedDiffKind(line.kind) && typeof line.newLine === 'number') {
+      currentLineKinds.set(line.newLine, line.kind);
+    } else if (isDeletedDiffKind(line.kind)) {
+      const anchor = deletedAnchorLine(diff?.lines ?? [], index, totalLines);
+      const bucket = deletedBefore.get(anchor) ?? [];
+      bucket.push(line);
+      deletedBefore.set(anchor, bucket);
+    }
+  }
+
+  const rows: DiffPreviewRow[] = [];
+  for (let lineNo = 1; lineNo <= totalLines + 1; lineNo += 1) {
+    const deleted = deletedBefore.get(lineNo) ?? [];
+    for (let index = 0; index < deleted.length; index += 1) {
+      const line = deleted[index];
+      rows.push({
+        key: `deleted:${line.oldLine ?? lineNo}:${index}:${line.content}`,
+        text: line.content,
+        newLine: null,
+        oldLine: line.oldLine ?? null,
+        anchorLine: lineNo,
+        tone: line.kind,
+        marker: '-',
+        virtual: true,
+      });
+    }
+
+    if (lineNo > totalLines) continue;
+    const tone = currentLineKinds.get(lineNo) ?? null;
+    rows.push({
+      key: `line:${lineNo}`,
+      text: lines[lineNo - 1] ?? '',
+      newLine: lineNo,
+      oldLine: null,
+      anchorLine: lineNo,
+      tone,
+      marker: tone ? '+' : '',
+      virtual: false,
+    });
+  }
+
+  return rows;
+}
+
+function minimapTop(line: number, totalLines: number): string {
+  if (totalLines <= 1) return '0%';
+  const top = ((Math.max(1, Math.min(totalLines, line)) - 1) / (totalLines - 1)) * 100;
+  return `${top.toFixed(3)}%`;
+}
+
+function DiffCodePreview({
+  text,
+  diff,
+  language,
+}: {
+  text: string;
+  diff: WorkspaceChangeFile | null;
+  language: string;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rows = useMemo(() => buildDiffPreviewRows(text, diff), [diff, text]);
+  const highlightedRows = useMemo(
+    () =>
+      rows.map((row) => {
+        const highlighted = highlightCode(row.text, language);
+        return { ...row, html: highlighted.html || ' ', highlightClass: highlighted.className };
+      }),
+    [language, rows],
+  );
+  const totalLines = splitPreviewLines(text).length;
+  const lineNumberWidth = Math.max(3, String(totalLines).length + 1);
+  const markers = highlightedRows.filter((row) => row.tone);
+
+  const scrollToLine = (line: number) => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const target = root.querySelector<HTMLElement>(
+      `[data-vcs-line="${line}"], [data-vcs-anchor="${line}"]`,
+    );
+    target?.scrollIntoView({ block: 'center', inline: 'nearest' });
+  };
+
+  return (
+    <div className="ai-file-preview-diff">
+      <div ref={scrollRef} className="ai-file-preview-diff__scroll" tabIndex={0}>
+        <div
+          className="ai-file-preview-diff__code"
+          style={{ '--line-number-width': `${lineNumberWidth}ch` } as CSSProperties}
+        >
+          {highlightedRows.map((row) => (
+            <div
+              key={row.key}
+              data-vcs-line={row.newLine ?? undefined}
+              data-vcs-anchor={row.anchorLine}
+              data-vcs-kind={row.tone ?? undefined}
+              className={
+                'ai-file-preview-diff__line ' +
+                (row.tone ? `ai-file-preview-diff__line--${row.tone}` : '') +
+                (row.virtual ? ' ai-file-preview-diff__line--virtual' : '')
+              }
+            >
+              <span className="ai-file-preview-diff__line-no">
+                {row.virtual ? row.oldLine ?? '' : row.newLine}
+              </span>
+              <span className="ai-file-preview-diff__marker">{row.marker}</span>
+              <code
+                className={`ai-file-preview-diff__text ${row.highlightClass}`}
+                dangerouslySetInnerHTML={{ __html: row.html }}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+      {markers.length > 0 && (
+        <div className="ai-file-preview-diff__minimap" aria-label="差异缩略条">
+          {markers.map((row, index) => (
+            <button
+              key={`${row.key}:marker:${index}`}
+              type="button"
+              className={
+                'ai-file-preview-diff__minimap-mark ' +
+                (row.tone ? `ai-file-preview-diff__minimap-mark--${row.tone}` : '')
+              }
+              style={{ top: minimapTop(row.anchorLine, totalLines) }}
+              title={`跳转到第 ${row.anchorLine} 行`}
+              aria-label={`跳转到第 ${row.anchorLine} 行`}
+              onClick={() => scrollToLine(row.anchorLine)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FilePreviewDrawer({
   refData,
   cwd,
@@ -288,6 +388,9 @@ export default function FilePreviewDrawer({
   onClose: () => void;
 }) {
   const [state, setState] = useState<PreviewState>({ status: 'idle' });
+  const [diffState, setDiffState] = useState<DiffState>({ status: 'idle' });
+  const [isExpanded, setIsExpanded] = useState(false);
+  const asideRef = useRef<HTMLElement | null>(null);
   const { width, onResizeStart } = useResizableWidth({
     storageKey: 'freeultracode.filePreviewWidth.v1',
     defaultWidth: filePreviewDefaultWidth(),
@@ -299,6 +402,7 @@ export default function FilePreviewDrawer({
   useEffect(() => {
     if (!refData) {
       setState({ status: 'idle' });
+      setIsExpanded(false);
       return;
     }
 
@@ -317,12 +421,56 @@ export default function FilePreviewDrawer({
   }, [cwd, refData]);
 
   useEffect(() => {
+    if (!refData || !cwd) {
+      setDiffState({ status: 'idle' });
+      return;
+    }
+
+    let disposed = false;
+    setDiffState({ status: 'loading' });
+    void workspaceFileDiff(cwd, refData.path)
+      .then((diff) => {
+        if (!disposed) setDiffState({ status: 'ready', diff });
+      })
+      .catch((err) => {
+        if (!disposed) setDiffState({ status: 'error', message: errorMessage(err) });
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [cwd, refData]);
+
+  useEffect(() => {
     if (!refData) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape') return;
+      if (isExpanded) {
+        setIsExpanded(false);
+        return;
+      }
+      onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isExpanded, onClose, refData]);
+
+  useEffect(() => {
+    if (!refData) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      const aside = asideRef.current;
+      if (aside && aside.contains(target)) return;
+      onClose();
+    };
+    // Defer registration so the click that opened the preview doesn't immediately close it.
+    const timer = window.setTimeout(() => {
+      document.addEventListener('pointerdown', onPointerDown, true);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
   }, [onClose, refData]);
 
   const file = state.status === 'ready' ? state.file : null;
@@ -340,26 +488,32 @@ export default function FilePreviewDrawer({
   const markdown = useMemo(() => {
     if (!file || file.kind !== 'text' || file.text == null) return '';
     if (textPreviewMode === 'markdown') return file.text;
-    if (textPreviewMode === 'html') return '';
-    return codeFence(file.text, languageFromPath(file.path));
+    return '';
   }, [file, textPreviewMode]);
+  const vcsDiff = diffState.status === 'ready' ? diffState.diff : null;
 
   if (!refData) return null;
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none">
       <aside
-        className="pointer-events-auto absolute bottom-0 right-0 top-0 flex flex-col border-l border-border bg-panel shadow-2xl"
-        style={{ width }}
+        ref={asideRef}
+        className={cn(
+          'pointer-events-auto absolute bottom-0 right-0 top-0 flex flex-col bg-panel shadow-2xl',
+          isExpanded ? 'left-0' : 'border-l border-border',
+        )}
+        style={isExpanded ? undefined : { width }}
       >
-        <div
-          onMouseDown={onResizeStart}
-          title="拖动调整预览宽度"
-          aria-label="拖动调整预览宽度"
-          className="group absolute -left-1 bottom-0 top-0 z-20 flex w-2 cursor-col-resize items-center justify-center"
-        >
-          <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/50" />
-        </div>
+        {!isExpanded && (
+          <div
+            onMouseDown={onResizeStart}
+            title="拖动调整预览宽度"
+            aria-label="拖动调整预览宽度"
+            className="group absolute -left-1 bottom-0 top-0 z-20 flex w-2 cursor-col-resize items-center justify-center"
+          >
+            <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/50" />
+          </div>
+        )}
         <header className="flex min-h-0 shrink-0 items-start gap-2 border-b border-border-soft px-3 py-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
@@ -372,6 +526,15 @@ export default function FilePreviewDrawer({
               {path}
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setIsExpanded((value) => !value)}
+            title={isExpanded ? '还原预览宽度' : '占满窗口'}
+            aria-label={isExpanded ? '还原预览宽度' : '占满窗口'}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          >
+            {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
           {file && (
             <button
               type="button"
@@ -473,7 +636,11 @@ export default function FilePreviewDrawer({
               <Code2 size={12} />
               {file.mime ?? 'text/plain'} · {formatBytes(file.sizeBytes)}
             </div>
-            <Markdown text={markdown} />
+            <DiffCodePreview
+              text={file.text ?? ''}
+              diff={vcsDiff}
+              language={languageFromPath(file.path)}
+            />
           </div>
         )}
 
