@@ -1,3 +1,8 @@
+import {
+  readSettingsRaw,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
+
 export type BuiltInMusicProviderId =
   | 'elevenlabs-music'
   | 'google-lyria'
@@ -117,6 +122,7 @@ export interface MusicGenerationRequest {
 }
 
 const STORAGE_KEY = 'freeultracode.musicGeneration.v1';
+const SETTINGS_REL_PATH = 'settings/musicGeneration.v1.json';
 const DEFAULT_DURATION_SECONDS = 30;
 const MIN_DURATION_SECONDS = 0.5;
 const MAX_DURATION_SECONDS = 600;
@@ -660,10 +666,6 @@ export const DEFAULT_MUSIC_GENERATION_SETTINGS: MusicGenerationSettings = {
   providerModels: {},
 };
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
-
 function isKnownMusicProviderId(
   value: unknown,
   providers: readonly MusicProviderDefinition[],
@@ -839,26 +841,23 @@ export function normalizeMusicGenerationSettings(
 }
 
 export function loadMusicGenerationSettings(): MusicGenerationSettings {
-  if (!hasStorage()) return DEFAULT_MUSIC_GENERATION_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     return normalizeMusicGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_MUSIC_GENERATION_SETTINGS;
   }
 }
 
-export function saveMusicGenerationSettings(settings: MusicGenerationSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(normalizeMusicGenerationSettings(settings)),
-    );
-    window.dispatchEvent(new Event('fuc:music-generation-settings-changed'));
-  } catch {
-    /* non-fatal */
+export function saveMusicGenerationSettings(settings: MusicGenerationSettings): boolean {
+  const payload = JSON.stringify(normalizeMusicGenerationSettings(settings));
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    console.error('[musicGeneration] failed to persist settings');
+    return false;
   }
+  window.dispatchEvent(new Event('fuc:music-generation-settings-changed'));
+  return true;
 }
 
 export function musicProviderById(

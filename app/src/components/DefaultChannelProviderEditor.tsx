@@ -23,8 +23,10 @@ import {
   subscribeShortcutSettings,
 } from '@/lib/keyboardShortcuts';
 import {
+  providerModelCacheKey,
   providerModelOptions,
   refreshProviderModels,
+  removeUserModel,
 } from '@/lib/modelLists';
 import { isTauri } from '@/lib/tauri';
 
@@ -366,6 +368,22 @@ export function DefaultChannelProviderEditor({
               refreshLabel={t(locale, 'settings.models.fetchModels')}
               selectLabel={t(locale, 'settings.models.selectModel')}
               onRefresh={refreshModels}
+              deleteLabel={t(locale, 'settings.models.delete')}
+              onRemoveModel={(model) => {
+                // Remove from the persistent model cache (and hide it so a later
+                // fetch does not bring it back), plus from the draft's own list.
+                removeUserModel(providerModelCacheKey(editor.draft), model);
+                const trimmed = model.trim().toLowerCase();
+                const nextModels = (editor.draft.models ?? []).filter(
+                  (m) => m.trim().toLowerCase() !== trimmed,
+                );
+                const clearSelected =
+                  (editor.draft.model ?? '').trim().toLowerCase() === trimmed;
+                patchDraft({
+                  models: nextModels,
+                  ...(clearSelected ? { model: nextModels[0] ?? '' } : {}),
+                });
+              }}
             />
             <div className="block space-y-1 sm:col-span-2">
               <div className="flex items-center justify-between gap-3">
@@ -563,6 +581,8 @@ function ModelTextField({
   refreshLabel,
   selectLabel,
   onRefresh,
+  onRemoveModel,
+  deleteLabel,
 }: {
   label: string;
   value: string;
@@ -575,6 +595,8 @@ function ModelTextField({
   refreshLabel: string;
   selectLabel: string;
   onRefresh: () => void;
+  onRemoveModel: (model: string) => void;
+  deleteLabel: string;
 }) {
   const modelOptions = uniqueStringOptions([value, ...options]);
   const selectValue = modelOptions.includes(value.trim()) ? value.trim() : '';
@@ -621,6 +643,42 @@ function ModelTextField({
           ))}
         </select>
       </div>
+      {modelOptions.length > 0 && (
+        <ul className="mt-1 flex flex-wrap gap-1">
+          {modelOptions.map((model) => {
+            const selected = model.trim().toLowerCase() === value.trim().toLowerCase();
+            return (
+              <li
+                key={model}
+                className={
+                  'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[11px] ' +
+                  (selected
+                    ? 'border-accent/40 bg-accent/10 text-accent'
+                    : 'border-border bg-bg text-fg-dim')
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => onChange(model)}
+                  className="max-w-[14rem] truncate text-left hover:text-fg"
+                  title={model}
+                >
+                  {model}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRemoveModel(model)}
+                  title={deleteLabel}
+                  aria-label={deleteLabel}
+                  className="flex h-4 w-4 items-center justify-center rounded text-fg-faint transition-colors hover:bg-rose-500/15 hover:text-rose-300"
+                >
+                  <X size={11} strokeWidth={2.4} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {description && (
         <p className="text-[11px] leading-relaxed text-fg-faint">{description}</p>
       )}

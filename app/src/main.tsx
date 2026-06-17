@@ -6,6 +6,8 @@ import { createRoot } from 'react-dom/client';
 import '@xyflow/react/dist/style.css';
 import './styles/global.css';
 import { initializeSecureStorage } from '@/lib/secureStorage';
+import { initializeGenerationSettingsStore } from '@/lib/generationSettingsStore';
+import { initializeGatewayConfigStore } from '@/lib/gatewayConfig';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {
@@ -13,7 +15,14 @@ if (!rootEl) {
 }
 
 async function bootstrap(): Promise<void> {
-  await initializeSecureStorage();
+  // Both hydrate disk-backed state into in-memory caches before the first render
+  // so the synchronous load*() readers (secrets, generation settings, gateway
+  // config/selection) see real data. They are independent, so run concurrently.
+  await Promise.all([
+    initializeSecureStorage(),
+    initializeGenerationSettingsStore(),
+    initializeGatewayConfigStore(),
+  ]);
   const [{ default: App }, { applyAppearance }, { useStore }] = await Promise.all([
     import('./App'),
     import('@/lib/appearance'),

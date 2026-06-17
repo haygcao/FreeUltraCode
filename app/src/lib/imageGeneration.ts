@@ -1,3 +1,8 @@
+import {
+  readSettingsRaw,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
+
 export type BuiltInImageProviderId =
   | 'agnes-image'
   | 'siliconflow'
@@ -133,6 +138,7 @@ export interface ImageGenerationRequest {
 }
 
 const STORAGE_KEY = 'freeultracode.imageGeneration.v1';
+const SETTINGS_REL_PATH = 'settings/imageGeneration.v1.json';
 
 export const IMAGE_PROVIDERS: ImageProviderDefinition[] = [
   {
@@ -717,10 +723,6 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
   providerModels: {},
 };
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
-
 function isKnownImageProviderId(
   value: unknown,
   providers: readonly ImageProviderDefinition[],
@@ -894,26 +896,26 @@ export function normalizeImageGenerationSettings(
 }
 
 export function loadImageGenerationSettings(): ImageGenerationSettings {
-  if (!hasStorage()) return DEFAULT_IMAGE_GENERATION_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     return normalizeImageGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_IMAGE_GENERATION_SETTINGS;
   }
 }
 
-export function saveImageGenerationSettings(settings: ImageGenerationSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(normalizeImageGenerationSettings(settings)),
-    );
-    window.dispatchEvent(new Event('fuc:image-generation-settings-changed'));
-  } catch {
-    /* non-fatal */
+export function saveImageGenerationSettings(settings: ImageGenerationSettings): boolean {
+  const payload = JSON.stringify(normalizeImageGenerationSettings(settings));
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    // Surface the failure instead of silently dropping the write — a swallowed
+    // QuotaExceededError here is exactly what makes a freshly-added channel look
+    // "saved" in the panel (React state) yet vanish on reload (never hit disk).
+    console.error('[imageGeneration] failed to persist settings');
+    return false;
   }
+  window.dispatchEvent(new Event('fuc:image-generation-settings-changed'));
+  return true;
 }
 
 export function imageProviderById(

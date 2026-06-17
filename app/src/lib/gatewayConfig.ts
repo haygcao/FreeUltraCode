@@ -1,5 +1,6 @@
 import type { IRGraph } from '@/core/ir';
 import type { RuntimeAdapterId } from '@/lib/adapters';
+import { tauriAvailable } from '@/lib/tauri';
 import {
   FREE_CHANNEL_PROVIDER_PREFIX,
   freeChannelGatewayProviders,
@@ -40,7 +41,110 @@ interface LegacyProvider {
 
 const hasWindow = (): boolean => typeof window !== 'undefined';
 
+// The gateway config + active channel selection used to live only in
+// localStorage, which has a ~5MB quota shared with everything else. Once that
+// quota fills, setItem throws, the write is silently lost, and the default
+// channel "resets" to the first provider on reopen. So — exactly like
+// generationSettingsStore — under Tauri these two keys are persisted durably to
+// disk (the source of truth), with localStorage kept as a synchronous mirror so
+// reads stay sync and the browser/dev build keeps working unchanged.
+const DISK_BACKED_KEYS: Readonly<Record<string, string>> = {
+  [GATEWAY_CONFIG_STORAGE]: 'settings/modelGateway.v1.json',
+  [ACTIVE_GATEWAY_SELECTION_STORAGE]: 'settings/activeGatewaySelection.v1.json',
+};
+
+// key -> serialized value. Authoritative in-memory view for disk-backed keys
+// once initializeGatewayConfigStore() has run under Tauri.
+const diskCache = new Map<string, string>();
+let diskReady = false;
+
+function tauriBacked(): boolean {
+  return diskReady && tauriAvailable();
+}
+
+async function getInvoke() {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke;
+}
+
+function diskWriteSoon(relPath: string, json: string): void {
+  if (!tauriAvailable()) return;
+  void (async () => {
+    try {
+      const invoke = await getInvoke();
+      await invoke<void>('history_write_json', { relPath, json });
+    } catch (err) {
+      console.error('[gatewayConfig] disk write failed', relPath, err);
+    }
+  })();
+}
+
+function diskDeleteSoon(relPath: string): void {
+  // history_write_json validates the payload as JSON, so a deletion is recorded
+  // as the JSON literal `null`; the sync readers treat "null"/"" as absent.
+  diskWriteSoon(relPath, 'null');
+}
+
+function localStorageSet(key: string, value: string): boolean {
+  try {
+    if (!hasWindow()) return false;
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Boot-time hydrate of the disk-backed gateway keys into the in-memory cache so
+ * the synchronous rawGet() readers see durable data. Migrates an existing
+ * localStorage value to disk once when disk has nothing yet. Must be awaited
+ * before the store seed reads the active selection. No-op in the browser.
+ */
+export async function initializeGatewayConfigStore(): Promise<void> {
+  if (diskReady) return;
+  if (!tauriAvailable()) return;
+  try {
+    const invoke = await getInvoke();
+    await Promise.all(
+      Object.entries(DISK_BACKED_KEYS).map(async ([key, relPath]) => {
+        const fromDisk = await invoke<string | null>('history_read_json', {
+          relPath,
+        });
+        if (fromDisk != null && fromDisk !== '' && fromDisk !== 'null') {
+          diskCache.set(key, fromDisk);
+          // Keep the localStorage mirror in sync for any sync reader.
+          localStorageSet(key, fromDisk);
+          return;
+        }
+        // One-time migration: seed disk from the legacy localStorage value.
+        let legacy: string | null = null;
+        try {
+          legacy = hasWindow() ? window.localStorage.getItem(key) : null;
+        } catch {
+          legacy = null;
+        }
+        if (legacy != null) {
+          diskCache.set(key, legacy);
+          diskWriteSoon(relPath, legacy);
+        }
+      }),
+    );
+  } catch (err) {
+    console.warn(
+      '[gatewayConfig] disk init failed; keeping localStorage fallback',
+      err,
+    );
+  } finally {
+    diskReady = true;
+  }
+}
+
 function rawGet(key: string): string | null {
+  if (tauriBacked() && key in DISK_BACKED_KEYS) {
+    const cached = diskCache.get(key);
+    if (cached != null) return cached && cached !== 'null' ? cached : null;
+  }
   try {
     if (!hasWindow()) return null;
     return window.localStorage.getItem(key);
@@ -50,16 +154,34 @@ function rawGet(key: string): string | null {
 }
 
 function rawSet(key: string, value: string): void {
-  try {
-    if (!hasWindow()) return;
-    window.localStorage.setItem(key, value);
+  const relPath = DISK_BACKED_KEYS[key];
+  if (relPath && tauriAvailable()) {
+    // Disk is the durable sink; cache+disk always accept the write, so the
+    // change event fires reliably even when the localStorage mirror is full.
+    diskCache.set(key, value);
+    localStorageSet(key, value); // best-effort mirror
+    diskWriteSoon(relPath, value);
+    if (hasWindow()) window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    return;
+  }
+  if (localStorageSet(key, value) && hasWindow()) {
     window.dispatchEvent(new Event('fuc:gateway-config-changed'));
-  } catch {
-    /* ignore */
   }
 }
 
 function rawRemove(key: string): void {
+  const relPath = DISK_BACKED_KEYS[key];
+  if (relPath && tauriAvailable()) {
+    diskCache.delete(key);
+    try {
+      if (hasWindow()) window.localStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+    diskDeleteSoon(relPath);
+    if (hasWindow()) window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    return;
+  }
   try {
     if (!hasWindow()) return;
     window.localStorage.removeItem(key);
@@ -67,6 +189,12 @@ function rawRemove(key: string): void {
   } catch {
     /* ignore */
   }
+}
+
+/** Test-only: reset the disk-backed cache between cases. */
+export function resetGatewayConfigStoreForTests(): void {
+  diskCache.clear();
+  diskReady = false;
 }
 
 function normalizeAdapter(value: unknown): RuntimeAdapterId {

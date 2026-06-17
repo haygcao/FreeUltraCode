@@ -3,12 +3,16 @@ import { FREE_CHANNELS } from './freeChannels';
 import {
   addCachedModel,
   addCachedModels,
+  addUserModel,
+  editableModelOptions,
   freeChannelModelCacheKey,
   freeChannelModelOptions,
   getCachedModels,
   providerModelCacheKey,
   providerModelOptions,
+  refreshEndpointModels,
   removeCachedModel,
+  removeUserModel,
   refreshFreeChannelModels,
   refreshProviderModels,
 } from './modelLists';
@@ -143,5 +147,58 @@ describe('manual model cache', () => {
       'groq-remote',
       'groq-manual',
     ]);
+  });
+});
+
+describe('editable model options (add / delete incl. built-ins)', () => {
+  const KEY = 'image:test-provider:https://api.example.com/v1';
+  const BUILTINS = ['model-a', 'model-b'];
+
+  it('lists current + cached + builtins, de-duplicated', () => {
+    addUserModel(KEY, 'manual-1');
+    const options = editableModelOptions(KEY, BUILTINS, 'current-x');
+    expect(options).toEqual(['current-x', 'manual-1', 'model-a', 'model-b']);
+  });
+
+  it('addUserModel un-hides a previously deleted model', () => {
+    removeUserModel(KEY, 'model-a'); // hide a built-in
+    expect(editableModelOptions(KEY, BUILTINS, '')).not.toContain('model-a');
+    addUserModel(KEY, 'model-a'); // re-add it
+    expect(editableModelOptions(KEY, BUILTINS, '')).toContain('model-a');
+  });
+
+  it('removeUserModel hides built-in models and keeps them hidden across a fetch', async () => {
+    // Delete a built-in: it disappears from the options.
+    removeUserModel(KEY, 'model-b');
+    expect(editableModelOptions(KEY, BUILTINS, '')).not.toContain('model-b');
+
+    // A later fetch that returns model-b must NOT resurrect it.
+    tauriMocks.listRemoteModels.mockResolvedValueOnce({
+      models: ['model-b', 'fetched-c'],
+      url: 'https://api.example.com/v1/models',
+    });
+    await refreshEndpointModels({
+      cacheKey: KEY,
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-test',
+    });
+    const options = editableModelOptions(KEY, BUILTINS, '');
+    expect(options).toContain('fetched-c');
+    expect(options).not.toContain('model-b');
+  });
+
+  it('refreshEndpointModels merges fetched models with existing manual ones', async () => {
+    addUserModel(KEY, 'manual-keep');
+    tauriMocks.listRemoteModels.mockResolvedValueOnce({
+      models: ['fetched-1'],
+      url: 'https://api.example.com/v1/models',
+    });
+    const result = await refreshEndpointModels({
+      cacheKey: KEY,
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-test',
+    });
+    expect(result.models).toContain('fetched-1');
+    expect(result.models).toContain('manual-keep');
   });
 });

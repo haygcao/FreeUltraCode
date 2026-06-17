@@ -1,3 +1,8 @@
+import {
+  readSettingsRaw,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
+
 export type BuiltInThreeDProviderId =
   | 'meshy'
   | 'tripo'
@@ -158,6 +163,7 @@ export interface ThreeDAutoRiggingSettings {
 }
 
 const STORAGE_KEY = 'freeultracode.threeDGeneration.v1';
+const SETTINGS_REL_PATH = 'settings/threeDGeneration.v1.json';
 
 export type ThreeDCommonAnimationId =
   | 'idle'
@@ -1110,10 +1116,6 @@ export const DEFAULT_THREE_D_GENERATION_SETTINGS: ThreeDGenerationSettings = {
   rigging: DEFAULT_THREE_D_AUTO_RIGGING_SETTINGS,
 };
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
-
 function isKnownThreeDProviderId(
   value: unknown,
   providers: readonly ThreeDProviderDefinition[],
@@ -1323,26 +1325,23 @@ export function normalizeThreeDAutoRiggingSettings(
 }
 
 export function loadThreeDGenerationSettings(): ThreeDGenerationSettings {
-  if (!hasStorage()) return DEFAULT_THREE_D_GENERATION_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     return normalizeThreeDGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_THREE_D_GENERATION_SETTINGS;
   }
 }
 
-export function saveThreeDGenerationSettings(settings: ThreeDGenerationSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(normalizeThreeDGenerationSettings(settings)),
-    );
-    window.dispatchEvent(new Event('fuc:three-d-generation-settings-changed'));
-  } catch {
-    /* non-fatal */
+export function saveThreeDGenerationSettings(settings: ThreeDGenerationSettings): boolean {
+  const payload = JSON.stringify(normalizeThreeDGenerationSettings(settings));
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    console.error('[threeDGeneration] failed to persist settings');
+    return false;
   }
+  window.dispatchEvent(new Event('fuc:three-d-generation-settings-changed'));
+  return true;
 }
 
 export function threeDProviderById(

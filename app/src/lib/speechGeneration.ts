@@ -1,3 +1,8 @@
+import {
+  readSettingsRaw,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
+
 export type BuiltInSpeechProviderId =
   | 'elevenlabs'
   | 'openai-tts'
@@ -124,6 +129,7 @@ export interface SpeechGenerationRequest {
 }
 
 const STORAGE_KEY = 'freeultracode.speechGeneration.v1';
+const SETTINGS_REL_PATH = 'settings/speechGeneration.v1.json';
 export const SPEECH_PROVIDERS: SpeechProviderDefinition[] = [
   {
     id: 'elevenlabs',
@@ -716,10 +722,6 @@ export const DEFAULT_SPEECH_GENERATION_SETTINGS: SpeechGenerationSettings = {
   providerVoices: {},
 };
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
-
 function isKnownSpeechProviderId(
   value: unknown,
   providers: readonly SpeechProviderDefinition[],
@@ -901,26 +903,23 @@ export function normalizeSpeechGenerationSettings(value: unknown): SpeechGenerat
 }
 
 export function loadSpeechGenerationSettings(): SpeechGenerationSettings {
-  if (!hasStorage()) return DEFAULT_SPEECH_GENERATION_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     return normalizeSpeechGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_SPEECH_GENERATION_SETTINGS;
   }
 }
 
-export function saveSpeechGenerationSettings(settings: SpeechGenerationSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(normalizeSpeechGenerationSettings(settings)),
-    );
-    window.dispatchEvent(new Event('fuc:speech-generation-settings-changed'));
-  } catch {
-    /* non-fatal */
+export function saveSpeechGenerationSettings(settings: SpeechGenerationSettings): boolean {
+  const payload = JSON.stringify(normalizeSpeechGenerationSettings(settings));
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    console.error('[speechGeneration] failed to persist settings');
+    return false;
   }
+  window.dispatchEvent(new Event('fuc:speech-generation-settings-changed'));
+  return true;
 }
 
 export function speechProviderById(

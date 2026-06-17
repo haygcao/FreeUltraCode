@@ -1,3 +1,8 @@
+import {
+  readSettingsRaw,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
+
 export type BuiltInVideoProviderId =
   | 'google-veo'
   | 'runway'
@@ -112,6 +117,7 @@ export interface VideoGenerationRequest {
 }
 
 const STORAGE_KEY = 'freeultracode.videoGeneration.v1';
+const SETTINGS_REL_PATH = 'settings/videoGeneration.v1.json';
 const DEFAULT_DURATION_SECONDS = 5;
 const MIN_DURATION_SECONDS = 1;
 const MAX_DURATION_SECONDS = 30;
@@ -595,10 +601,6 @@ export const DEFAULT_VIDEO_GENERATION_SETTINGS: VideoGenerationSettings = {
   providerModels: {},
 };
 
-function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
-}
-
 function isKnownVideoProviderId(
   value: unknown,
   providers: readonly VideoProviderDefinition[],
@@ -772,26 +774,23 @@ export function normalizeVideoGenerationSettings(value: unknown): VideoGeneratio
 }
 
 export function loadVideoGenerationSettings(): VideoGenerationSettings {
-  if (!hasStorage()) return DEFAULT_VIDEO_GENERATION_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
     return normalizeVideoGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_VIDEO_GENERATION_SETTINGS;
   }
 }
 
-export function saveVideoGenerationSettings(settings: VideoGenerationSettings): void {
-  if (!hasStorage()) return;
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(normalizeVideoGenerationSettings(settings)),
-    );
-    window.dispatchEvent(new Event('fuc:video-generation-settings-changed'));
-  } catch {
-    /* non-fatal */
+export function saveVideoGenerationSettings(settings: VideoGenerationSettings): boolean {
+  const payload = JSON.stringify(normalizeVideoGenerationSettings(settings));
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  if (!ok) {
+    console.error('[videoGeneration] failed to persist settings');
+    return false;
   }
+  window.dispatchEvent(new Event('fuc:video-generation-settings-changed'));
+  return true;
 }
 
 export function videoProviderById(

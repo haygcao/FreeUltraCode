@@ -11,6 +11,10 @@ import {
 import { listLocalModels, listRemoteModels, tauriAvailable } from '@/lib/tauri';
 
 const MODEL_LIST_CACHE_STORAGE = 'fuc_model_list_cache_v1';
+// Models the user explicitly removed (via the × button), keyed by the same cache
+// key. These stay hidden even if they are built-in catalog entries or come back
+// from a later "fetch models" call, so a deleted/outdated model does not reappear.
+const MODEL_LIST_HIDDEN_STORAGE = 'fuc_model_list_hidden_v1';
 
 interface CachedModelList {
   models: string[];
@@ -125,6 +129,111 @@ export function removeCachedModel(key: string, model: string): CachedModelList |
   return saveCachedModels(key, nextModels);
 }
 
+// ---------------------------------------------------------------------------
+// Editable model lists (user add / delete, per provider).
+//
+// The visible options for a channel are: the currently-selected model, the
+// fetched/added models in the cache, and the built-in catalog models — minus
+// any the user explicitly deleted (the "hidden" set). Deleting a built-in model
+// just hides it; adding re-includes it. Fetch merges into the cache and never
+// resurrects a hidden model.
+// ---------------------------------------------------------------------------
+
+function readHidden(): Record<string, string[]> {
+  try {
+    if (!hasWindow()) return {};
+    const raw = window.localStorage.getItem(MODEL_LIST_HIDDEN_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    const out: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue;
+      const models = value.filter(
+        (item): item is string => typeof item === 'string' && !!item.trim(),
+      );
+      if (models.length > 0) out[key] = models;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeHidden(hidden: Record<string, string[]>): void {
+  try {
+    if (!hasWindow()) return;
+    const next = JSON.stringify(hidden);
+    if (window.localStorage.getItem(MODEL_LIST_HIDDEN_STORAGE) === next) return;
+    window.localStorage.setItem(MODEL_LIST_HIDDEN_STORAGE, next);
+    window.dispatchEvent(new Event('fuc:model-list-changed'));
+  } catch {
+    /* ignore */
+  }
+}
+
+function hiddenSet(key: string): Set<string> {
+  return new Set(readHidden()[key]?.map((m) => m.toLowerCase()) ?? []);
+}
+
+function setHidden(key: string, models: Iterable<string>): void {
+  const list = uniqueModels([...models]);
+  const all = readHidden();
+  if (list.length === 0) {
+    if (!(key in all)) return;
+    const next = { ...all };
+    delete next[key];
+    writeHidden(next);
+    return;
+  }
+  writeHidden({ ...all, [key]: list });
+}
+
+/**
+ * The full set of model options to show for a provider: selected + cached +
+ * built-in catalog, minus the user-hidden models, de-duplicated (case-insensitive,
+ * first spelling wins).
+ */
+export function editableModelOptions(
+  key: string,
+  builtins: Array<string | undefined | null>,
+  current?: string | null,
+): string[] {
+  const hidden = hiddenSet(key);
+  const cached = getCachedModels(key)?.models ?? [];
+  return uniqueModels([current, ...cached, ...builtins]).filter(
+    (model) => !hidden.has(model.toLowerCase()),
+  );
+}
+
+/** Add a user-typed model: store in the cache and clear it from the hidden set. */
+export function addUserModel(key: string, model: string): void {
+  const trimmed = model.trim();
+  if (!trimmed) return;
+  const all = readHidden();
+  const current = all[key];
+  if (current) {
+    const next = current.filter((m) => m.toLowerCase() !== trimmed.toLowerCase());
+    if (next.length !== current.length) setHidden(key, next);
+  }
+  addCachedModels(key, [trimmed]);
+}
+
+/** Delete a model from the visible list: drop it from the cache and hide it so
+ * neither the built-in catalog nor a later fetch brings it back. */
+export function removeUserModel(key: string, model: string): void {
+  const trimmed = model.trim();
+  if (!trimmed) return;
+  removeCachedModel(key, trimmed);
+  const hidden = readHidden()[key] ?? [];
+  if (!hidden.some((m) => m.toLowerCase() === trimmed.toLowerCase())) {
+    setHidden(key, [...hidden, trimmed]);
+  }
+}
+
+
 /** Cache key for image/music provider model lists (keyed by base URL). */
 export function endpointModelCacheKey(
   scope: 'image' | 'music' | 'video' | 'sprite' | 'speech' | 'mesh',
@@ -158,7 +267,10 @@ export async function refreshEndpointModels(params: {
     });
     const models = uniqueModels(response.models);
     if (models.length > 0) {
-      const cached = saveCachedModels(params.cacheKey, models);
+      // Merge fetched models with anything already in the cache (manual adds,
+      // earlier fetches) so "fetch models" never wipes the user's own entries.
+      const existing = getCachedModels(params.cacheKey)?.models ?? [];
+      const cached = saveCachedModels(params.cacheKey, [...models, ...existing]);
       return { models: cached.models, source: 'remote', updatedAt: cached.updatedAt };
     }
     return { models: fallback, source: 'catalog' };

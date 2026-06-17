@@ -116,6 +116,7 @@ import {
 } from '@/lib/slashCommands';
 import LocalModelSetupDialog from '@/components/LocalModelSetupDialog';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { EditableModelSelect } from '@/components/EditableModelSelect';
 import {
   APP_VERSION,
   REPO_URL,
@@ -190,7 +191,6 @@ import {
   canRefreshFreeChannelModels,
   endpointModelCacheKey,
   freeChannelModelOptions,
-  getCachedModels,
   providerModelOptions,
   refreshEndpointModels,
   refreshFreeChannelModels,
@@ -1658,15 +1658,24 @@ function GlobalRunControls({
   const [manifestMode, setManifestModeState] = useState(() =>
     getManifestModeEnabled(),
   );
-  const runSelection = useMemo(() => {
-    void revision;
-    return getActiveGatewaySelection();
-  }, [revision]);
+  // The picked selection is held in component state rather than re-read from
+  // localStorage on every render. This mirrors the reactive input-box selector
+  // (which reflects in-memory store state) and, crucially, keeps the display
+  // correct even when the localStorage write fails — e.g. quota full, in which
+  // case gatewayConfig.rawSet swallows the error and never dispatches
+  // 'fuc:gateway-config-changed', so an event-only refresh would snap back to
+  // the stale value. onChannelChange/onModelChange update it optimistically.
+  const [runSelection, setRunSelection] = useState<GatewaySelection>(() =>
+    getActiveGatewaySelection(),
+  );
 
   useEffect(() => subscribeManifestMode(setManifestModeState), []);
 
   useEffect(() => {
-    const refresh = () => setRevision((n) => n + 1);
+    const refresh = () => {
+      setRevision((n) => n + 1);
+      setRunSelection(getActiveGatewaySelection());
+    };
     window.addEventListener('fuc:gateway-config-changed', refresh);
     return () => window.removeEventListener('fuc:gateway-config-changed', refresh);
   }, []);
@@ -1748,16 +1757,19 @@ function GlobalRunControls({
   );
 
   const selectedFreeChannelId = isFreeChannelSelection(runSelection);
-  const selectedAdapter =
-    RUNTIME_ADAPTERS.find((adapter) => adapter.id === runSelection.adapter)?.id ??
-    RUNTIME_ADAPTERS[0].id;
+  // Match a pinned provider on its globally-unique id alone. The adapter is
+  // derived from the resolved provider, not the stored selection.adapter, so a
+  // drifted/stale adapter on the persisted selection can't drop a valid match
+  // and snap the dropdown back to the system default.
   const pinnedDefaultProvider = runSelection.providerId
     ? defaultChannelProviders.find(
-        (item) =>
-          item.provider.id === runSelection.providerId &&
-          item.adapter === selectedAdapter,
+        (item) => item.provider.id === runSelection.providerId,
       )
     : undefined;
+  const selectedAdapter =
+    pinnedDefaultProvider?.adapter ??
+    RUNTIME_ADAPTERS.find((adapter) => adapter.id === runSelection.adapter)?.id ??
+    RUNTIME_ADAPTERS[0].id;
   const selectedFreeChannel = selectedFreeChannelId
     ? freeChannelById(selectedFreeChannelId)
     : undefined;
@@ -1876,6 +1888,13 @@ function GlobalRunControls({
         ? MODEL_DEFAULT_OPTION_ID
         : runSelection.modelClass;
 
+  // Persist the pick AND reflect it locally right away, so the dropdown shows
+  // the chosen channel even if the durable localStorage write later fails.
+  const applyDefaultRunSelection = (selection: GatewaySelection) => {
+    setDefaultRunSelection(selection);
+    setRunSelection(selection);
+  };
+
   const onChannelChange = (id: string) => {
     const providerId = providerIdFromDefaultOption(id);
     if (providerId) {
@@ -1883,20 +1902,20 @@ function GlobalRunControls({
         (item) => item.provider.id === providerId,
       )?.provider;
       if (!provider) return;
-      setDefaultRunSelection(providerSelection(provider));
+      applyDefaultRunSelection(providerSelection(provider));
       return;
     }
 
     const defaultAdapter = adapterFromSystemDefaultOption(id);
     if (defaultAdapter) {
-      setDefaultRunSelection(systemDefaultGatewaySelection(defaultAdapter));
+      applyDefaultRunSelection(systemDefaultGatewaySelection(defaultAdapter));
       return;
     }
 
     const freeChannelId = freeChannelFromOption(id);
     if (!freeChannelId) return;
     void ensureFreeProxy();
-    setDefaultRunSelection(
+    applyDefaultRunSelection(
       freeChannelSelection(freeChannelId, getFreeChannelModel(freeChannelId)),
     );
   };
@@ -1906,7 +1925,7 @@ function GlobalRunControls({
     if (selectedFreeChannel) {
       setFreeChannelModel(selectedFreeChannel.id, selectedModel);
       void ensureFreeProxy();
-      setDefaultRunSelection(
+      applyDefaultRunSelection(
         freeChannelSelection(
           selectedFreeChannel.id,
           selectedModel || getFreeChannelModel(selectedFreeChannel.id),
@@ -1918,12 +1937,12 @@ function GlobalRunControls({
       const nextModel = selectedModel || undefined;
       const provider = selectedDefaultProvider.provider;
       updateProvider(provider.id, { model: nextModel });
-      setDefaultRunSelection(
+      applyDefaultRunSelection(
         providerSelection({ ...provider, model: nextModel }, selectedModel),
       );
       return;
     }
-    setDefaultRunSelection(
+    applyDefaultRunSelection(
       {
         ...systemDefaultGatewaySelection(selectedAdapter),
         modelClass: selectedModel || 'default',
@@ -3291,7 +3310,9 @@ function CustomGenerationProviderDialog({
   defaultModel: string;
   endpointPlaceholder: string;
   onClose: () => void;
-  onSave: (draft: CustomGenerationProviderDraft) => void;
+  // Return false to signal the save failed (e.g. localStorage quota); the dialog
+  // then shows an inline error and stays open instead of silently closing.
+  onSave: (draft: CustomGenerationProviderDraft) => boolean | void;
 }) {
   const [showKey, setShowKey] = useState(false);
   const [name, setName] = useState('');
@@ -3337,13 +3358,22 @@ function CustomGenerationProviderDialog({
       return;
     }
     setError(null);
-    onSave({
+    const result = onSave({
       name: name.trim() || customGenerationProviderName(trimmedBaseUrl, defaultName),
       baseUrl: trimmedBaseUrl,
       apiKey: apiKey.trim(),
       model: trimmedModel,
       models: uniqueStringOptions([trimmedModel, ...models]),
     });
+    // onSave returns false when persistence failed (e.g. localStorage quota).
+    // Keep the dialog open and show why, instead of closing as if it saved.
+    if (result === false) {
+      setError(
+        locale === 'zh-CN'
+          ? '保存失败：本地存储写入出错，可能空间已满。请在设置中清理历史会话后重试。'
+          : 'Save failed: local storage write error (it may be full). Clear old sessions and try again.',
+      );
+    }
   };
 
   return (
@@ -3492,13 +3522,33 @@ function CustomGenerationProviderDialog({
   );
 }
 
+const IMAGE_GEN_ACTIVE_CATEGORY_KEY = 'fuc:imgGenActiveCategory';
+
 function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
   const [settings, setSettings] = useState<ImageGenerationSettings>(() =>
     loadImageGenerationSettings(),
   );
   // Commercial and free-credit providers live in separate tabs so each
   // category stays self-contained instead of stacking in one long list.
-  const [category, setCategory] = useState<ImageProviderCategory>('commercial');
+  // The active tab is persisted: a custom channel added on the free-credit
+  // tab would otherwise look "lost" when the panel remounts on 'commercial'
+  // (the channel persists fine, but the grid only renders the active tab).
+  const [category, setCategoryState] = useState<ImageProviderCategory>(() => {
+    try {
+      const saved = window.localStorage.getItem(IMAGE_GEN_ACTIVE_CATEGORY_KEY);
+      return saved === 'free-credit' || saved === 'commercial' ? saved : 'commercial';
+    } catch {
+      return 'commercial';
+    }
+  });
+  const setCategory = (next: ImageProviderCategory) => {
+    try {
+      window.localStorage.setItem(IMAGE_GEN_ACTIVE_CATEGORY_KEY, next);
+    } catch {
+      /* non-fatal */
+    }
+    setCategoryState(next);
+  };
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
 
   const update = (patch: Partial<ImageGenerationSettings>) => {
@@ -3551,9 +3601,14 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModels: { ...settings.providerModels, [id]: draft.model },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    saveImageGenerationSettings(next);
+    const ok = saveImageGenerationSettings(next);
+    if (!ok) return false;
     setSettings(loadImageGenerationSettings());
+    // Keep the user on (and persist) the tab the channel was added to, so it
+    // stays visible after the panel remounts.
+    setCategory(category);
     setCustomDialogOpen(false);
+    return true;
   };
 
   const deleteCustomProvider = (id: ImageProviderId) => {
@@ -3786,18 +3841,6 @@ function ImageProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('image', provider.id, effectiveBaseUrl);
-  const cachedModels = getCachedModels(cacheKey)?.models ?? [];
-  const modelOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of [model, ...cachedModels, ...provider.models]) {
-      const value = item?.trim();
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      out.push(value);
-    }
-    return out;
-  }, [model, cachedModels, provider.models]);
   const canRefresh =
     !!effectiveBaseUrl && (!provider.needsKey || keyValue.trim().length > 0);
 
@@ -4048,47 +4091,20 @@ function ImageProviderSettingsRow({
           </label>
         )}
 
-        <label className="block space-y-1 lg:col-span-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.freeChannels.modelLabel')}
-            </span>
-            <button
-              type="button"
-              onClick={() => void refreshModels()}
-              disabled={!canRefresh || modelRefresh.loading}
-              title={
-                canRefresh
-                  ? t(locale, 'settings.models.fetchModels')
-                  : t(locale, 'settings.models.fetchModelsUnavailable')
-              }
-              className="inline-flex items-center gap-1 rounded border border-border bg-panel px-2 py-0.5 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <RefreshCw
-                size={11}
-                strokeWidth={2}
-                className={modelRefresh.loading ? 'animate-spin' : undefined}
-              />
-              {t(locale, 'settings.models.fetchModels')}
-            </button>
-          </div>
-          <select
+        <div className="lg:col-span-2">
+          <EditableModelSelect
+            cacheKey={cacheKey}
+            builtins={provider.models}
             value={model}
-            onChange={(event) => patchProvider({ model: event.target.value })}
-            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-          >
-            {modelOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-          {modelRefresh.error && (
-            <p className="text-[11px] leading-relaxed text-amber-300">
-              {modelRefresh.error}
-            </p>
-          )}
-        </label>
+            label={t(locale, 'settings.freeChannels.modelLabel')}
+            locale={locale}
+            loading={modelRefresh.loading}
+            error={modelRefresh.error}
+            canRefresh={canRefresh}
+            onChange={(next) => patchProvider({ model: next })}
+            onRefresh={() => void refreshModels()}
+          />
+        </div>
 
         {isComfyChannel && (
           <div className="lg:col-span-2 space-y-2 rounded-md border border-accent/30 bg-accent/5 p-3">
@@ -4192,9 +4208,10 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModels: { ...settings.providerModels, [id]: draft.model },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    saveMusicGenerationSettings(next);
+    if (!saveMusicGenerationSettings(next)) return false;
     setSettings(loadMusicGenerationSettings());
     setCustomDialogOpen(false);
+    return true;
   };
 
   const deleteCustomProvider = (id: MusicProviderId) => {
@@ -4417,18 +4434,6 @@ function MusicProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('music', provider.id, effectiveBaseUrl);
-  const cachedModels = getCachedModels(cacheKey)?.models ?? [];
-  const modelOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of [model, ...cachedModels, ...provider.models]) {
-      const value = item?.trim();
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      out.push(value);
-    }
-    return out;
-  }, [model, cachedModels, provider.models]);
   const canRefresh =
     !!effectiveBaseUrl && (!provider.needsKey || keyValue.trim().length > 0);
 
@@ -4605,47 +4610,20 @@ function MusicProviderSettingsRow({
           </label>
         )}
 
-        <label className="block space-y-1 lg:col-span-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.freeChannels.modelLabel')}
-            </span>
-            <button
-              type="button"
-              onClick={() => void refreshModels()}
-              disabled={!canRefresh || modelRefresh.loading}
-              title={
-                canRefresh
-                  ? t(locale, 'settings.models.fetchModels')
-                  : t(locale, 'settings.models.fetchModelsUnavailable')
-              }
-              className="inline-flex items-center gap-1 rounded border border-border bg-panel px-2 py-0.5 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <RefreshCw
-                size={11}
-                strokeWidth={2}
-                className={modelRefresh.loading ? 'animate-spin' : undefined}
-              />
-              {t(locale, 'settings.models.fetchModels')}
-            </button>
-          </div>
-          <select
+        <div className="lg:col-span-2">
+          <EditableModelSelect
+            cacheKey={cacheKey}
+            builtins={provider.models}
             value={model}
-            onChange={(event) => patchProvider({ model: event.target.value })}
-            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-          >
-            {modelOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-          {modelRefresh.error && (
-            <p className="text-[11px] leading-relaxed text-amber-300">
-              {modelRefresh.error}
-            </p>
-          )}
-        </label>
+            label={t(locale, 'settings.freeChannels.modelLabel')}
+            locale={locale}
+            loading={modelRefresh.loading}
+            error={modelRefresh.error}
+            canRefresh={canRefresh}
+            onChange={(next) => patchProvider({ model: next })}
+            onRefresh={() => void refreshModels()}
+          />
+        </div>
       </div>
     </div>
   );
@@ -4708,9 +4686,10 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModels: { ...settings.providerModels, [id]: draft.model },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    saveVideoGenerationSettings(next);
+    if (!saveVideoGenerationSettings(next)) return false;
     setSettings(loadVideoGenerationSettings());
     setCustomDialogOpen(false);
+    return true;
   };
 
   const deleteCustomProvider = (id: VideoProviderId) => {
@@ -4931,18 +4910,6 @@ function VideoProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('video', provider.id, effectiveBaseUrl);
-  const cachedModels = getCachedModels(cacheKey)?.models ?? [];
-  const modelOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of [model, ...cachedModels, ...provider.models]) {
-      const value = item?.trim();
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      out.push(value);
-    }
-    return out;
-  }, [model, cachedModels, provider.models]);
   const canRefresh =
     !!effectiveBaseUrl && (!provider.needsKey || keyValue.trim().length > 0);
 
@@ -5121,47 +5088,20 @@ function VideoProviderSettingsRow({
           </label>
         )}
 
-        <label className="block space-y-1 lg:col-span-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.freeChannels.modelLabel')}
-            </span>
-            <button
-              type="button"
-              onClick={() => void refreshModels()}
-              disabled={!canRefresh || modelRefresh.loading}
-              title={
-                canRefresh
-                  ? t(locale, 'settings.models.fetchModels')
-                  : t(locale, 'settings.models.fetchModelsUnavailable')
-              }
-              className="inline-flex items-center gap-1 rounded border border-border bg-panel px-2 py-0.5 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <RefreshCw
-                size={11}
-                strokeWidth={2}
-                className={modelRefresh.loading ? 'animate-spin' : undefined}
-              />
-              {t(locale, 'settings.models.fetchModels')}
-            </button>
-          </div>
-          <select
+        <div className="lg:col-span-2">
+          <EditableModelSelect
+            cacheKey={cacheKey}
+            builtins={provider.models}
             value={model}
-            onChange={(event) => patchProvider({ model: event.target.value })}
-            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-          >
-            {modelOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-          {modelRefresh.error && (
-            <p className="text-[11px] leading-relaxed text-amber-300">
-              {modelRefresh.error}
-            </p>
-          )}
-        </label>
+            label={t(locale, 'settings.freeChannels.modelLabel')}
+            locale={locale}
+            loading={modelRefresh.loading}
+            error={modelRefresh.error}
+            canRefresh={canRefresh}
+            onChange={(next) => patchProvider({ model: next })}
+            onRefresh={() => void refreshModels()}
+          />
+        </div>
       </div>
     </div>
   );
@@ -5228,9 +5168,10 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerVoices: { ...settings.providerVoices },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    saveSpeechGenerationSettings(next);
+    if (!saveSpeechGenerationSettings(next)) return false;
     setSettings(loadSpeechGenerationSettings());
     setCustomDialogOpen(false);
+    return true;
   };
 
   const deleteCustomProvider = (id: SpeechProviderId) => {
@@ -5459,18 +5400,6 @@ function SpeechProviderSettingsRow({
   const KeyIcon = showKey ? EyeOff : Eye;
 
   const cacheKey = endpointModelCacheKey('speech', provider.id, effectiveBaseUrl);
-  const cachedModels = getCachedModels(cacheKey)?.models ?? [];
-  const modelOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of [model, ...cachedModels, ...provider.models]) {
-      const value = item?.trim();
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      out.push(value);
-    }
-    return out;
-  }, [model, cachedModels, provider.models]);
   const voiceOptions = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -5716,47 +5645,20 @@ function SpeechProviderSettingsRow({
           </datalist>
         </label>
 
-        <label className="block space-y-1 lg:col-span-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.freeChannels.modelLabel')}
-            </span>
-            <button
-              type="button"
-              onClick={() => void refreshModels()}
-              disabled={!canRefresh || modelRefresh.loading}
-              title={
-                canRefresh
-                  ? t(locale, 'settings.models.fetchModels')
-                  : t(locale, 'settings.models.fetchModelsUnavailable')
-              }
-              className="inline-flex items-center gap-1 rounded border border-border bg-panel px-2 py-0.5 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <RefreshCw
-                size={11}
-                strokeWidth={2}
-                className={modelRefresh.loading ? 'animate-spin' : undefined}
-              />
-              {t(locale, 'settings.models.fetchModels')}
-            </button>
-          </div>
-          <select
+        <div className="lg:col-span-2">
+          <EditableModelSelect
+            cacheKey={cacheKey}
+            builtins={provider.models}
             value={model}
-            onChange={(event) => patchProvider({ model: event.target.value })}
-            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-          >
-            {modelOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-          {modelRefresh.error && (
-            <p className="text-[11px] leading-relaxed text-amber-300">
-              {modelRefresh.error}
-            </p>
-          )}
-        </label>
+            label={t(locale, 'settings.freeChannels.modelLabel')}
+            locale={locale}
+            loading={modelRefresh.loading}
+            error={modelRefresh.error}
+            canRefresh={canRefresh}
+            onChange={(next) => patchProvider({ model: next })}
+            onRefresh={() => void refreshModels()}
+          />
+        </div>
       </div>
     </div>
   );
@@ -6117,9 +6019,10 @@ export function ThreeDGenerationSettingsPanel({
       providerModels: { ...settings.providerModels, [id]: draft.model },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    saveThreeDGenerationSettings(next);
+    if (!saveThreeDGenerationSettings(next)) return false;
     setSettings(loadThreeDGenerationSettings());
     setCustomDialogOpen(false);
+    return true;
   };
 
   const deleteCustomProvider = (id: ThreeDProviderId) => {
