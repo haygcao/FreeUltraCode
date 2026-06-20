@@ -6533,7 +6533,7 @@ export default function AIDock({
         ref={inputSectionRef}
         className={
           'relative flex shrink-0 flex-col bg-transparent p-3 ' +
-          (centerInput ? 'mx-auto w-full max-w-4xl px-4 sm:px-6' : '')
+          (centerInput ? 'mx-auto w-full max-w-6xl px-4 sm:px-6' : '')
         }
         style={
           isChat
