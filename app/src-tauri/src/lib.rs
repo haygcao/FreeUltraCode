@@ -382,6 +382,7 @@ const LOCAL_MODEL_SETUP_PS1: &str = include_str!("../../scripts/setup-local-mode
 const COMFYUI_SETUP_PS1: &str = include_str!("../../scripts/setup-comfyui.ps1");
 const LOCAL_MODEL_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const REMOTE_MODEL_LIST_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+const CLOUDFLARE_IMAGE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 const AI_EDIT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 #[derive(serde::Serialize)]
@@ -11334,6 +11335,11 @@ fn extract_remote_model_ids(value: &serde_json::Value) -> Vec<String> {
             visit_model(&mut out, item);
         }
     }
+    if let Some(result) = value.get("result").and_then(|v| v.as_array()) {
+        for item in result {
+            visit_model(&mut out, item);
+        }
+    }
     visit_model(&mut out, value);
     out
 }
@@ -11415,6 +11421,166 @@ async fn list_remote_models(
     })
     .await
     .map_err(|err| format!("模型列表任务失败: {err}"))?
+}
+
+fn cloudflare_model_path(model: &str) -> Result<String, String> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return Err("Cloudflare 模型名称不能为空。".to_string());
+    }
+    if trimmed.len() > 256 {
+        return Err("Cloudflare 模型名称过长。".to_string());
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-' | ':' | '/'))
+    {
+        return Err("Cloudflare 模型名称包含不支持的字符。".to_string());
+    }
+    Ok(trimmed
+        .split('/')
+        .map(url_encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+fn url_encode_path_segment(segment: &str) -> String {
+    let mut encoded = String::new();
+    for byte in segment.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~' | b'@') {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn json_string_at_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str()
+}
+
+fn image_data_url_from_cloudflare_json(value: &serde_json::Value) -> Option<String> {
+    for path in [
+        &["result", "image"][..],
+        &["result", "image_url"][..],
+        &["result", "imageUrl"][..],
+        &["result", "url"][..],
+        &["result", "data"][..],
+        &["result", "b64_json"][..],
+        &["image"][..],
+        &["image_url"][..],
+        &["imageUrl"][..],
+        &["url"][..],
+        &["data"][..],
+        &["b64_json"][..],
+    ] {
+        if let Some(raw) = json_string_at_path(value, path) {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with("data:")
+                || trimmed.starts_with("http://")
+                || trimmed.starts_with("https://")
+            {
+                return Some(trimmed.to_string());
+            }
+            return Some(format!("data:image/png;base64,{trimmed}"));
+        }
+    }
+    None
+}
+
+fn cloudflare_response_to_image_data_url(
+    content_type: Option<String>,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let mime = content_type
+        .as_deref()
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("application/octet-stream");
+    if mime.starts_with("image/") {
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        return Ok(format!("data:{mime};base64,{encoded}"));
+    }
+
+    let text = String::from_utf8(bytes)
+        .map_err(|err| format!("Cloudflare 返回的响应不是图片，也不是可读 JSON: {err}"))?;
+    let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
+        format!("Cloudflare 返回的响应不是图片，也不是有效 JSON: {err}: {text}")
+    })?;
+    image_data_url_from_cloudflare_json(&parsed)
+        .ok_or_else(|| format!("Cloudflare 返回成功，但响应里没有可识别的图片: {text}"))
+}
+
+fn generate_cloudflare_image_blocking(
+    account_id: String,
+    api_key: String,
+    model: String,
+    prompt: String,
+) -> Result<String, String> {
+    let account_id = account_id.trim();
+    let api_key = api_key.trim();
+    let prompt = prompt.trim();
+    if account_id.is_empty() {
+        return Err("Cloudflare Account ID 不能为空。".to_string());
+    }
+    if api_key.is_empty() {
+        return Err("Cloudflare API Token 不能为空。".to_string());
+    }
+    if prompt.is_empty() {
+        return Err("生图提示词不能为空。".to_string());
+    }
+
+    let model_path = cloudflare_model_path(&model)?;
+    let url =
+        format!("https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model_path}");
+    let body = serde_json::json!({ "prompt": prompt });
+    let response = ureq::post(&url)
+        .timeout(CLOUDFLARE_IMAGE_REQUEST_TIMEOUT)
+        .set("authorization", &format!("Bearer {api_key}"))
+        .set("content-type", "application/json")
+        .set("accept", "image/*, application/json")
+        .send_json(body);
+
+    let response = match response {
+        Ok(response) => response,
+        Err(ureq::Error::Status(code, resp)) => {
+            let detail = resp.into_string().unwrap_or_default();
+            return Err(format!("Cloudflare Workers AI 返回 HTTP {code}: {detail}"));
+        }
+        Err(err) => return Err(format!("Cloudflare Workers AI 请求失败: {err}")),
+    };
+
+    let content_type = response.header("content-type").map(str::to_string);
+    let mut reader = response.into_reader();
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("读取 Cloudflare 响应失败: {err}"))?;
+    cloudflare_response_to_image_data_url(content_type, bytes)
+}
+
+#[tauri::command]
+async fn generate_cloudflare_image(
+    account_id: String,
+    api_key: String,
+    model: String,
+    prompt: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        generate_cloudflare_image_blocking(account_id, api_key, model, prompt)
+    })
+    .await
+    .map_err(|err| format!("Cloudflare 生图任务失败: {err}"))?
 }
 
 fn validate_ollama_model_id(model: &str) -> Result<String, String> {
@@ -15932,6 +16098,7 @@ pub fn run() {
             local_model_status,
             local_model_list,
             list_remote_models,
+            generate_cloudflare_image,
             setup_local_model,
             setup_comfyui,
             open_external,

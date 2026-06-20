@@ -69,8 +69,8 @@ describe('WorkspaceListSelect', () => {
     const onSelect = vi.fn();
     const view = await renderList({
       workspaces: [
-        makeWorkspace({ id: 'a', name: 'Alpha', path: 'E:\Alpha' }),
-        makeWorkspace({ id: 'b', name: 'Beta', path: 'E:\Beta' }),
+        makeWorkspace({ id: 'a', name: 'Alpha', path: 'E:\\Alpha' }),
+        makeWorkspace({ id: 'b', name: 'Beta', path: 'E:\\Beta' }),
       ],
       activeWorkspaceId: 'a',
       onSelect,
@@ -91,7 +91,7 @@ describe('WorkspaceListSelect', () => {
         beta.click();
       });
 
-      expect(onSelect).toHaveBeenCalledWith('E:\Beta');
+      expect(onSelect).toHaveBeenCalledWith('E:\\Beta');
     } finally {
       await view.cleanup();
     }
@@ -100,8 +100,8 @@ describe('WorkspaceListSelect', () => {
   it('marks the active workspace as selected', async () => {
     const view = await renderList({
       workspaces: [
-        makeWorkspace({ id: 'a', name: 'Alpha', path: 'E:\Alpha' }),
-        makeWorkspace({ id: 'b', name: 'Beta', path: 'E:\Beta' }),
+        makeWorkspace({ id: 'a', name: 'Alpha', path: 'E:\\Alpha' }),
+        makeWorkspace({ id: 'b', name: 'Beta', path: 'E:\\Beta' }),
       ],
       activeWorkspaceId: 'b',
     });

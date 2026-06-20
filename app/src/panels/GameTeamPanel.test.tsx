@@ -87,6 +87,7 @@ describe('GameTeamPanel', () => {
       expect(view.container.textContent).toContain('制作人');
       expect(view.container.textContent).toContain('直属总监');
       expect(view.container.textContent).toContain('玩法策划');
+      expect(view.container.textContent).toContain('调用');
       expect(view.container.querySelectorAll('svg').length).toBeGreaterThan(8);
 
       const locateTechnicalDirector = view.container.querySelector<HTMLButtonElement>(
@@ -213,7 +214,17 @@ describe('GameTeamPanel', () => {
       expect(view.container.textContent).not.toContain('组织架构');
       expect(view.container.querySelector('[role="tree"]')).toBeNull();
 
+      expect(view.container.textContent).toContain('绑定关系');
+      expect(view.container.textContent).toContain('岗位绑定 Skill');
+      expect(view.container.textContent).toContain('Skill 协作对象');
+      expect(view.container.textContent).toContain('被其它岗位调用');
+      expect(view.container.textContent).toContain('下级岗位');
       expect(view.container.textContent).toContain('发起功能开发');
+      expect(view.container.textContent).toContain('客户端开发');
+      expect(view.container.textContent).not.toContain('任务匹配');
+      expect(view.container.textContent).not.toContain('插入多岗位方案');
+      expect(view.container.textContent).not.toContain('保存执行方案');
+      expect(view.container.textContent).not.toContain('标准化检查');
 
       const featureSkill = Array.from(
         view.container.querySelectorAll<HTMLButtonElement>('button'),
@@ -226,6 +237,20 @@ describe('GameTeamPanel', () => {
 
       expect(useStore.getState().composerDraft).toContain('/technical-director');
       expect(useStore.getState().composerDraft).toContain('发起功能开发');
+
+      const childRole = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button'),
+      ).find((button) => button.textContent?.trim() === '客户端开发');
+      expect(childRole).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        childRole?.click();
+      });
+
+      expect(window.localStorage.getItem('freeultracode.gameTeam.selectedNode.v1')).toBe(
+        'client-development',
+      );
+      expect(view.container.textContent).toContain('客户端开发');
     } finally {
       await view.cleanup();
     }
@@ -261,12 +286,70 @@ describe('GameTeamPanel', () => {
         setInputValue(nodeLabel!, '自定义岗位');
       });
 
+      const nodeSummary = textareas().find((textarea) =>
+        textarea.placeholder.includes('职责摘要'),
+      );
+      const nodeRole = textareas().find((textarea) =>
+        textarea.placeholder.includes('职责说明'),
+      );
+      const nodePosition = textareas().find((textarea) =>
+        textarea.placeholder.includes('组织中的定位'),
+      );
+      const nodeResponsibilities = textareas().find((textarea) =>
+        textarea.placeholder.includes('每行一条核心职责'),
+      );
+      const nodeScenarios = textareas().find((textarea) =>
+        textarea.placeholder.includes('每行一个适用任务场景'),
+      );
+      const nodeDeliverables = textareas().find((textarea) =>
+        textarea.placeholder.includes('每行一个交付物'),
+      );
+      const nodeCollaborators = textareas().find((textarea) =>
+        textarea.placeholder.includes('每行一个协作岗位'),
+      );
+      expect(nodeSummary).toBeInstanceOf(HTMLTextAreaElement);
+      expect(nodeRole).toBeInstanceOf(HTMLTextAreaElement);
+      expect(nodePosition).toBeInstanceOf(HTMLTextAreaElement);
+      expect(nodeResponsibilities).toBeInstanceOf(HTMLTextAreaElement);
+      expect(nodeScenarios).toBeInstanceOf(HTMLTextAreaElement);
+      expect(nodeDeliverables).toBeInstanceOf(HTMLTextAreaElement);
+      expect(nodeCollaborators).toBeInstanceOf(HTMLTextAreaElement);
+
+      await act(async () => {
+        setInputValue(nodeSummary!, '自定义岗位摘要。');
+        setInputValue(nodeRole!, '自定义岗位职责说明。');
+        setInputValue(nodePosition!, '负责把任务转成可执行产物。');
+        setInputValue(nodeResponsibilities!, '拆解任务\n确认边界');
+        setInputValue(nodeScenarios!, '新需求进入团队时');
+        setInputValue(nodeDeliverables!, '任务拆解表\n验收清单');
+        setInputValue(nodeCollaborators!, '制作人\n技术总监');
+      });
+
       const saveNode = buttons().find((button) => button.textContent?.includes('保存'));
       await act(async () => {
         saveNode?.click();
       });
 
       expect(view.container.textContent).toContain('自定义岗位');
+      expect(view.container.textContent).not.toContain('标准化检查');
+      expect(view.container.textContent).toContain('负责把任务转成可执行产物。');
+      expect(view.container.textContent).toContain('拆解任务');
+      expect(view.container.textContent).toContain('新需求进入团队时');
+      expect(view.container.textContent).toContain('任务拆解表');
+      expect(view.container.textContent).toContain('制作人');
+      const savedDefinition = JSON.parse(
+        window.localStorage.getItem('freeultracode.gameOrgDefinition.v1') ?? '{}',
+      );
+      const savedCustomRole = savedDefinition.children?.find(
+        (child: { id?: string }) => child.id === 'custom-role',
+      );
+      expect(savedCustomRole?.profile).toMatchObject({
+        position: '负责把任务转成可执行产物。',
+        responsibilities: ['拆解任务', '确认边界'],
+        scenarios: ['新需求进入团队时'],
+        deliverables: ['任务拆解表', '验收清单'],
+        collaborators: ['制作人', '技术总监'],
+      });
 
       const addSkill = buttons().find(
         (button) => button.getAttribute('aria-label') === '新增 Skill',
@@ -294,14 +377,58 @@ describe('GameTeamPanel', () => {
         setInputValue(skillPrompt!, '执行自定义 Skill。');
       });
 
-      const saveSkill = buttons().filter((button) =>
-        button.textContent?.includes('保存'),
-      )[0];
+      const triggerConditions = textareas().find((textarea) =>
+        textarea.placeholder.includes('什么情况应该调用'),
+      );
+      const inputsField = textareas().find((textarea) =>
+        textarea.placeholder.includes('需要用户需求'),
+      );
+      const stepsField = textareas().find((textarea) =>
+        textarea.placeholder.includes('每行一个步骤'),
+      );
+      const outputsField = textareas().find((textarea) =>
+        textarea.placeholder.includes('方案、代码变更'),
+      );
+      const acceptanceField = textareas().find((textarea) =>
+        textarea.placeholder.includes('怎样判断'),
+      );
+      expect(triggerConditions).toBeInstanceOf(HTMLTextAreaElement);
+      expect(inputsField).toBeInstanceOf(HTMLTextAreaElement);
+      expect(stepsField).toBeInstanceOf(HTMLTextAreaElement);
+      expect(outputsField).toBeInstanceOf(HTMLTextAreaElement);
+      expect(acceptanceField).toBeInstanceOf(HTMLTextAreaElement);
+
+      await act(async () => {
+        setInputValue(triggerConditions!, '用户需要自定义岗位能力。');
+        setInputValue(inputsField!, '需求和当前项目上下文。');
+        setInputValue(stepsField!, '确认目标\n拆解任务\n输出方案');
+        setInputValue(outputsField!, '自定义执行方案。');
+        setInputValue(acceptanceField!, '方案可执行且可验收。');
+      });
+
+      const saveSkill = buttons().find(
+        (button) => button.textContent?.trim() === '保存',
+      );
       await act(async () => {
         saveSkill?.click();
       });
 
       expect(view.container.textContent).toContain('自定义 Skill');
+
+      const savedSkill = buttons().find((button) =>
+        button.textContent?.includes('自定义 Skill'),
+      );
+      expect(savedSkill).toBeInstanceOf(HTMLButtonElement);
+      await act(async () => {
+        savedSkill?.click();
+      });
+      expect(useStore.getState().composerDraft).toContain('Skill 标准六项');
+      expect(useStore.getState().composerDraft).toContain(
+        '触发条件：用户需要自定义岗位能力。',
+      );
+      expect(useStore.getState().composerDraft).toContain(
+        '验收标准：方案可执行且可验收。',
+      );
 
       const editSkill = buttons().find(
         (button) => button.getAttribute('aria-label') === '编辑 自定义 Skill',
@@ -316,8 +443,8 @@ describe('GameTeamPanel', () => {
         setInputValue(editSkillLabel!, '重命名 Skill');
       });
 
-      const saveEditedSkill = buttons().find((button) =>
-        button.textContent?.includes('保存'),
+      const saveEditedSkill = buttons().find(
+        (button) => button.textContent?.trim() === '保存',
       );
       await act(async () => {
         saveEditedSkill?.click();

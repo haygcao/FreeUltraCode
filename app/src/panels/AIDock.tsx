@@ -181,6 +181,7 @@ import {
   slashCatalog,
   type LocalModelRuntimeStatus,
   type SlashCatalogEntry,
+  type WorkspaceDirectoryListing,
   type WorkspaceTreeEntry,
 } from '@/lib/tauri';
 import {
@@ -203,7 +204,6 @@ import {
 } from '@/lib/modelLists';
 import { formatCompactTokenCount } from '@/lib/contextUsage';
 import {
-  normalizeWorkspacePath,
   uniqueWorkspaceHistory,
   workspacePathKey,
 } from '@/lib/workspaceHistory';
@@ -222,6 +222,46 @@ import UltracodeRunCard from '@/panels/UltracodeRunCard';
 import GameTeamPanel, {
   OPEN_GAME_TEAM_DETAILS_EVENT,
 } from '@/panels/GameTeamPanel';
+import {
+  activeChatTitle,
+  formatMessageTime,
+} from '@/panels/aidock/chatTitle';
+import {
+  fileMentionEntryForTarget,
+  fileMentionErrorMessage,
+  fileMentionInsertText,
+  fileMentionListingKey,
+  fileMentionListTargets,
+  filterFileMentionEntries,
+  findFileMentionTrigger,
+  normalizeFileMentionPath,
+  uniqueFileMentionEntries,
+  type FileMentionListing,
+  type FileMentionListTarget,
+  type FileMentionTrigger,
+} from '@/panels/aidock/fileMentions';
+import {
+  buildSearchMatches,
+  normalizeSearchQuery,
+  previousUserText,
+  serializeConversation,
+} from '@/panels/aidock/search';
+import {
+  expandSlashRequest,
+  filterSlashSuggestions,
+  findGameSkillTrigger,
+  findOrgMentionTrigger,
+  findSlashTrigger,
+  scopeSlashSuggestionsForAdapter,
+  type SlashTrigger,
+} from '@/panels/aidock/slashSuggestions';
+import {
+  readStreamScrollSnapshot,
+  restoreStreamScrollSnapshot,
+  scrollStreamToBottom,
+  streamScrollKey,
+  type StreamScrollSnapshot,
+} from '@/panels/aidock/streamScroll';
 import FileText from '@/components/ai/FileText';
 import FilePreviewDrawer from '@/components/ai/FilePreviewDrawer';
 import type { FileRef } from '@/components/ai/lib/filePath';
@@ -232,7 +272,6 @@ import { shallow } from 'zustand/shallow';
 import {
   isActiveAiEditingSession,
   useStore,
-  type StoreState,
 } from '@/store/useStore';
 
 const DEFAULT_DOCK_HEIGHT = 208; // matches the former h-52
@@ -243,7 +282,6 @@ const MIN_DOCK_HEIGHT = 120;
  * Sized to comfortably cover the visible bottom of the stream after auto-scroll.
  */
 const EAGER_MESSAGE_TAIL = 6;
-const STREAM_BOTTOM_TOLERANCE = 32;
 /** Fixed height of the bottom input area in 'chat' layout (return fills the rest). */
 const CHAT_INPUT_HEIGHT = 300;
 
@@ -276,23 +314,6 @@ function clampHeight(h: number): number {
   return Math.min(Math.max(h, MIN_DOCK_HEIGHT), max);
 }
 
-interface StreamScrollSnapshot {
-  atBottom: boolean;
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-  anchorMessageId: string | null;
-  anchorOffsetTop: number;
-}
-
-function streamScrollKey(
-  layout: 'dock' | 'chat',
-  workspaceId: string | null | undefined,
-  sessionId: string | null | undefined,
-): string {
-  return `${layout}:${workspaceId ?? 'global'}:${sessionId ?? 'none'}`;
-}
-
 const ASSET_SESSION_JUMP_EVENT = 'fuc:asset-session-jump';
 
 interface AssetSessionJumpDetail {
@@ -302,137 +323,9 @@ interface AssetSessionJumpDetail {
   messageId?: string | null;
 }
 
-function isStreamAtBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= STREAM_BOTTOM_TOLERANCE;
-}
-
-function scrollStreamToBottom(el: HTMLElement): void {
-  if (typeof el.scrollTo === 'function') {
-    el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
-  } else {
-    el.scrollTop = el.scrollHeight;
-  }
-}
-
-function visibleStreamAnchor(
-  stream: HTMLElement,
-  messageRefs: Map<string, HTMLLIElement>,
-): { messageId: string; offsetTop: number } | null {
-  const streamRect = stream.getBoundingClientRect();
-  if (streamRect.height <= 0 && stream.clientHeight <= 0) return null;
-
-  for (const [messageId, node] of messageRefs) {
-    const rect = node.getBoundingClientRect();
-    const hasLayout =
-      rect.width !== 0 || rect.height !== 0 || rect.top !== 0 || rect.bottom !== 0;
-    if (!hasLayout) continue;
-    if (rect.bottom < streamRect.top) continue;
-    if (rect.top > streamRect.bottom) continue;
-    return { messageId, offsetTop: rect.top - streamRect.top };
-  }
-
-  return null;
-}
-
-function readStreamScrollSnapshot(
-  stream: HTMLElement,
-  messageRefs: Map<string, HTMLLIElement>,
-): StreamScrollSnapshot {
-  const anchor = visibleStreamAnchor(stream, messageRefs);
-  return {
-    atBottom: isStreamAtBottom(stream),
-    scrollTop: stream.scrollTop,
-    scrollHeight: stream.scrollHeight,
-    clientHeight: stream.clientHeight,
-    anchorMessageId: anchor?.messageId ?? null,
-    anchorOffsetTop: anchor?.offsetTop ?? 0,
-  };
-}
-
-function restoreStreamScrollSnapshot(
-  stream: HTMLElement,
-  messageRefs: Map<string, HTMLLIElement>,
-  snapshot: StreamScrollSnapshot | undefined,
-): boolean {
-  if (!snapshot || snapshot.atBottom) {
-    scrollStreamToBottom(stream);
-    return true;
-  }
-
-  if (snapshot.anchorMessageId) {
-    const node = messageRefs.get(snapshot.anchorMessageId);
-    if (!node) {
-      stream.scrollTop = snapshot.scrollTop;
-      return false;
-    }
-    const streamRect = stream.getBoundingClientRect();
-    const nodeRect = node.getBoundingClientRect();
-    const delta =
-      nodeRect.top - streamRect.top - snapshot.anchorOffsetTop;
-    if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
-      stream.scrollTop += delta;
-    }
-    return true;
-  }
-
-  stream.scrollTop = snapshot.scrollTop;
-  return true;
-}
-
-type ChatTitleState = Pick<
-  StoreState,
-  | 'activeSessionId'
-  | 'activeWorkspaceId'
-  | 'sessions'
-  | 'sessionTree'
-  | 'workflow'
->;
-
-function activeChatTitle(state: ChatTitleState): string {
-  const activeSessionId = state.activeSessionId;
-  if (!activeSessionId) return state.workflow.meta?.name ?? '';
-
-  const activeSession = state.activeWorkspaceId
-    ? (state.sessionTree[state.activeWorkspaceId]?.find(
-        (session) => session.id === activeSessionId,
-      ) ??
-      state.sessions.find(
-        (session) =>
-          session.id === activeSessionId &&
-          (session.workspaceId == null ||
-            session.workspaceId === state.activeWorkspaceId),
-      ))
-    : state.sessions.find((session) => session.id === activeSessionId);
-
-  return activeSession?.title?.trim() || state.workflow.meta?.name || '';
-}
-
-function formatMessageTime(ts: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(new Date(ts));
-}
-
-type SearchMatchSource = 'text' | 'interaction';
-
-interface SearchMatch {
-  id: string;
-  messageId: string;
-  source: SearchMatchSource;
-}
-
 type MessageActionMenu =
   | { messageId: string; kind: 'model' | 'translate' }
   | null;
-
-interface SlashTrigger {
-  start: number;
-  end: number;
-  query: string;
-}
 
 // Row variants for the inline `$组织架构` tree menu.
 type OrgMentionOption =
@@ -440,369 +333,36 @@ type OrgMentionOption =
   | { kind: 'insert-self'; node: ResolvedGameOrgNode }
   | { kind: 'node'; node: ResolvedGameOrgNode; hasChildren: boolean };
 
-interface FileMentionTrigger {
-  start: number;
-  end: number;
-  directory: string;
-  query: string;
+const ORG_SLASH_SUGGESTION_PREFIX = 'game-org:';
+
+function isOrgSlashSuggestion(suggestion: SlashSuggestion): boolean {
+  return suggestion.id.startsWith(ORG_SLASH_SUGGESTION_PREFIX);
 }
 
-type FileMentionListing =
-  | {
-      status: 'idle';
-      rootPath: string;
-      directory: string;
-      entries: WorkspaceTreeEntry[];
-      message?: undefined;
-    }
-  | {
-      status: 'loading';
-      rootPath: string;
-      directory: string;
-      entries: WorkspaceTreeEntry[];
-      message?: undefined;
-    }
-  | {
-      status: 'ready';
-      rootPath: string;
-      directory: string;
-      entries: WorkspaceTreeEntry[];
-      message?: undefined;
-    }
-  | {
-      status: 'error';
-      rootPath: string;
-      directory: string;
-      entries: WorkspaceTreeEntry[];
-      message: string;
-    };
-
-const MAX_FILTERED_SLASH_SUGGESTIONS = 10;
-const MAX_FILE_MENTION_SUGGESTIONS = 12;
-
-function slashSuggestionRankForAdapter(
-  suggestion: SlashSuggestion,
-  adapter: RuntimeAdapterId,
-): number {
-  const sourceAdapter = suggestion.sourceAdapter;
-  if (sourceAdapter === adapter) return 2;
-  if (!sourceAdapter || sourceAdapter === 'app' || sourceAdapter === 'agent') {
-    return 1;
-  }
-  return 0;
-}
-
-function scopeSlashSuggestionsForAdapter(
-  suggestions: SlashSuggestion[],
-  adapter: RuntimeAdapterId,
-): SlashSuggestion[] {
-  const scoped = suggestions
-    .filter((suggestion) => slashSuggestionRankForAdapter(suggestion, adapter) > 0)
-    .sort(
-      (a, b) =>
-        slashSuggestionRankForAdapter(b, adapter) -
-        slashSuggestionRankForAdapter(a, adapter),
-    );
-  const seen = new Set<string>();
-  const out: SlashSuggestion[] = [];
-  for (const suggestion of scoped) {
-    const key = `${suggestion.kind}:${suggestion.name.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(suggestion);
-  }
-  return out;
-}
-
-function findSlashTrigger(text: string, caret: number): SlashTrigger | null {
-  if (caret < 1) return null;
-
-  const beforeCaret = text.slice(0, caret);
-  const match = /(^|\s)\/([^\s/]*)$/.exec(beforeCaret);
-  if (!match) return null;
-
-  const query = match[2] ?? '';
-  const start = beforeCaret.length - query.length - 1;
-  return { start, end: caret, query };
-}
-
-// `#`-triggered GameSkill picker. Mirrors findSlashTrigger but listens for a
-// leading `#` so the FreeUltraCode-introduced GameSkills get their own discovery
-// surface ("#游戏Skill"). Picking an entry still inserts the canonical
-// `/command` token, so all existing submit-time routing and channel guards keep
-// working unchanged.
-function findGameSkillTrigger(text: string, caret: number): SlashTrigger | null {
-  if (caret < 1) return null;
-
-  const beforeCaret = text.slice(0, caret);
-  const match = /(^|\s)#([^\s#]*)$/.exec(beforeCaret);
-  if (!match) return null;
-
-  const query = match[2] ?? '';
-  const start = beforeCaret.length - query.length - 1;
-  return { start, end: caret, query };
-}
-
-// Mirrors findSlashTrigger but for the `$组织架构` inline tree menu, keyed on `$`.
-function findOrgMentionTrigger(text: string, caret: number): SlashTrigger | null {
-  if (caret < 1) return null;
-
-  const beforeCaret = text.slice(0, caret);
-  const match = /(^|\s)\$([^\s$]*)$/.exec(beforeCaret);
-  if (!match) return null;
-
-  const query = match[2] ?? '';
-  const start = beforeCaret.length - query.length - 1;
-  return { start, end: caret, query };
-}
-
-function normalizeFileMentionPath(value: string): string {
-  return value
-    .replace(/\\/g, '/')
-    .replace(/\/{2,}/g, '/')
-    .replace(/^\/+/, '');
-}
-
-function normalizeFileMentionAbsolutePath(value: string): string {
-  return normalizeWorkspacePath(value).replace(/\\/g, '/');
-}
-
-function joinFileMentionPath(rootPath: string, relativePath: string): string {
-  const root = normalizeFileMentionAbsolutePath(rootPath);
-  const relative = normalizeFileMentionPath(relativePath).replace(/^\/+|\/+$/g, '');
-  return relative ? `${root}/${relative}` : root;
-}
-
-interface FileMentionListTarget {
-  rootPath: string;
-  relativePath: string;
-  insertAbsolute: boolean;
-}
-
-function fileMentionListTargets(
-  directory: string,
-  rootFolders: string[],
-): FileMentionListTarget[] {
-  const [primaryRoot] = rootFolders;
-  if (!primaryRoot) return [];
-  const primaryKey = workspacePathKey(primaryRoot);
-  const normalizedDirectory = normalizeFileMentionAbsolutePath(directory);
-
-  if (!normalizedDirectory) {
-    return rootFolders.map((rootPath) => ({
-      rootPath,
-      relativePath: '',
-      insertAbsolute: workspacePathKey(rootPath) !== primaryKey,
-    }));
-  }
-
-  const directoryKey = workspacePathKey(normalizedDirectory);
-  const matchedRoot = [...rootFolders]
-    .sort((a, b) => normalizeFileMentionAbsolutePath(b).length - normalizeFileMentionAbsolutePath(a).length)
-    .find((rootPath) => {
-      const rootKey = workspacePathKey(rootPath);
-      return directoryKey === rootKey || directoryKey.startsWith(`${rootKey}/`);
-    });
-
-  if (matchedRoot) {
-    const root = normalizeFileMentionAbsolutePath(matchedRoot);
-    const relativePath =
-      directoryKey === workspacePathKey(matchedRoot)
-        ? ''
-        : normalizedDirectory.slice(root.length + 1);
-    return [
-      {
-        rootPath: matchedRoot,
-        relativePath: normalizeFileMentionPath(relativePath),
-        insertAbsolute: true,
-      },
-    ];
-  }
-
+function orgNodeSearchText(node: ResolvedGameOrgNode): string {
   return [
-    {
-      rootPath: primaryRoot,
-      relativePath: normalizeFileMentionPath(directory),
-      insertAbsolute: false,
-    },
-  ];
-}
-
-function fileMentionEntryForTarget(
-  entry: WorkspaceTreeEntry,
-  target: FileMentionListTarget,
-): WorkspaceTreeEntry {
-  if (!target.insertAbsolute) return entry;
-  return {
-    ...entry,
-    relativePath: joinFileMentionPath(target.rootPath, entry.relativePath),
-  };
-}
-
-function fileMentionListingKey(targets: FileMentionListTarget[]): string {
-  return targets
-    .map((target) => `${workspacePathKey(target.rootPath)}::${target.relativePath}::${target.insertAbsolute}`)
-    .join('|');
-}
-
-function uniqueFileMentionEntries(entries: WorkspaceTreeEntry[]): WorkspaceTreeEntry[] {
-  const seen = new Set<string>();
-  const out: WorkspaceTreeEntry[] = [];
-  for (const entry of entries) {
-    const key = workspacePathKey(entry.path || entry.relativePath);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(entry);
-  }
-  return out;
-}
-
-function splitFileMentionPath(value: string): {
-  directory: string;
-  query: string;
-} {
-  const normalized = normalizeFileMentionPath(value);
-  const slash = normalized.lastIndexOf('/');
-  if (slash === -1) return { directory: '', query: normalized };
-  return {
-    directory: normalized.slice(0, slash).replace(/^\/+|\/+$/g, ''),
-    query: normalized.slice(slash + 1),
-  };
-}
-
-function findFileMentionTrigger(
-  text: string,
-  caret: number,
-): FileMentionTrigger | null {
-  if (caret < 1) return null;
-
-  const beforeCaret = text.slice(0, caret);
-  const match = /(^|\s)@([^\s]*)$/.exec(beforeCaret);
-  if (!match) return null;
-
-  const rawPath = match[2] ?? '';
-  const start = beforeCaret.length - rawPath.length - 1;
-  const { directory, query } = splitFileMentionPath(rawPath);
-  return { start, end: caret, directory, query };
-}
-
-function filterSlashSuggestions(
-  suggestions: SlashSuggestion[],
-  query: string,
-): SlashSuggestion[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return suggestions;
-
-  const starts: SlashSuggestion[] = [];
-  const contains: SlashSuggestion[] = [];
-  for (const suggestion of suggestions) {
-    const name = suggestion.name.slice(1).toLowerCase();
-    const label = suggestion.label.toLowerCase();
-    if (name.startsWith(q) || label.startsWith(q)) {
-      starts.push(suggestion);
-      continue;
-    }
-    if (suggestion.searchText.includes(q)) contains.push(suggestion);
-  }
-
-  return [...starts, ...contains].slice(0, MAX_FILTERED_SLASH_SUGGESTIONS);
-}
-
-function filterFileMentionEntries(
-  entries: WorkspaceTreeEntry[],
-  query: string,
-): WorkspaceTreeEntry[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return entries.slice(0, MAX_FILE_MENTION_SUGGESTIONS);
-
-  const starts: WorkspaceTreeEntry[] = [];
-  const contains: WorkspaceTreeEntry[] = [];
-  for (const entry of entries) {
-    const name = entry.name.toLowerCase();
-    const path = entry.relativePath.toLowerCase();
-    if (name.startsWith(q) || path.startsWith(q)) {
-      starts.push(entry);
-      continue;
-    }
-    if (name.includes(q) || path.includes(q)) contains.push(entry);
-  }
-
-  return [...starts, ...contains].slice(0, MAX_FILE_MENTION_SUGGESTIONS);
-}
-
-function fileMentionInsertText(entry: WorkspaceTreeEntry): string {
-  const relativePath = normalizeFileMentionPath(entry.relativePath);
-  return `@${relativePath}${entry.kind === 'directory' ? '/' : ''}`;
-}
-
-function fileMentionErrorMessage(err: unknown): string {
-  if (err instanceof Error && err.message === 'NO_BACKEND') {
-    return '当前浏览器模式不能读取本机文件。请使用桌面端。';
-  }
-  return err instanceof Error ? err.message : String(err);
-}
-
-function findSlashSuggestionForText(
-  text: string,
-  suggestions: SlashSuggestion[],
-): { suggestion: SlashSuggestion; request: string } | null {
-  const match = /^\/[^\s]+(?:\s+([\s\S]*))?$/i.exec(text.trim());
-  if (!match) return null;
-  const command = text.trim().split(/\s+/, 1)[0]?.toLowerCase();
-  if (!command) return null;
-  const suggestion = suggestions.find(
-    (item) => item.name.toLowerCase() === command,
-  );
-  if (!suggestion) return null;
-  return {
-    suggestion,
-    request: (match[1] ?? '').trim(),
-  };
-}
-
-function expandSlashRequest(
-  text: string,
-  suggestions: SlashSuggestion[],
-): string {
-  const found = findSlashSuggestionForText(text, suggestions);
-  if (!found) return text;
-  const { suggestion, request } = found;
-  const instruction =
-    suggestion.insertText.trim() ||
-    suggestion.detail.trim() ||
-    `Use ${suggestion.name} for this request.`;
-  if (!request) return instruction;
-  return `${instruction}\n\n请求：\n${request}`;
-}
-
-function normalizeSearchQuery(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function previousUserText(messages: Message[], messageId: string): string {
-  const index = messages.findIndex((message) => message.id === messageId);
-  if (index <= 0) return '';
-  for (let i = index - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message.role === 'user') return message.text.trim();
-  }
-  return '';
-}
-
-/**
- * Serialize the current chat transcript to plain markdown for copy/export. Skips
- * UI-only notes (localOnly) so the text mirrors the real dialogue. Each turn is
- * prefixed with a role label so the dump stays readable outside the app.
- */
-function serializeConversation(messages: Message[]): string {
-  return messages
-    .filter((m) => !m.localOnly)
-    .map((m) => {
-      const role =
-        m.role === 'user' ? '## 用户' : m.role === 'system' ? '## 系统' : '## 助手';
-      return `${role}\n\n${m.text.trim()}`;
-    })
-    .join('\n\n---\n\n');
+    node.id,
+    node.label,
+    node.role,
+    node.summary,
+    node.profile.position,
+    ...node.profile.responsibilities,
+    ...node.profile.scenarios,
+    ...node.profile.deliverables,
+    ...node.profile.collaborators,
+    ...node.path,
+    ...node.groupLabels,
+    ...node.expertIds,
+    ...node.experts.flatMap((expert) => [
+      expert.id,
+      expert.name,
+      expert.summary,
+      expert.role,
+      ...expert.triggers,
+    ]),
+  ]
+    .join(' ')
+    .toLocaleLowerCase();
 }
 
 /**
@@ -1077,57 +637,6 @@ function MessageActionToolbar({
       )}
     </div>
   );
-}
-
-function interactionSearchText(message: Message): string {
-  if (!message.interaction) return '';
-  const parts = [message.interaction.prompt];
-  if (message.interaction.options?.length) {
-    parts.push(message.interaction.options.join(' '));
-  }
-  if (message.interactionAnswer) {
-    parts.push(summarizeAnswer(message.interaction, message.interactionAnswer));
-  }
-  return parts.filter(Boolean).join('\n');
-}
-
-function buildSearchMatches(messages: Message[], query: string): SearchMatch[] {
-  if (!query) return [];
-
-  const out: SearchMatch[] = [];
-  const lowerQuery = query.toLowerCase();
-
-  for (const message of messages) {
-    const segments: Array<{ source: SearchMatchSource; text: string }> = [];
-    const cleaned = cleanMessageText(message.text);
-    if (cleaned.trim()) {
-      segments.push({ source: 'text', text: cleaned });
-    }
-    const interactionText = interactionSearchText(message);
-    if (interactionText) {
-      segments.push({ source: 'interaction', text: interactionText });
-    }
-
-    for (const segment of segments) {
-      const lowerText = segment.text.toLowerCase();
-      let start = 0;
-      let hitIndex = 0;
-
-      while (start <= lowerText.length) {
-        const found = lowerText.indexOf(lowerQuery, start);
-        if (found === -1) break;
-        out.push({
-          id: `${message.id}:${segment.source}:${hitIndex}`,
-          messageId: message.id,
-          source: segment.source,
-        });
-        hitIndex += 1;
-        start = found + Math.max(lowerQuery.length, 1);
-      }
-    }
-  }
-
-  return out;
 }
 
 function renderHighlightedText(
@@ -1986,8 +1495,9 @@ export default function AIDock({
   // from a `$组织架构` trigger at the input bottom and collapses on outside click.
   const [orgPanelOpen, setOrgPanelOpen] = useState(false);
   // New-session layout: in the chat surface, before any message lands, the input
-  // box floats in the vertical center.
-  const centerInput = isChat && messages.length === 0;
+  // box floats in the vertical center. Opening the organization chart promotes
+  // it back to the normal bottom composer so the popup never covers the input.
+  const centerInput = isChat && messages.length === 0 && !orgPanelOpen;
   const [returnSearchOpen, setReturnSearchOpen] = useState(false);
   const [returnSearch, setReturnSearch] = useState('');
   const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(0);
@@ -2126,23 +1636,6 @@ export default function AIDock({
       })),
     [gameExpertSettings, locale],
   );
-  const activeAdapterSlashSuggestions = useMemo(
-    () => [
-      ...scopeSlashSuggestionsForAdapter(slashSuggestions, selectedAdapter),
-      ...gameExpertSuggestions,
-    ],
-    [gameExpertSuggestions, selectedAdapter, slashSuggestions],
-  );
-  const filteredSlashSuggestions = useMemo(
-    () =>
-      slashTrigger
-        ? filterSlashSuggestions(
-            activeAdapterSlashSuggestions,
-            slashTrigger.query,
-          )
-        : [],
-    [activeAdapterSlashSuggestions, slashTrigger],
-  );
   // GameSkill suggestions powering the `#游戏Skill` menu. Always sourced from the
   // GameSkill registry (independent of the backend slash catalog / adapter scope)
   // so the FreeUltraCode-introduced skills get a clean, app-curated surface.
@@ -2167,13 +1660,6 @@ export default function AIDock({
         : [],
     [fileMentionListing.entries, fileMentionTrigger],
   );
-  const slashOpen =
-    !isReadOnly && slashTrigger !== null && filteredSlashSuggestions.length > 0;
-  const gameSkillOpen =
-    !isReadOnly &&
-    gameSkillTrigger !== null &&
-    filteredGameSkillSuggestions.length > 0;
-  const fileMentionOpen = !isReadOnly && fileMentionTrigger !== null;
   // Resolved organization tree for the inline `$` menu. Root is the team; its
   // `children` form the first level the menu drills through.
   const orgTree = useMemo(
@@ -2189,6 +1675,84 @@ export default function AIDock({
     for (const node of orgNodesFlat) map.set(node.id, node);
     return map;
   }, [orgNodesFlat]);
+  const orgSlashSuggestions = useMemo<SlashSuggestion[]>(() => {
+    const rootLabel = locale === 'zh-CN' ? '组织架构' : 'organization';
+    return orgNodesFlat
+      .filter((node) => node.id !== orgTree.id)
+      .flatMap<SlashSuggestion>((node) => {
+        const nodeName = `/${rootLabel}/${node.id}`;
+        const nodeCommand = (node.commandText ?? '').trim();
+        const nodeSearch = orgNodeSearchText(node);
+        const roleSuggestion: SlashSuggestion = {
+          id: `${ORG_SLASH_SUGGESTION_PREFIX}role:${node.id}`,
+          kind: 'command',
+          name: nodeName,
+          label: node.path.join(' / '),
+          detail: node.summary || node.role,
+          insertText: nodeCommand || nodeName,
+          source: rootLabel,
+          sourceAdapter: 'app',
+          searchText: `${nodeName} ${nodeSearch} ${nodeCommand}`.toLocaleLowerCase(),
+        };
+        const skillSuggestions = node.skills.map<SlashSuggestion>((skill) => {
+          const skillName = `${nodeName}/${skill.id}`;
+          return {
+            id: `${ORG_SLASH_SUGGESTION_PREFIX}skill:${node.id}:${skill.id}`,
+            kind: 'skill',
+            name: skillName,
+            label: `${node.label} / ${skill.label}`,
+            detail: skill.summary,
+            insertText: skill.commandText.trim(),
+            source: rootLabel,
+            sourceAdapter: 'app',
+            searchText: [
+              skillName,
+              nodeSearch,
+              skill.id,
+              skill.label,
+              skill.summary,
+              skill.prompt,
+              skill.commandText,
+              skill.protocol.triggerConditions,
+              skill.protocol.inputs,
+              ...skill.protocol.executionSteps,
+              skill.protocol.toolsAndResources,
+              skill.protocol.outputs,
+              skill.protocol.acceptanceCriteria,
+              ...skill.collaboratorLabels,
+            ]
+              .join(' ')
+              .toLocaleLowerCase(),
+          };
+        });
+        return [roleSuggestion, ...skillSuggestions];
+      });
+  }, [locale, orgNodesFlat, orgTree.id]);
+  const activeAdapterSlashSuggestions = useMemo(
+    () => [
+      ...scopeSlashSuggestionsForAdapter(slashSuggestions, selectedAdapter),
+      ...gameExpertSuggestions,
+      ...orgSlashSuggestions,
+    ],
+    [gameExpertSuggestions, orgSlashSuggestions, selectedAdapter, slashSuggestions],
+  );
+  const filteredSlashSuggestions = useMemo(
+    () =>
+      slashTrigger
+        ? filterSlashSuggestions(
+            activeAdapterSlashSuggestions,
+            slashTrigger.query,
+          )
+        : [],
+    [activeAdapterSlashSuggestions, slashTrigger],
+  );
+  const slashOpen =
+    !isReadOnly && slashTrigger !== null && filteredSlashSuggestions.length > 0;
+  const gameSkillOpen =
+    !isReadOnly &&
+    gameSkillTrigger !== null &&
+    filteredGameSkillSuggestions.length > 0;
+  const fileMentionOpen = !isReadOnly && fileMentionTrigger !== null;
   // The node whose children the menu currently lists (null = root level).
   const orgMentionParent = orgMentionParentId
     ? orgNodeById.get(orgMentionParentId) ?? null
@@ -2201,18 +1765,7 @@ export default function AIDock({
     if (query) {
       return orgNodesFlat
         .filter((node) => node.id !== orgTree.id)
-        .filter((node) => {
-          const haystack = [
-            node.label,
-            node.role,
-            node.summary,
-            ...node.path,
-            ...node.groupLabels,
-          ]
-            .join(' ')
-            .toLocaleLowerCase();
-          return haystack.includes(query);
-        })
+        .filter((node) => orgNodeSearchText(node).includes(query))
         .slice(0, 30)
         .map<OrgMentionOption>((node) => ({
           kind: 'node',
@@ -2439,7 +1992,11 @@ export default function AIDock({
     );
     if (!provider) return [];
     const current = imageProviderModel(provider.id, imageSettings);
-    return uniqueModelSelectOptions([current, ...provider.models]);
+    return uniqueModelSelectOptions([
+      current,
+      ...(imageSettings.providerModelLists[provider.id] ?? []),
+      ...provider.models,
+    ]);
   }, [imageSettings]);
   const imageModelValue = imageProviderModel(
     imageSettings.preferredProviderId,
@@ -3229,6 +2786,7 @@ export default function AIDock({
     () => fileMentionRootFolders.map(workspacePathKey).join('|'),
     [fileMentionRootFolders],
   );
+  const fileMentionDirectory = fileMentionTrigger?.directory ?? null;
   const enterBlueprintMode = useCallback((
     modeArgs: string | null | undefined,
     prompt: string | undefined,
@@ -3415,14 +2973,14 @@ export default function AIDock({
     }
   }, [appendChatNote, dismissInteraction, locale]);
   useEffect(() => {
-    if (!fileMentionTrigger || isReadOnly) return;
+    if (fileMentionDirectory === null || isReadOnly) return;
 
     const targets = fileMentionListTargets(
-      fileMentionTrigger.directory,
+      fileMentionDirectory,
       fileMentionRootFolders,
     );
     const listingKey = fileMentionListingKey(targets);
-    const directory = fileMentionTrigger.directory;
+    const directory = fileMentionDirectory;
     if (targets.length === 0) {
       setFileMentionListing({
         status: 'error',
@@ -3435,6 +2993,24 @@ export default function AIDock({
     }
 
     let cancelled = false;
+    const rootListingPromises = new Map<
+      string,
+      Promise<WorkspaceDirectoryListing>
+    >();
+    const rootListingForTarget = (
+      target: FileMentionListTarget,
+    ): Promise<WorkspaceDirectoryListing> => {
+      const cacheKey = workspacePathKey(target.rootPath);
+      const cached = rootListingPromises.get(cacheKey);
+      if (cached) return cached;
+      const promise = listWorkspaceDirectory(target.rootPath, '').catch((err) => {
+        rootListingPromises.delete(cacheKey);
+        throw err;
+      });
+      rootListingPromises.set(cacheKey, promise);
+      return promise;
+    };
+
     setFileMentionListing((current) => ({
       status: 'loading',
       rootPath: listingKey,
@@ -3445,14 +3021,77 @@ export default function AIDock({
           : [],
     }));
 
-    void Promise.allSettled(
-      targets.map(async (target) => ({
-        target,
-        listing: await listWorkspaceDirectory(target.rootPath, target.relativePath),
-      })),
-    )
+    void (async () => {
+      if (targets.every((target) => !target.relativePath)) {
+        return targets;
+      }
+
+      const rootResults = await Promise.allSettled(
+        targets.map(async (target) => ({
+          target,
+          listing: await rootListingForTarget(target),
+        })),
+      );
+      if (cancelled) return [];
+
+      const fulfilled = rootResults.filter(
+        (result): result is PromiseFulfilledResult<{
+          target: FileMentionListTarget;
+          listing: WorkspaceDirectoryListing;
+        }> => result.status === 'fulfilled',
+      );
+      const matchingTargets = fulfilled
+        .filter(({ value }) => {
+          const topLevelDirectory =
+            normalizeFileMentionPath(value.target.relativePath)
+              .split('/')
+              .find(Boolean) ?? '';
+          if (!topLevelDirectory) return true;
+          return value.listing.entries.some(
+            (entry) =>
+              entry.kind === 'directory' &&
+              entry.name.toLowerCase() === topLevelDirectory.toLowerCase(),
+          );
+        })
+        .map(({ value }) => value.target);
+
+      if (matchingTargets.length > 0) {
+        return matchingTargets;
+      }
+
+      if (fulfilled.length > 0) {
+        fileMentionTriggerRef.current = null;
+        setFileMentionTrigger(null);
+        setActiveFileMentionIndex(0);
+        setFileMentionListing({
+          status: 'idle',
+          rootPath: '',
+          directory: '',
+          entries: [],
+        });
+        return [];
+      }
+
+      const rejected = rootResults.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected',
+      );
+      throw rejected?.reason ?? new Error('Workspace listing failed');
+    })()
+      .then((validTargets) => {
+        if (cancelled || validTargets.length === 0) return [];
+        return Promise.allSettled(
+          validTargets.map(async (target) => ({
+            target,
+            listing:
+              target.relativePath === ''
+                ? await rootListingForTarget(target)
+                : await listWorkspaceDirectory(target.rootPath, target.relativePath),
+          })),
+        );
+      })
       .then((results) => {
-        if (cancelled) return;
+        if (cancelled || results.length === 0) return;
         const fulfilled = results.filter(
           (result): result is PromiseFulfilledResult<{
             target: FileMentionListTarget;
@@ -3494,7 +3133,7 @@ export default function AIDock({
     return () => {
       cancelled = true;
     };
-  }, [fileMentionRootFolders, fileMentionRootKey, fileMentionTrigger?.directory, isReadOnly, locale]);
+  }, [fileMentionDirectory, fileMentionRootFolders, fileMentionRootKey, isReadOnly, locale]);
 
   const onOpenFile = useCallback(
     (ref: FileRef, intent?: OpenFileIntent) => {
@@ -3625,6 +3264,9 @@ export default function AIDock({
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
+
+  const orgPanelBottomOffset =
+    (inputSectionHeight || (isChat && !centerInput ? chatInputHeight : 112)) + 12;
 
   const setActiveSearchMatchNode = useCallback((node: HTMLElement | null) => {
     activeSearchMatchNodeRef.current = node;
@@ -4022,8 +3664,11 @@ export default function AIDock({
       const start = clampSelection(trigger.start, current.length);
       const end = clampSelection(trigger.end, current.length);
       const after = current.slice(end);
+      const insertionText = isOrgSlashSuggestion(suggestion)
+        ? suggestion.insertText.trim()
+        : suggestion.name;
       const spacer = after.length > 0 && /^\s/.test(after) ? '' : ' ';
-      const inserted = `${suggestion.name}${spacer}`;
+      const inserted = `${insertionText}${spacer}`;
       const next = current.slice(0, start) + inserted + after;
       const caret = start + inserted.length;
 
@@ -6639,7 +6284,7 @@ export default function AIDock({
             id="fuc-slash-suggestions"
             role="listbox"
             aria-label="Slash suggestions"
-            className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-64 overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
+            className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-[32rem] overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
           >
             {filteredSlashSuggestions.map((suggestion, index) => {
               const active = index === activeSlashIndex;
@@ -6701,7 +6346,7 @@ export default function AIDock({
             id="fuc-game-skill-suggestions"
             role="listbox"
             aria-label={t(locale, 'dock.gameSkillSuggestions')}
-            className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-64 overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
+            className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-[32rem] overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
           >
             <div className="sticky top-0 border-b border-border-soft bg-panel px-2.5 py-1.5 text-[11px] font-medium text-fg-faint">
               {t(locale, 'dock.hintGameSkill')}
@@ -6756,7 +6401,7 @@ export default function AIDock({
             id="fuc-file-mention-suggestions"
             role="listbox"
             aria-label={t(locale, 'dock.fileSuggestions')}
-            className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-72 overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
+            className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-[36rem] overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
           >
             {fileMentionOptions.map((entry, index) => {
               const active = index === activeFileMentionIndex;
@@ -7496,7 +7141,7 @@ export default function AIDock({
           role="dialog"
           aria-label={t(locale, 'dock.tabOrganization')}
           className="fuc-ai-input--blueprint absolute inset-x-4 top-12 z-40 flex flex-col overflow-hidden rounded-xl border shadow-2xl"
-          style={{ bottom: (inputSectionHeight || 112) + 12 }}
+          style={{ bottom: orgPanelBottomOffset }}
         >
           <div className="flex shrink-0 items-center gap-2 border-b border-border-soft px-3 py-2">
             <GitBranch size={14} className="shrink-0 text-accent" />

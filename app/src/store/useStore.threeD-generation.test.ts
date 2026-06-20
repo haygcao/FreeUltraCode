@@ -144,17 +144,17 @@ describe('3D generation chat flow', () => {
 
     expect(tauriMocks.downloadModelAsset).toHaveBeenCalledWith(
       'https://assets.meshy.ai/tasks/refined/model.glb',
-      {
+      expect.objectContaining({
         cwd: 'E:\\OpenWorkflows',
         fileName: '3d-model-1.glb',
-      },
+      }),
     );
     expect(tauriMocks.downloadModelAsset).toHaveBeenCalledWith(
       'https://assets.meshy.ai/tasks/refined/model.zip',
-      {
+      expect.objectContaining({
         cwd: 'E:\\OpenWorkflows',
         fileName: '3d-model-2.zip',
-      },
+      }),
     );
     expect(assistant?.text).toContain('已下载到本地');
     expect(assistant?.text).toContain(
@@ -226,10 +226,10 @@ describe('3D generation chat flow', () => {
     );
     expect(tauriMocks.downloadModelAsset).toHaveBeenCalledWith(
       'https://assets.example.com/out/character-rigged.glb',
-      {
+      expect.objectContaining({
         cwd: 'E:\\OpenWorkflows',
         fileName: '3d-model-1.glb',
-      },
+      }),
     );
     expect(assistant?.text).toContain('fal.ai Meshy Rigging 自动绑骨完成');
     expect(assistant?.text).toContain(

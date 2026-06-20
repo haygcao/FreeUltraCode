@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { generateCloudflareImage, tauriAvailable } from '@/lib/tauri';
 import {
   DEFAULT_IMAGE_GENERATION_SETTINGS,
   IMAGE_PROVIDERS,
@@ -14,8 +15,17 @@ import {
   stripImageCommand,
 } from './imageGeneration';
 
+vi.mock('@/lib/tauri', async () => ({
+  ...(await vi.importActual<object>('@/lib/tauri')),
+  generateCloudflareImage: vi.fn(),
+  tauriAvailable: vi.fn(() => false),
+}));
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(generateCloudflareImage).mockReset();
+  vi.mocked(tauriAvailable).mockReset();
+  vi.mocked(tauriAvailable).mockReturnValue(false);
 });
 
 describe('image generation settings and routing', () => {
@@ -320,6 +330,37 @@ describe('image generation settings and routing', () => {
         }),
       }),
     );
+  });
+
+  it('routes Cloudflare image generation through the desktop backend when available', async () => {
+    vi.mocked(tauriAvailable).mockReturnValue(true);
+    vi.mocked(generateCloudflareImage).mockResolvedValue('data:image/png;base64,aW1hZ2U=');
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+
+    const result = await generateImage(
+      {
+        prompt: '/image 海岛猫带领同伴准备战斗',
+        providerId: 'cloudflare',
+      },
+      {
+        ...DEFAULT_IMAGE_GENERATION_SETTINGS,
+        providerKeys: { cloudflare: 'cfut-test' },
+        providerAccountIds: { cloudflare: 'account-id' },
+        providerBaseUrls: {},
+        providerModels: {
+          cloudflare: '@cf/black-forest-labs/flux-1-schnell',
+        },
+      },
+    );
+
+    expect(result.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
+    expect(generateCloudflareImage).toHaveBeenCalledWith({
+      accountId: 'account-id',
+      apiKey: 'cfut-test',
+      model: '@cf/black-forest-labs/flux-1-schnell',
+      prompt: '海岛猫带领同伴准备战斗',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('parses Google Imagen base64 predictions', async () => {

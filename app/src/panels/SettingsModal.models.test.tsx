@@ -193,15 +193,14 @@ describe('SettingsModal programming model selection', () => {
     }
   });
 
-  it('shows a global save action with saved feedback', async () => {
+  it('renders the general settings tab without requiring a global save action', async () => {
     const view = await renderSettingsModal();
 
     try {
-      expect(view.container.textContent).toContain('配置已同步');
-
-      await clickButtonByText(view.container, '保存');
-
-      expect(view.container.textContent).toContain('已保存');
+      expect(view.container.textContent).toContain('通用设置');
+      expect(view.container.textContent).toContain('界面语言');
+      expect(view.container.textContent).toContain('提示词自动翻译');
+      expect(view.container.textContent).not.toContain('配置已同步');
     } finally {
       await view.cleanup();
     }

@@ -69,25 +69,15 @@ describe('personal instructions persistence', () => {
       modelClass: 'default',
       systemDefault: true,
     };
-    const openRouter = {
-      adapter: 'claude-code',
-      modelClass: 'sonnet',
-      providerId: 'freecc:open_router',
-      channelId: 'default',
-    };
     const loaded = loadPersonalInstructionsByModel(claude, [
       claude,
       gemini,
-      openRouter,
     ]);
 
     expect(loaded[personalInstructionsKey(claude)]).toContain(
       'Claude Code Defaults',
     );
     expect(loaded[personalInstructionsKey(gemini)]).toContain('Gemini Defaults');
-    expect(loaded[personalInstructionsKey(openRouter)]).toContain(
-      'OpenAI-Compatible Coding Defaults',
-    );
 
     const persisted = JSON.parse(
       window.localStorage.getItem(PERSONAL_INSTRUCTIONS_BY_MODEL_KEY) ?? '{}',

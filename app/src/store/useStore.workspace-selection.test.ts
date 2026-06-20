@@ -41,8 +41,8 @@ describe('top workspace switcher selection (selectedWorkspaceId)', () => {
 
   it('does not follow a session click into another workspace', async () => {
     await historyStore.ready();
-    const wsA = await historyStore.resolveWorkspaceByPath('E:\test_project_ue53');
-    const wsB = await historyStore.resolveWorkspaceByPath('E:\OpenWorkflow');
+    const wsA = await historyStore.resolveWorkspaceByPath('E:\\test_project_ue53');
+    const wsB = await historyStore.resolveWorkspaceByPath('E:\\OpenWorkflow');
 
     const sessionB = await historyStore.createSession({
       workspaceId: wsB.id,
@@ -84,8 +84,8 @@ describe('top workspace switcher selection (selectedWorkspaceId)', () => {
 
   it('updates the pinned workspace only when switched explicitly', async () => {
     await historyStore.ready();
-    const wsA = await historyStore.resolveWorkspaceByPath('E:\test_project_ue53');
-    const wsB = await historyStore.resolveWorkspaceByPath('E:\OpenWorkflow');
+    const wsA = await historyStore.resolveWorkspaceByPath('E:\\test_project_ue53');
+    const wsB = await historyStore.resolveWorkspaceByPath('E:\\OpenWorkflow');
     const sessionB = await historyStore.createSession({
       workspaceId: wsB.id,
       isWorkflow: false,
@@ -122,8 +122,8 @@ describe('top workspace switcher selection (selectedWorkspaceId)', () => {
 
   it('does not move the pinned workspace when a new session is created', async () => {
     await historyStore.ready();
-    const wsA = await historyStore.resolveWorkspaceByPath('E:\test_project_ue53');
-    const wsB = await historyStore.resolveWorkspaceByPath('E:\OpenWorkflow');
+    const wsA = await historyStore.resolveWorkspaceByPath('E:\\test_project_ue53');
+    const wsB = await historyStore.resolveWorkspaceByPath('E:\\OpenWorkflow');
 
     // Game (wsA) is pinned at the top, but the active view lives in wsB after
     // the user opened an OpenWorkflow (wsB) session earlier.

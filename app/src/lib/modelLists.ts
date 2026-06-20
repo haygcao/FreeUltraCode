@@ -265,9 +265,13 @@ export async function refreshEndpointModels(params: {
   baseUrl: string;
   apiKey?: string;
   fallback?: string[];
+  urls?: string[];
 }): Promise<ModelListResult> {
   const fallback = uniqueModels(params.fallback ?? []);
-  const urls = modelListUrls(params.baseUrl, 'openai');
+  const urls =
+    params.urls && params.urls.length > 0
+      ? uniqueModels(params.urls)
+      : modelListUrls(params.baseUrl, 'openai');
   if (urls.length === 0) {
     return { models: fallback, source: 'catalog' };
   }

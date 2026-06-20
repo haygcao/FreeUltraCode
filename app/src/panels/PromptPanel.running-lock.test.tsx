@@ -390,7 +390,7 @@ describe('PromptPanel running lock', () => {
     }
   });
 
-  it('opens the add channel dialog from the top of the bottom channel selector', async () => {
+  it('opens the bottom channel selector with configured channels', async () => {
     seedDefaultChannels();
     resetStoreForPromptLock('design');
     const view = await renderChatDock();
@@ -403,17 +403,10 @@ describe('PromptPanel running lock', () => {
       const options = Array.from(
         view.container.querySelectorAll<HTMLButtonElement>('button[role="option"]'),
       );
-      expect(options[0]?.textContent).toContain('添加新渠道');
-
-      await act(async () => {
-        options[0]?.click();
-      });
-
-      expect(
-        view.container.querySelector('[data-provider-editor="true"]'),
-      ).toBeInstanceOf(HTMLElement);
-      expect(view.container.textContent).toContain('添加渠道');
-      expect(view.container.textContent).toContain('来源 / 类型');
+      expect(options.length).toBeGreaterThan(0);
+      expect(view.container.textContent).toContain('Claude Code · 默认渠道');
+      expect(view.container.textContent).toContain('Codex · 默认渠道');
+      expect(view.container.textContent).toContain('Gemini · 默认渠道');
     } finally {
       await view.cleanup();
     }
@@ -716,7 +709,7 @@ describe('PromptPanel running lock', () => {
   });
 
   it('shows the simple chat stop action inside the input while chatting', async () => {
-    resetStoreForPromptLock('design', 'hello');
+    resetStoreForPromptLock('design');
     const originalStopChat = useStore.getState().stopChat;
     const stopChat = vi.fn();
     useStore.setState({

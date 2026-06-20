@@ -6,8 +6,11 @@ import {
 } from './gameExperts';
 import {
   buildGameOrgTree,
+  collectGameOrgSkillBindings,
   findGameOrgNode,
   flattenGameOrgNodes,
+  planGameOrgTask,
+  recommendGameOrgSkills,
   type GameOrgNodeDefinition,
 } from './gameOrg';
 
@@ -40,6 +43,8 @@ describe('game organization tree', () => {
 
     expect(technicalDirector?.icon).toBe('tech');
     expect(featureSkill?.commandText).toContain('/technical-director ');
+    expect(featureSkill?.commandText).toContain('Skill 标准六项');
+    expect(featureSkill?.protocol.executionSteps.length).toBeGreaterThan(0);
     const parsed = parseGameExpertCommand(featureSkill?.commandText ?? '', settings);
     expect(parsed?.expertIds).toEqual(['technical-director']);
     expect(parsed?.task).toContain('发起功能开发');
@@ -113,6 +118,13 @@ describe('game organization tree', () => {
       icon: 'team',
       summary: '完全自定义的组织根节点。',
       role: '按用户保存的配置工作。',
+      profile: {
+        position: '负责自定义组织配置。',
+        responsibilities: ['维护岗位库', '维护 Skill 绑定'],
+        scenarios: ['需要定制团队结构时'],
+        deliverables: ['岗位配置方案'],
+        collaborators: ['制作人', '技术总监'],
+      },
       skills: [],
       children: [
         {
@@ -125,6 +137,14 @@ describe('game organization tree', () => {
               label: '自定义 Skill',
               summary: '用户配置的 Skill。',
               prompt: '执行用户配置的 Skill。',
+              protocol: {
+                triggerConditions: '用户需要自定义处理。',
+                inputs: '需求描述。',
+                executionSteps: ['确认需求', '输出方案'],
+                toolsAndResources: '当前工作区。',
+                outputs: '处理方案。',
+                acceptanceCriteria: '方案可执行。',
+              },
             },
           ],
         },
@@ -135,11 +155,107 @@ describe('game organization tree', () => {
 
     expect(tree.label).toBe('自定义负责人');
     expect(tree.skills).toEqual([]);
+    expect(tree.profile.position).toBe('负责自定义组织配置。');
+    expect(tree.profile.responsibilities).toEqual(['维护岗位库', '维护 Skill 绑定']);
+    expect(tree.profile.scenarios).toEqual(['需要定制团队结构时']);
+    expect(tree.profile.deliverables).toEqual(['岗位配置方案']);
+    expect(tree.profile.collaborators).toEqual(['制作人', '技术总监']);
     expect(findGameOrgNode(tree, 'custom-role')?.skills[0]?.label).toBe(
       '自定义 Skill',
     );
     expect(findGameOrgNode(tree, 'custom-role')?.skills[0]?.commandText).toContain(
       '/游戏专家 执行用户配置的 Skill。',
     );
+    expect(findGameOrgNode(tree, 'custom-role')?.skills[0]?.commandText).toContain(
+      '触发条件：用户需要自定义处理。',
+    );
+  });
+
+  it('fills role profile defaults for legacy organization nodes', () => {
+    const definition: GameOrgNodeDefinition = {
+      id: 'legacy-role',
+      label: '旧岗位',
+      summary: '旧岗位摘要。',
+      role: '旧岗位职责。',
+      expertIds: ['technical-director'],
+      skills: [],
+    };
+
+    const tree = buildGameOrgTree(gameOrgSettings(), 'zh-CN', definition);
+
+    expect(tree.profile.position).toBe('旧岗位摘要。');
+    expect(tree.profile.responsibilities).toEqual(['旧岗位职责。']);
+    expect(tree.profile.scenarios[0]).toContain('旧岗位');
+    expect(tree.profile.deliverables[0]).toContain('方案');
+    expect(tree.profile.collaborators).toContain('技术总监');
+  });
+
+  it('collects role-skill bindings and reverse collaborator references', () => {
+    const tree = buildGameOrgTree(gameOrgSettings(), 'zh-CN');
+    const bindings = collectGameOrgSkillBindings(tree, 'technical-director');
+
+    expect(bindings.own.map((binding) => binding.skillId)).toContain(
+      'feature-development',
+    );
+    expect(
+      bindings.own.find((binding) => binding.skillId === 'feature-development')
+        ?.collaboratorLabels,
+    ).toEqual(expect.arrayContaining(['玩法程序', '技术美术']));
+    expect(bindings.incoming.length).toBeGreaterThan(0);
+    expect(bindings.incoming.map((binding) => binding.roleId)).toContain(
+      'producer',
+    );
+  });
+
+  it('recommends organization skills for natural-language game tasks', () => {
+    const tree = buildGameOrgTree(gameOrgSettings(), 'zh-CN');
+    const combatMatches = recommendGameOrgSkills(
+      tree,
+      '设计一个 2D 横版角色攻击系统',
+      { limit: 5 },
+    );
+    const perfMatches = recommendGameOrgSkills(tree, '排查移动端战斗场景卡顿和帧率问题', {
+      limit: 5,
+    });
+
+    expect(combatMatches.map((match) => match.skillId)).toEqual(
+      expect.arrayContaining(['design-mechanic']),
+    );
+    expect(combatMatches[0]?.score).toBeGreaterThan(0);
+    expect(perfMatches.map((match) => match.skillId)).toEqual(
+      expect.arrayContaining(['client-perf-pass', 'perf-profiling']),
+    );
+    expect(perfMatches[0]?.matchedTerms.length).toBeGreaterThan(0);
+  });
+
+  it('plans multi-role execution steps from a game task', () => {
+    const tree = buildGameOrgTree(gameOrgSettings(), 'zh-CN');
+    const plan = planGameOrgTask(tree, '设计一个 2D 横版角色攻击系统', {
+      limit: 4,
+      locale: 'zh-CN',
+    });
+
+    expect(plan.query).toBe('设计一个 2D 横版角色攻击系统');
+    expect(plan.steps.length).toBeGreaterThanOrEqual(2);
+    expect(plan.steps.length).toBeLessThanOrEqual(4);
+    expect(new Set(plan.steps.map((step) => step.roleId)).size).toBeGreaterThanOrEqual(
+      2,
+    );
+    expect(plan.steps.map((step) => step.skillId)).toEqual(
+      expect.arrayContaining(['design-mechanic']),
+    );
+    expect(plan.steps[0]?.reason).toContain('命中');
+    expect(plan.commandText).toContain('多岗位执行方案');
+    expect(plan.commandText).toContain('玩法策划 / 设计玩法机制');
+    expect(plan.commandText).toContain('验收标准');
+    expect(plan.documentText).toContain('# 多岗位任务拆解：设计一个 2D 横版角色攻击系统');
+    expect(plan.documentText).toContain('## 步骤');
+    expect(plan.documentText).toContain('- 推荐理由：');
+    expect(plan.documentText).toContain('- 产出物：');
+    expect(plan.documentText).toContain('- 验收标准：');
+    expect(plan.checklistText).toContain('# 执行待办清单：设计一个 2D 横版角色攻击系统');
+    expect(plan.checklistText).toContain('- [ ] 步骤');
+    expect(plan.checklistText).toContain('  - 产出物：');
+    expect(plan.checklistText).toContain('  - 验收：');
   });
 });

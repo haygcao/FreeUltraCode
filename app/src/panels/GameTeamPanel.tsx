@@ -66,6 +66,8 @@ import {
 import { cn } from '@/lib/cn';
 import {
   cloneGameOrgDefinition,
+  collectGameOrgSkillBindings,
+  createDefaultGameOrgSkillProtocol,
   GAME_ORG_NODE_ICONS,
   buildGameOrgTree,
   findGameOrgNode,
@@ -75,7 +77,10 @@ import {
   saveGameOrgDefinition,
   type GameOrgNodeDefinition,
   type GameOrgNodeIcon,
+  type GameOrgRoleProfile,
+  type GameOrgSkillBinding,
   type GameOrgSkillDefinition,
+  type GameOrgSkillProtocol,
   type ResolvedGameOrgNode,
   type ResolvedGameOrgSkill,
 } from '@/lib/gameOrg';
@@ -95,6 +100,13 @@ const GAME_TEAM_TEXT = {
     addChildRoleButton: '添加下级岗位',
     addChildRoleTitle: '添加下级岗位',
     addSkillTitle: '新增 Skill',
+    bindingChildren: '下级岗位',
+    bindingCollaborators: 'Skill 协作对象',
+    bindingEmpty: '暂无',
+    bindingIncoming: '被其它岗位调用',
+    bindingIncomingCount: '{count} 调用',
+    bindingOverview: '绑定关系',
+    bindingSkills: '岗位绑定 Skill',
     cancel: '取消',
     chartAria: '组织架构蓝图',
     childCountCollapsed: '已收起 {count}',
@@ -133,6 +145,28 @@ const GAME_TEAM_TEXT = {
     nodeSummaryPlaceholder: '这个岗位在团队中的职责摘要',
     peopleCount: '{count} 人',
     promptPlaceholder: '插入输入框时使用的完整提示词',
+    profileCollaborators: '协作对象',
+    profileCollaboratorsPlaceholder: '每行一个协作岗位或专家',
+    profileDeliverables: '主要产出',
+    profileDeliverablesPlaceholder: '每行一个交付物或检查结果',
+    profilePosition: '岗位定位',
+    profilePositionPlaceholder: '这个岗位在组织中的定位',
+    profileResponsibilities: '核心职责',
+    profileResponsibilitiesPlaceholder: '每行一条核心职责',
+    profileScenarios: '适用场景',
+    profileScenariosPlaceholder: '每行一个适用任务场景',
+    protocolAcceptance: '验收标准',
+    protocolAcceptancePlaceholder: '怎样判断这个 Skill 的结果合格',
+    protocolInputs: '输入',
+    protocolInputsPlaceholder: '需要用户需求、项目上下文、文件、素材或约束',
+    protocolOutputs: '输出',
+    protocolOutputsPlaceholder: '方案、代码变更、素材清单、测试结果或其它交付物',
+    protocolSteps: '执行步骤',
+    protocolStepsPlaceholder: '每行一个步骤',
+    protocolTools: '工具/资源',
+    protocolToolsPlaceholder: '当前工作区、引擎工具、文件系统、联网检索等',
+    protocolTrigger: '触发条件',
+    protocolTriggerPlaceholder: '什么情况应该调用这个 Skill',
     resetTemplateButton: '恢复默认组织模板',
     responsibilities: '职责',
     role: '职责',
@@ -154,6 +188,13 @@ const GAME_TEAM_TEXT = {
     addChildRoleButton: 'Add child role',
     addChildRoleTitle: 'Add Child Role',
     addSkillTitle: 'New Skill',
+    bindingChildren: 'Child Roles',
+    bindingCollaborators: 'Skill Collaborators',
+    bindingEmpty: 'None',
+    bindingIncoming: 'Referenced By Other Roles',
+    bindingIncomingCount: '{count} refs',
+    bindingOverview: 'Bindings',
+    bindingSkills: 'Bound Skills',
     cancel: 'Cancel',
     chartAria: 'Organization blueprint',
     childCountCollapsed: 'Hidden {count}',
@@ -192,6 +233,28 @@ const GAME_TEAM_TEXT = {
     nodeSummaryPlaceholder: 'Short summary of this role in the team',
     peopleCount: '{count} people',
     promptPlaceholder: 'Full prompt inserted into the composer',
+    profileCollaborators: 'Collaborators',
+    profileCollaboratorsPlaceholder: 'One collaborator role or expert per line',
+    profileDeliverables: 'Deliverables',
+    profileDeliverablesPlaceholder: 'One deliverable or check result per line',
+    profilePosition: 'Positioning',
+    profilePositionPlaceholder: 'Where this role sits in the organization',
+    profileResponsibilities: 'Core Responsibilities',
+    profileResponsibilitiesPlaceholder: 'One core responsibility per line',
+    profileScenarios: 'Use Cases',
+    profileScenariosPlaceholder: 'One task scenario per line',
+    protocolAcceptance: 'Acceptance Criteria',
+    protocolAcceptancePlaceholder: 'How to decide this Skill result is good enough',
+    protocolInputs: 'Inputs',
+    protocolInputsPlaceholder: 'User request, project context, files, assets, or constraints',
+    protocolOutputs: 'Outputs',
+    protocolOutputsPlaceholder: 'Plan, code changes, asset list, test result, or other deliverable',
+    protocolSteps: 'Execution Steps',
+    protocolStepsPlaceholder: 'One step per line',
+    protocolTools: 'Tools / Resources',
+    protocolToolsPlaceholder: 'Workspace, engine tools, filesystem, web research, etc.',
+    protocolTrigger: 'Trigger Conditions',
+    protocolTriggerPlaceholder: 'When this Skill should be invoked',
     resetTemplateButton: 'Restore default organization template',
     responsibilities: 'Responsibilities',
     role: 'Role',
@@ -433,12 +496,33 @@ function stringsFromCsv(value: string): string[] {
   return out;
 }
 
+function linesFromText(value: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of value.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function textFromLines(values: readonly string[] | undefined): string {
+  return (values ?? []).join('\n');
+}
+
 interface NodeDraft {
   id: string;
   label: string;
   icon: GameOrgNodeIcon;
   summary: string;
   role: string;
+  position: string;
+  responsibilities: string;
+  scenarios: string;
+  deliverables: string;
+  collaborators: string;
   expertIds: string;
 }
 
@@ -448,26 +532,99 @@ interface SkillDraft {
   summary: string;
   prompt: string;
   collaboratorExpertIds: string;
+  triggerConditions: string;
+  inputs: string;
+  executionSteps: string;
+  toolsAndResources: string;
+  outputs: string;
+  acceptanceCriteria: string;
 }
 
-function nodeDraftFromDefinition(definition: GameOrgNodeDefinition): NodeDraft {
+function completeRoleProfile(
+  definition: GameOrgNodeDefinition,
+  resolved: ResolvedGameOrgNode,
+): GameOrgRoleProfile {
+  const profile = definition.profile;
+  return {
+    position: profile?.position || resolved.profile.position,
+    responsibilities:
+      profile && profile.responsibilities.length > 0
+        ? profile.responsibilities
+        : resolved.profile.responsibilities,
+    scenarios:
+      profile && profile.scenarios.length > 0
+        ? profile.scenarios
+        : resolved.profile.scenarios,
+    deliverables:
+      profile && profile.deliverables.length > 0
+        ? profile.deliverables
+        : resolved.profile.deliverables,
+    collaborators:
+      profile && profile.collaborators.length > 0
+        ? profile.collaborators
+        : resolved.profile.collaborators,
+  };
+}
+
+function nodeDraftFromDefinition(
+  definition: GameOrgNodeDefinition,
+  resolved: ResolvedGameOrgNode,
+): NodeDraft {
+  const profile = completeRoleProfile(definition, resolved);
   return {
     id: definition.id,
     label: definition.label,
     icon: definition.icon ?? 'team',
     summary: definition.summary ?? '',
     role: definition.role ?? '',
+    position: profile.position,
+    responsibilities: textFromLines(profile.responsibilities),
+    scenarios: textFromLines(profile.scenarios),
+    deliverables: textFromLines(profile.deliverables),
+    collaborators: textFromLines(profile.collaborators),
     expertIds: csvFromStrings(definition.expertIds),
   };
 }
 
-function skillDraftFromDefinition(skill: GameOrgSkillDefinition): SkillDraft {
+function completeSkillProtocol(
+  skill: Pick<GameOrgSkillDefinition, 'label' | 'summary' | 'prompt'> & {
+    protocol?: GameOrgSkillProtocol;
+  },
+  locale: Locale,
+): GameOrgSkillProtocol {
+  const fallback = createDefaultGameOrgSkillProtocol(skill, locale);
+  const protocol = skill.protocol;
+  if (!protocol) return fallback;
+  return {
+    triggerConditions: protocol.triggerConditions || fallback.triggerConditions,
+    inputs: protocol.inputs || fallback.inputs,
+    executionSteps:
+      protocol.executionSteps.length > 0
+        ? protocol.executionSteps
+        : fallback.executionSteps,
+    toolsAndResources: protocol.toolsAndResources || fallback.toolsAndResources,
+    outputs: protocol.outputs || fallback.outputs,
+    acceptanceCriteria: protocol.acceptanceCriteria || fallback.acceptanceCriteria,
+  };
+}
+
+function skillDraftFromDefinition(
+  skill: GameOrgSkillDefinition,
+  locale: Locale,
+): SkillDraft {
+  const protocol = completeSkillProtocol(skill, locale);
   return {
     id: skill.id,
     label: skill.label,
     summary: skill.summary,
     prompt: skill.prompt,
     collaboratorExpertIds: csvFromStrings(skill.collaboratorExpertIds),
+    triggerConditions: protocol.triggerConditions,
+    inputs: protocol.inputs,
+    executionSteps: protocol.executionSteps.join('\n'),
+    toolsAndResources: protocol.toolsAndResources,
+    outputs: protocol.outputs,
+    acceptanceCriteria: protocol.acceptanceCriteria,
   };
 }
 
@@ -477,6 +634,10 @@ function skillDefinitionFromResolved(skill: ResolvedGameOrgSkill): GameOrgSkillD
     label: skill.label,
     summary: skill.summary,
     prompt: skill.prompt,
+    protocol: {
+      ...skill.protocol,
+      executionSteps: [...skill.protocol.executionSteps],
+    },
     collaboratorExpertIds: [...(skill.collaboratorExpertIds ?? [])],
   };
 }
@@ -567,6 +728,133 @@ function SkillButton({
         </div>
       )}
     </div>
+  );
+}
+
+function BindingChip({
+  children,
+  onClick,
+  title,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  title?: string;
+}) {
+  if (!onClick) {
+    return (
+      <span
+        title={title}
+        className="inline-flex max-w-full items-center rounded border border-border-soft bg-bg/30 px-1.5 py-1 text-[11px] leading-none text-fg-dim"
+      >
+        <span className="truncate">{children}</span>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className="inline-flex max-w-full items-center rounded border border-border-soft bg-bg/30 px-1.5 py-1 text-left text-[11px] leading-none text-fg-dim transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <span className="truncate">{children}</span>
+    </button>
+  );
+}
+
+function BindingList({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1 text-[10px] font-semibold text-fg-faint">{label}</div>
+      <div className="flex flex-wrap gap-1">{children}</div>
+    </div>
+  );
+}
+
+function RoleBindingOverview({
+  selectedNode,
+  ownBindings,
+  incomingBindings,
+  onSelectNode,
+  locale,
+}: {
+  selectedNode: ResolvedGameOrgNode;
+  ownBindings: readonly GameOrgSkillBinding[];
+  incomingBindings: readonly GameOrgSkillBinding[];
+  onSelectNode: (id: string) => void;
+  locale: Locale;
+}) {
+  const collaboratorLabels = Array.from(
+    new Set(ownBindings.flatMap((binding) => binding.collaboratorLabels)),
+  );
+
+  return (
+    <section>
+      <h4 className="mb-1.5 text-[11px] font-semibold text-fg-faint">
+        {gameTeamText(locale, 'bindingOverview')}
+      </h4>
+      <div className="space-y-2 rounded-md border border-border-soft bg-bg/20 p-2">
+        <BindingList label={gameTeamText(locale, 'bindingSkills')}>
+          {ownBindings.length > 0 ? (
+            ownBindings.map((binding) => (
+              <BindingChip
+                key={`${binding.roleId}:${binding.skillId}`}
+                title={`${binding.roleLabel} / ${binding.skillId}`}
+              >
+                {binding.skillLabel}
+              </BindingChip>
+            ))
+          ) : (
+            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+          )}
+        </BindingList>
+        <BindingList label={gameTeamText(locale, 'bindingCollaborators')}>
+          {collaboratorLabels.length > 0 ? (
+            collaboratorLabels.map((label) => (
+              <BindingChip key={label}>{label}</BindingChip>
+            ))
+          ) : (
+            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+          )}
+        </BindingList>
+        <BindingList label={gameTeamText(locale, 'bindingIncoming')}>
+          {incomingBindings.length > 0 ? (
+            incomingBindings.map((binding) => (
+              <BindingChip
+                key={`${binding.roleId}:${binding.skillId}`}
+                onClick={() => onSelectNode(binding.roleId)}
+                title={`${binding.roleLabel} / ${binding.skillId}`}
+              >
+                {binding.roleLabel} / {binding.skillLabel}
+              </BindingChip>
+            ))
+          ) : (
+            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+          )}
+        </BindingList>
+        <BindingList label={gameTeamText(locale, 'bindingChildren')}>
+          {selectedNode.children.length > 0 ? (
+            selectedNode.children.map((child) => (
+              <BindingChip
+                key={child.id}
+                onClick={() => onSelectNode(child.id)}
+                title={child.path.join(' / ')}
+              >
+                {child.label}
+              </BindingChip>
+            ))
+          ) : (
+            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+          )}
+        </BindingList>
+      </div>
+    </section>
   );
 }
 
@@ -673,6 +961,52 @@ function NodeEditor({
             placeholder={gameTeamText(locale, 'nodeRolePlaceholder')}
           />
         </Field>
+        <Field label={gameTeamText(locale, 'profilePosition')}>
+          <textarea
+            value={draft.position}
+            onChange={(event) => onChange({ position: event.target.value })}
+            className={textareaClassName}
+            placeholder={gameTeamText(locale, 'profilePositionPlaceholder')}
+          />
+        </Field>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Field label={gameTeamText(locale, 'profileResponsibilities')}>
+            <textarea
+              value={draft.responsibilities}
+              onChange={(event) =>
+                onChange({ responsibilities: event.target.value })
+              }
+              className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
+              placeholder={gameTeamText(locale, 'profileResponsibilitiesPlaceholder')}
+            />
+          </Field>
+          <Field label={gameTeamText(locale, 'profileScenarios')}>
+            <textarea
+              value={draft.scenarios}
+              onChange={(event) => onChange({ scenarios: event.target.value })}
+              className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
+              placeholder={gameTeamText(locale, 'profileScenariosPlaceholder')}
+            />
+          </Field>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Field label={gameTeamText(locale, 'profileDeliverables')}>
+            <textarea
+              value={draft.deliverables}
+              onChange={(event) => onChange({ deliverables: event.target.value })}
+              className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
+              placeholder={gameTeamText(locale, 'profileDeliverablesPlaceholder')}
+            />
+          </Field>
+          <Field label={gameTeamText(locale, 'profileCollaborators')}>
+            <textarea
+              value={draft.collaborators}
+              onChange={(event) => onChange({ collaborators: event.target.value })}
+              className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
+              placeholder={gameTeamText(locale, 'profileCollaboratorsPlaceholder')}
+            />
+          </Field>
+        </div>
         <Field label={gameTeamText(locale, 'expertIds')}>
           <input
             value={draft.expertIds}
@@ -770,6 +1104,64 @@ function SkillEditor({
             placeholder={gameTeamText(locale, 'promptPlaceholder')}
           />
         </Field>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Field label={gameTeamText(locale, 'protocolTrigger')}>
+            <textarea
+              value={draft.triggerConditions}
+              onChange={(event) =>
+                onChange({ triggerConditions: event.target.value })
+              }
+              className={textareaClassName}
+              placeholder={gameTeamText(locale, 'protocolTriggerPlaceholder')}
+            />
+          </Field>
+          <Field label={gameTeamText(locale, 'protocolInputs')}>
+            <textarea
+              value={draft.inputs}
+              onChange={(event) => onChange({ inputs: event.target.value })}
+              className={textareaClassName}
+              placeholder={gameTeamText(locale, 'protocolInputsPlaceholder')}
+            />
+          </Field>
+        </div>
+        <Field label={gameTeamText(locale, 'protocolSteps')}>
+          <textarea
+            value={draft.executionSteps}
+            onChange={(event) => onChange({ executionSteps: event.target.value })}
+            className="min-h-[92px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
+            placeholder={gameTeamText(locale, 'protocolStepsPlaceholder')}
+          />
+        </Field>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Field label={gameTeamText(locale, 'protocolTools')}>
+            <textarea
+              value={draft.toolsAndResources}
+              onChange={(event) =>
+                onChange({ toolsAndResources: event.target.value })
+              }
+              className={textareaClassName}
+              placeholder={gameTeamText(locale, 'protocolToolsPlaceholder')}
+            />
+          </Field>
+          <Field label={gameTeamText(locale, 'protocolOutputs')}>
+            <textarea
+              value={draft.outputs}
+              onChange={(event) => onChange({ outputs: event.target.value })}
+              className={textareaClassName}
+              placeholder={gameTeamText(locale, 'protocolOutputsPlaceholder')}
+            />
+          </Field>
+        </div>
+        <Field label={gameTeamText(locale, 'protocolAcceptance')}>
+          <textarea
+            value={draft.acceptanceCriteria}
+            onChange={(event) =>
+              onChange({ acceptanceCriteria: event.target.value })
+            }
+            className={textareaClassName}
+            placeholder={gameTeamText(locale, 'protocolAcceptancePlaceholder')}
+          />
+        </Field>
         <Field label={gameTeamText(locale, 'collaboratorIds')}>
           <input
             value={draft.collaboratorExpertIds}
@@ -813,6 +1205,7 @@ interface OrgFlowNodeData extends Record<string, unknown> {
   node: ResolvedGameOrgNode;
   level: number;
   collapsed: boolean;
+  incomingBindingCount: number;
   locale: Locale;
   onSelect: (id: string) => void;
   onToggleCollapse: (id: string) => void;
@@ -909,12 +1302,23 @@ function orgNodeContains(node: ResolvedGameOrgNode, targetId: string): boolean {
   return Boolean(findGameOrgNode(node, targetId));
 }
 
+function roleProfileSearchParts(node: ResolvedGameOrgNode): string[] {
+  return [
+    node.profile.position,
+    ...node.profile.responsibilities,
+    ...node.profile.scenarios,
+    ...node.profile.deliverables,
+    ...node.profile.collaborators,
+  ];
+}
+
 function orgSearchText(node: ResolvedGameOrgNode): string {
   return [
     node.label,
     node.id,
     node.summary,
     node.role,
+    ...roleProfileSearchParts(node),
     node.path.join(' '),
     ...node.experts.flatMap((expert) => [
       expert.id,
@@ -952,6 +1356,7 @@ function orgSearchScore(node: ResolvedGameOrgNode, query: string): number {
   const bodyText = [
     node.summary,
     node.role,
+    ...roleProfileSearchParts(node),
     ...node.groupLabels,
     ...node.experts.flatMap((expert) => [expert.summary, expert.role]),
     ...node.skills.map((skill) => skill.summary),
@@ -989,6 +1394,12 @@ function buildOrgFlow({
   locale: Locale;
 }): { nodes: OrgFlowNode[]; edges: OrgFlowEdge[] } {
   const layout = measureOrgLayout(tree, collapsedNodeIds);
+  const incomingBindingCountByNodeId = new Map(
+    flattenGameOrgNodes(tree).map((node) => [
+      node.id,
+      collectGameOrgSkillBindings(tree, node.id).incoming.length,
+    ]),
+  );
   const nodes: OrgFlowNode[] = [];
   const edges: OrgFlowEdge[] = [];
 
@@ -1007,6 +1418,7 @@ function buildOrgFlow({
         node: item.node,
         level: item.level,
         collapsed: item.hiddenChildCount > 0,
+        incomingBindingCount: incomingBindingCountByNodeId.get(item.node.id) ?? 0,
         locale,
         onSelect,
         onToggleCollapse,
@@ -1050,8 +1462,16 @@ function buildOrgFlow({
 }
 
 function OrgFlowNodeCard({ data, selected }: NodeProps) {
-  const { node, level, collapsed, locale, onSelect, onToggleCollapse, onOpenDetails } =
-    data as OrgFlowNodeData;
+  const {
+    node,
+    level,
+    collapsed,
+    incomingBindingCount,
+    locale,
+    onSelect,
+    onToggleCollapse,
+    onOpenDetails,
+  } = data as OrgFlowNodeData;
   const childCount = node.children.length;
   const activate = () => {
     onSelect(node.id);
@@ -1132,6 +1552,13 @@ function OrgFlowNodeCard({ data, selected }: NodeProps) {
           {node.skills.length > 0 && (
             <span className="rounded border border-border-soft bg-bg/50 px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-faint">
               {node.skills.length} Skill
+            </span>
+          )}
+          {incomingBindingCount > 0 && (
+            <span className="rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] leading-none text-accent">
+              {gameTeamText(locale, 'bindingIncomingCount', {
+                count: incomingBindingCount,
+              })}
             </span>
           )}
           {childCount > 0 && (
@@ -1626,6 +2053,10 @@ export default function GameTeamPanel({
   const selectedDefinition = findNodeDefinition(definition, selectedNode.id) ?? definition;
   const selectedParentDefinition = findParentNodeDefinition(definition, selectedNode.id);
   const selectedIsRoot = selectedNode.id === definition.id;
+  const roleSkillBindings = useMemo(
+    () => collectGameOrgSkillBindings(tree, selectedNode.id),
+    [selectedNode.id, tree],
+  );
   const [nodeEditor, setNodeEditor] = useState<{
     mode: 'edit' | 'add';
     parentId?: string;
@@ -1669,6 +2100,12 @@ export default function GameTeamPanel({
     writeSelectedNodeId(id);
   };
 
+  const selectNodeFromBinding = (id: string) => {
+    setNodeEditor(null);
+    setSkillEditor(null);
+    selectNode(id);
+  };
+
   const selectOrgNode = (id: string) => {
     selectNode(id);
   };
@@ -1695,7 +2132,7 @@ export default function GameTeamPanel({
     setNodeEditor({
       mode: 'edit',
       originalId: selectedDefinition.id,
-      draft: nodeDraftFromDefinition(selectedDefinition),
+      draft: nodeDraftFromDefinition(selectedDefinition, selectedNode),
     });
   };
 
@@ -1712,6 +2149,11 @@ export default function GameTeamPanel({
         icon: 'team',
         summary: '',
         role: '',
+        position: '',
+        responsibilities: '',
+        scenarios: '',
+        deliverables: '',
+        collaborators: '',
         expertIds: '',
       },
     });
@@ -1728,6 +2170,13 @@ export default function GameTeamPanel({
       icon: nodeEditor.draft.icon,
       summary: nodeEditor.draft.summary.trim() || undefined,
       role: nodeEditor.draft.role.trim() || undefined,
+      profile: {
+        position: nodeEditor.draft.position.trim(),
+        responsibilities: linesFromText(nodeEditor.draft.responsibilities),
+        scenarios: linesFromText(nodeEditor.draft.scenarios),
+        deliverables: linesFromText(nodeEditor.draft.deliverables),
+        collaborators: linesFromText(nodeEditor.draft.collaborators),
+      },
       expertIds: stringsFromCsv(nodeEditor.draft.expertIds),
     };
 
@@ -1775,15 +2224,30 @@ export default function GameTeamPanel({
   const startAddSkill = () => {
     const existing = new Set(selectedNode.skills.map((skill) => skill.id));
     const base = uniqueId(existing, `${selectedNode.id}:skill`);
+    const label = gameTeamText(locale, 'newSkill');
+    const protocol = createDefaultGameOrgSkillProtocol(
+      {
+        label,
+        summary: '',
+        prompt: '',
+      },
+      locale,
+    );
     setNodeEditor(null);
     setSkillEditor({
       mode: 'add',
       draft: {
         id: base,
-        label: gameTeamText(locale, 'newSkill'),
+        label,
         summary: '',
         prompt: '',
         collaboratorExpertIds: csvFromStrings(selectedNode.expertIds),
+        triggerConditions: protocol.triggerConditions,
+        inputs: protocol.inputs,
+        executionSteps: protocol.executionSteps.join('\n'),
+        toolsAndResources: protocol.toolsAndResources,
+        outputs: protocol.outputs,
+        acceptanceCriteria: protocol.acceptanceCriteria,
       },
     });
   };
@@ -1793,7 +2257,7 @@ export default function GameTeamPanel({
     setSkillEditor({
       mode: 'edit',
       originalId: skill.id,
-      draft: skillDraftFromDefinition(skillDefinitionFromResolved(skill)),
+      draft: skillDraftFromDefinition(skillDefinitionFromResolved(skill), locale),
     });
   };
 
@@ -1811,6 +2275,14 @@ export default function GameTeamPanel({
         gameTeamText(locale, 'saveFallbackPrompt', {
           label: skillEditor.draft.label.trim() || nextId,
         }),
+      protocol: {
+        triggerConditions: skillEditor.draft.triggerConditions.trim(),
+        inputs: skillEditor.draft.inputs.trim(),
+        executionSteps: linesFromText(skillEditor.draft.executionSteps),
+        toolsAndResources: skillEditor.draft.toolsAndResources.trim(),
+        outputs: skillEditor.draft.outputs.trim(),
+        acceptanceCriteria: skillEditor.draft.acceptanceCriteria.trim(),
+      },
       collaboratorExpertIds: stringsFromCsv(skillEditor.draft.collaboratorExpertIds),
     };
     const next = updateNodeDefinition(definition, selectedNode.id, (node) => {
@@ -1938,6 +2410,14 @@ export default function GameTeamPanel({
               />
             )}
 
+            <RoleBindingOverview
+              selectedNode={selectedNode}
+              ownBindings={roleSkillBindings.own}
+              incomingBindings={roleSkillBindings.incoming}
+              onSelectNode={selectNodeFromBinding}
+              locale={locale}
+            />
+
             <section>
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <h4 className="text-[11px] font-semibold text-fg-faint">
@@ -1949,8 +2429,20 @@ export default function GameTeamPanel({
                   </span>
                 )}
               </div>
-              <p className="rounded-md border border-border-soft bg-bg/30 px-2.5 py-2 text-xs leading-relaxed text-fg-dim">
-                {selectedNode.role}
+              <p className="rounded-md border border-border-soft bg-bg/20 p-2 text-xs leading-relaxed text-fg-dim">
+                {[
+                  selectedNode.profile.position,
+                  selectedNode.profile.responsibilities.length > 0 &&
+                    `${gameTeamText(locale, 'profileResponsibilities')}：${selectedNode.profile.responsibilities.join('；')}`,
+                  selectedNode.profile.scenarios.length > 0 &&
+                    `${gameTeamText(locale, 'profileScenarios')}：${selectedNode.profile.scenarios.join('；')}`,
+                  selectedNode.profile.deliverables.length > 0 &&
+                    `${gameTeamText(locale, 'profileDeliverables')}：${selectedNode.profile.deliverables.join('；')}`,
+                  selectedNode.profile.collaborators.length > 0 &&
+                    `${gameTeamText(locale, 'profileCollaborators')}：${selectedNode.profile.collaborators.join('、')}`,
+                ]
+                  .filter((part): part is string => Boolean(part))
+                  .join(' · ')}
               </p>
             </section>
 

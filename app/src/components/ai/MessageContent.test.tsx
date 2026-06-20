@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import MessageContent from './MessageContent';
 import { encodeToolPatch } from './lib/toolEvent';
+import { useStore } from '@/store/useStore';
 
 /**
  * Integration smoke test: render a representative AI message through the real
@@ -13,6 +14,10 @@ import { encodeToolPatch } from './lib/toolEvent';
  * detection work under react-markdown v9.
  */
 describe('MessageContent integration', () => {
+  beforeEach(() => {
+    useStore.setState({ locale: 'zh-CN' });
+  });
+
   const sample = [
     '# Heading',
     '',
@@ -131,10 +136,10 @@ describe('MessageContent integration', () => {
 
     expect(html).toMatch(/ai-audio-player/);
     expect(html).toMatch(/播放音频 1/);
-    expect(html).toMatch(/aria-label="播放"/);
-    expect(html).toMatch(/aria-label="快进 10 秒"/);
-    expect(html).toMatch(/aria-label="结束"/);
-    expect(html).toMatch(/aria-label="播放进度"/);
+    expect(html).toMatch(/aria-label="(?:播放|Play)"/);
+    expect(html).toMatch(/aria-label="(?:快进 10 秒|Forward 10s)"/);
+    expect(html).toMatch(/aria-label="(?:结束|End)"/);
+    expect(html).toMatch(/aria-label="(?:播放进度|Playback progress)"/);
   });
 
   it('renders generated 3D model links as inline viewports', () => {

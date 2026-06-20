@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   defaultPersonalInstructionsByModel,
   ensureRequiredPersonalInstructions,
+  personalInstructionsCanonicalSelection,
   personalInstructionsKey,
   personalInstructionsSample,
   selectionFromPersonalInstructionsKey,
@@ -19,7 +20,7 @@ describe('personal instructions model buckets', () => {
     };
 
     expect(selectionFromPersonalInstructionsKey(personalInstructionsKey(selection))).toEqual(
-      selection,
+      personalInstructionsCanonicalSelection(selection.adapter),
     );
   });
 

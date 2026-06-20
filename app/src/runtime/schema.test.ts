@@ -225,7 +225,7 @@ describe('runAgentWithInteraction + schema enforcement', () => {
     expect(seenPrompt).toContain('- 默认使用中文');
   });
 
-  it('skips app personal instructions for the Codex adapter', async () => {
+  it('injects app personal instructions for the Codex adapter', async () => {
     let seenPrompt = '';
     const gw = fakeGateway(async (prompt) => {
       seenPrompt = prompt;
@@ -246,8 +246,8 @@ describe('runAgentWithInteraction + schema enforcement', () => {
       cli: {},
     });
 
-    expect(seenPrompt).not.toContain('【用户个人默认指令（低优先级）】');
-    expect(seenPrompt).not.toContain('- 默认使用中文');
+    expect(seenPrompt).toContain('【用户个人默认指令（低优先级）】');
+    expect(seenPrompt).toContain('- 默认使用中文');
   });
 
   it('selects personal instructions by the executed model selection', async () => {

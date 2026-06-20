@@ -411,16 +411,17 @@ describe('AIDock slash suggestions', () => {
     try {
       const input = textarea(view.container);
 
-      // The `/` menu surfaces the CLI catalog; GameSkills no longer appear there.
+      // The `/` menu is the global surface: CLI catalog plus app GameSkills.
       await act(async () => {
         typeTextarea(input, '/');
       });
       const slashMenu = view.container.querySelector('#fuc-slash-suggestions');
       const slashText = slashMenu?.textContent ?? '';
       expect(slashText).toContain('/codex-13');
-      expect(slashText).not.toContain('/image-mode-start');
+      expect(slashText).toContain('/image-mode-start');
 
-      // The `#` menu surfaces the GameSkills regardless of the adapter catalog.
+      // The `#` menu remains a narrower GameSkill-only fast path regardless of
+      // the adapter catalog.
       await act(async () => {
         typeTextarea(input, '#image-mode');
       });
@@ -430,6 +431,32 @@ describe('AIDock slash suggestions', () => {
       expect(gameMenu?.textContent ?? '').toContain('/image-mode-start');
     } finally {
       slashCatalogMock.entries = originalEntries;
+      await view.cleanup();
+    }
+  });
+
+  it('also exposes game skills from the slash menu', async () => {
+    resetStore();
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, '/image-mode');
+      });
+
+      const imageModeStart = Array.from(
+        view.container.querySelectorAll('[role="option"]'),
+      ).find((option) => option.textContent?.includes('/image-mode-start'));
+      expect(imageModeStart).toBeInstanceOf(HTMLElement);
+
+      await act(async () => {
+        imageModeStart?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      expect(input.value).toBe('/image-mode-start ');
+    } finally {
       await view.cleanup();
     }
   });
@@ -1339,6 +1366,42 @@ describe('AIDock slash suggestions', () => {
         window.localStorage.getItem('freeultracode.imageGeneration.v1') ?? '{}',
       );
       expect(saved.preferredProviderId).toBe('volcengine-seedream');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows manually added image provider models in the image-mode model selector', async () => {
+    resetStore();
+    saveImageGenerationSettings({
+      ...DEFAULT_IMAGE_GENERATION_SETTINGS,
+      preferredProviderId: 'cloudflare',
+      providerKeys: { cloudflare: 'cfut-test' },
+      providerAccountIds: { cloudflare: 'account-id' },
+      providerModels: {
+        cloudflare: '@cf/black-forest-labs/flux-1-schnell',
+      },
+      providerModelLists: {
+        cloudflare: ['@cf/black-forest-labs/flux-1-schnell'],
+      },
+    });
+    useStore.setState({ composer: { ...defaultComposer, imageMode: true } });
+    const view = await renderDock();
+
+    try {
+      const modelTrigger = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button[title]'),
+      ).find((btn) => btn.getAttribute('title') === '生图模型');
+      expect(modelTrigger).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        modelTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const menuText =
+        modelTrigger?.parentElement?.querySelector('[role="listbox"]')
+          ?.textContent ?? '';
+      expect(menuText).toContain('@cf/black-forest-labs/flux-1-schnell');
     } finally {
       await view.cleanup();
     }

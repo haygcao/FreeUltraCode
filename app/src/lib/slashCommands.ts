@@ -104,12 +104,9 @@ const GENERIC_PROMPT_SHORTCUTS: GameSkillCommand[] = [
 // the single source of truth for every FreeUltraCode-introduced command and its
 // standard six-part protocol; this array is a pure projection over it.
 //
-// CONTRACT: GameSkills are surfaced through the `#游戏Skill` trigger (the `#`
-// menu in AIDock), NOT the generic `/` menu. The `/` menu is reserved for the
-// backend slash catalog (CLI/user skills), the generic prompt shortcuts below,
-// and the game-expert hierarchy. Keeping the two channels separate lets the `#`
-// menu present a clean, app-curated GameSkill catalog while `/` stays aligned
-// with the underlying CLI command surface.
+// CONTRACT: GameSkills are surfaced through both the generic `/` menu and the
+// faster `#游戏Skill` trigger. `/` is the global command surface; `#` is the
+// narrow app-curated GameSkill surface for faster discovery.
 export const GAME_SKILL_COMMANDS: GameSkillCommand[] = GAME_SKILLS.map((skill) =>
   skill.toCommand(),
 );
@@ -135,11 +132,13 @@ function toStaticSlashEntry(command: GameSkillCommand): StaticSlashEntry {
   };
 }
 
-// STATIC_SLASH_ENTRIES backs the `/` menu fallback / fold-in. Only the generic
-// prompt shortcuts live here now — GameSkills moved to GAME_SKILL_STATIC_ENTRIES
-// so they no longer appear under `/`.
-export const STATIC_SLASH_ENTRIES: StaticSlashEntry[] =
-  GENERIC_PROMPT_SHORTCUTS.map(toStaticSlashEntry);
+// STATIC_SLASH_ENTRIES backs the `/` menu fallback / fold-in. It includes the
+// app-defined GameSkills plus generic prompt shortcuts so `/` remains the full
+// global command surface even when the backend catalog is missing app entries.
+export const STATIC_SLASH_ENTRIES: StaticSlashEntry[] = [
+  ...GAME_SKILL_COMMANDS.map(toStaticSlashEntry),
+  ...GENERIC_PROMPT_SHORTCUTS.map(toStaticSlashEntry),
+];
 
 // GAME_SKILL_STATIC_ENTRIES backs the `#游戏Skill` menu and the read-only
 // Commands lists in Settings / Project Settings.
@@ -268,12 +267,11 @@ export function slashEntrySourceAdapter(
   );
 }
 
-// App-implemented commands live only in STATIC_SLASH_ENTRIES. The Tauri backend
-// slash catalog is authoritative for CLI/skill commands but does not enumerate
-// these app features, so when it returns a catalog we must still fold in any
-// app-only static entry it lacks — otherwise these commands silently vanish
-// from the `/` suggestion menu in the desktop build. Note GameSkills are NOT
-// folded here anymore: they live behind the `#游戏Skill` trigger.
+// App-implemented commands live in STATIC_SLASH_ENTRIES. The Tauri backend slash
+// catalog is authoritative for CLI/skill commands but does not enumerate these
+// app features, so when it returns a catalog we must still fold in any app-only
+// static entry it lacks — otherwise these commands silently vanish from the `/`
+// suggestion menu in the desktop build.
 export function withAppOnlyStaticEntries(
   catalogEntries: SlashCatalogEntry[],
 ): (SlashCatalogEntry | StaticSlashEntry)[] {

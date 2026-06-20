@@ -509,6 +509,13 @@ export interface RemoteModelListResult {
   url: string;
 }
 
+export interface CloudflareImageRequest {
+  accountId: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
+}
+
 const REMOTE_MODEL_FETCH_TIMEOUT_MS = 6000;
 
 /** Disposer returned by the event listeners. */
@@ -952,6 +959,7 @@ function extractRemoteModelIds(value: unknown): string[] {
   const record = value as Record<string, unknown>;
   if (Array.isArray(record.data)) record.data.forEach(visitModel);
   if (Array.isArray(record.models)) record.models.forEach(visitModel);
+  if (Array.isArray(record.result)) record.result.forEach(visitModel);
   visitModel(record);
   return out;
 }
@@ -1004,6 +1012,22 @@ export async function listRemoteModels(
     urls: request.urls,
     apiKey: request.apiKey ?? '',
     transport: request.transport,
+  });
+}
+
+/** Generate a Cloudflare Workers AI image through the desktop backend to avoid WebView CORS. */
+export async function generateCloudflareImage(
+  request: CloudflareImageRequest,
+): Promise<string> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<string>('generate_cloudflare_image', {
+    accountId: request.accountId,
+    apiKey: request.apiKey,
+    model: request.model,
+    prompt: request.prompt,
   });
 }
 

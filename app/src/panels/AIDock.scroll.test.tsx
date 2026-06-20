@@ -198,6 +198,37 @@ describe('AIDock stream scroll state', () => {
     }
   });
 
+  it('moves the new-session composer to the bottom while the organization chart is open', async () => {
+    resetChatSession('s_org_empty', []);
+    const view = await renderChatDock();
+
+    try {
+      const inputSection = view.container.querySelector(
+        '[aria-label^="AI 输入"]',
+      );
+      expect(inputSection).toBeInstanceOf(HTMLElement);
+      expect(inputSection?.className).toContain('max-w-6xl');
+
+      const trigger = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>(
+          'button[data-org-panel-trigger]',
+        ),
+      ).find((button) => button.textContent?.includes('组织架构'));
+      expect(trigger).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        trigger?.click();
+      });
+
+      const panel = view.container.querySelector('.fuc-ai-input--blueprint');
+      expect(panel).toBeInstanceOf(HTMLElement);
+      expect((panel as HTMLElement).style.bottom).toBe('312px');
+      expect(inputSection?.className).not.toContain('max-w-6xl');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it('opens the inline organization tree menu when typing $ (not the popup)', async () => {
     resetChatSession('s_org_dollar', chatMessages('org'));
     const view = await renderChatDock();
@@ -222,6 +253,43 @@ describe('AIDock stream scroll state', () => {
       expect(menu?.textContent).toContain('制作人');
       // The `$` token stays in the draft as the active trigger.
       expect(input.value).toBe('$');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('also exposes organization roles through the slash menu', async () => {
+    resetChatSession('s_org_slash', chatMessages('org'));
+    const view = await renderChatDock();
+
+    try {
+      const input = composerTextarea(view.container);
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set;
+
+      await act(async () => {
+        if (setter) setter.call(input, '/技术总监');
+        else input.value = '/技术总监';
+        input.setSelectionRange('/技术总监'.length, '/技术总监'.length);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+
+      const menu = view.container.querySelector('#fuc-slash-suggestions');
+      expect(menu).toBeInstanceOf(HTMLElement);
+      expect(menu?.textContent).toContain('技术总监');
+
+      const option = Array.from(
+        view.container.querySelectorAll('[role="option"]'),
+      ).find((item) => item.textContent?.includes('技术总监'));
+      expect(option).toBeInstanceOf(HTMLElement);
+
+      await act(async () => {
+        option?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      expect(input.value).toContain('/technical-director ');
     } finally {
       await view.cleanup();
     }

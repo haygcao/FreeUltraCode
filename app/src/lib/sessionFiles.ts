@@ -250,7 +250,7 @@ function pathsFromPatchText(text: string): string[] {
     }
 
     const labelled = line.match(
-      /^\s*(?:added|created|deleted|modified|updated|renamed|wrote)(?: file)?\s*[:\-]\s+(.+?)\s*$/i,
+      /^\s*(?:added|created|deleted|modified|updated|renamed|wrote)(?: file)?\s*[:-]\s+(.+?)\s*$/i,
     );
     if (labelled?.[1]) {
       const path = cleanPatchPath(labelled[1]);

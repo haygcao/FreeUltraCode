@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import MessageContent from './MessageContent';
+import { useStore } from '@/store/useStore';
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock('mermaid', () => ({
 
 describe('MermaidBlock', () => {
   beforeEach(() => {
+    useStore.setState({ locale: 'zh-CN' });
     mermaidMocks.initialize.mockClear();
     mermaidMocks.render.mockReset();
   });

@@ -322,4 +322,57 @@ describe('AIDock file mentions', () => {
       await view.cleanup();
     }
   });
+
+  it('does not treat Cloudflare model ids as local file mentions', async () => {
+    resetStore();
+    tauriMocks.listWorkspaceDirectory.mockImplementation(
+      async (rootPath: string, relativePath = '') => {
+        if (relativePath === 'cf') {
+          throw new Error(
+            '读取目录失败：系统找不到指定的路径。 (os error 3)',
+          );
+        }
+        return {
+          rootPath,
+          relativePath,
+          truncated: false,
+          totalEntries: 1,
+          entries: [
+            {
+              name: 'app',
+              path: 'E:\\OpenWorkflows\\app',
+              relativePath: 'app',
+              kind: 'directory' as const,
+              hidden: false,
+            },
+          ],
+        };
+      },
+    );
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, '@cf/black-forest-labs/flux-1-schnell');
+        await flushAsync();
+      });
+
+      await waitForExpect(() => {
+        expect(tauriMocks.listWorkspaceDirectory).toHaveBeenCalledTimes(1);
+      });
+      expect(tauriMocks.listWorkspaceDirectory).toHaveBeenCalledWith(
+        'E:\\OpenWorkflows',
+        '',
+      );
+      expect(tauriMocks.listWorkspaceDirectory).not.toHaveBeenCalledWith(
+        'E:\\OpenWorkflows',
+        'cf',
+      );
+      expect(view.container.textContent).not.toContain('读取目录失败');
+    } finally {
+      await view.cleanup();
+    }
+  });
 });

@@ -173,9 +173,7 @@ export function defaultPersonalInstructionsByModel(
   return out;
 }
 
-export function shouldInjectPersonalInstructions(
-  _adapter: string | null | undefined,
-): boolean {
+export function shouldInjectPersonalInstructions(): boolean {
   // All three adapters (Claude Code / Codex / Gemini) now receive the
   // user's personal defaults. Codex is no longer skipped.
   return true;
@@ -185,7 +183,8 @@ export function personalInstructionsBlock(
   instructions: string | null | undefined,
   adapter?: string | null,
 ): string {
-  if (!shouldInjectPersonalInstructions(adapter)) return '';
+  void adapter;
+  if (!shouldInjectPersonalInstructions()) return '';
   const trimmed = instructions?.trim();
   if (!trimmed) return '';
   return [

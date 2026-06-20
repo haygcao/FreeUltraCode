@@ -77,14 +77,15 @@ describe('withAppOnlyStaticEntries', () => {
     // Generic prompt shortcuts are folded back into the `/` menu.
     expect(names).toContain('/plan');
     expect(names).toContain('/review');
-    // GameSkills now live behind the `#游戏Skill` trigger, NOT the `/` menu.
-    expect(names).not.toContain('/image-mode-start');
-    expect(names).not.toContain('/image-to-game');
-    expect(names).not.toContain('/video-to-frames');
-    expect(names).not.toContain('/sprite-mode-start');
-    expect(names).not.toContain('/blueprint-mode-start');
-    expect(names).not.toContain('/metahuman-mode-start');
-    expect(names).not.toContain('/screenshot');
+    // GameSkills also fold into the global `/` menu; `#游戏Skill` is a faster
+    // narrower surface, not the only surface.
+    expect(names).toContain('/image-mode-start');
+    expect(names).toContain('/image-to-game');
+    expect(names).toContain('/video-to-frames');
+    expect(names).toContain('/sprite-mode-start');
+    expect(names).toContain('/blueprint-mode-start');
+    expect(names).toContain('/metahuman-mode-start');
+    expect(names).toContain('/screenshot');
   });
 
   it('does not duplicate an entry already present in the catalog', () => {

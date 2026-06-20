@@ -2,6 +2,7 @@ import {
   readSettingsRaw,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
+import { generateCloudflareImage, tauriAvailable } from '@/lib/tauri';
 
 export type BuiltInImageProviderId =
   | 'agnes-image'
@@ -1117,6 +1118,16 @@ async function generateCloudflare(
   const accountId = settings.providerAccountIds.cloudflare?.trim();
   const apiKey = settings.providerKeys.cloudflare?.trim();
   if (!accountId || !apiKey) throw new Error('Cloudflare Account ID or API token is missing.');
+  if (tauriAvailable()) {
+    return [
+      await generateCloudflareImage({
+        accountId,
+        apiKey,
+        model,
+        prompt,
+      }),
+    ];
+  }
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(
       accountId,
