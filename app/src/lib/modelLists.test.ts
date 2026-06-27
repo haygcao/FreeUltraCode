@@ -201,4 +201,29 @@ describe('editable model options (add / delete incl. built-ins)', () => {
     expect(result.models).toContain('fetched-1');
     expect(result.models).toContain('manual-keep');
   });
+
+  it('refreshEndpointModels can use provider-specific model list URLs', async () => {
+    tauriMocks.listRemoteModels.mockResolvedValueOnce({
+      models: ['@cf/black-forest-labs/flux-1-schnell'],
+      url: 'https://api.cloudflare.com/client/v4/accounts/account-id/ai/models/search',
+    });
+
+    const result = await refreshEndpointModels({
+      cacheKey: KEY,
+      baseUrl: 'https://api.cloudflare.com/client/v4/accounts/account-id/ai/models/search',
+      apiKey: 'cfut-test',
+      urls: [
+        'https://api.cloudflare.com/client/v4/accounts/account-id/ai/models/search',
+      ],
+    });
+
+    expect(tauriMocks.listRemoteModels).toHaveBeenCalledWith({
+      urls: [
+        'https://api.cloudflare.com/client/v4/accounts/account-id/ai/models/search',
+      ],
+      apiKey: 'cfut-test',
+      transport: 'openai',
+    });
+    expect(result.models).toEqual(['@cf/black-forest-labs/flux-1-schnell']);
+  });
 });

@@ -915,12 +915,12 @@ export const modelOptions: SelectOption[] = [
 ];
 
 /**
- * 会话缓存时间(TTL)可选项，单位分钟。决定一次会话在没有新输出时上下文/进程的
- * 保活时长(映射到 CLI 的 idle/keep-alive 超时)。默认 5 分钟；只在会话开启前可改。
+ * 会话缓存时间(TTL)可选项，单位分钟。用于标记会话上下文希望保留的时长。
+ * 默认 5 分钟；只在会话开启前可改。
  */
 export const CACHE_TTL_MINUTES_OPTIONS = [5, 10, 20, 30, 40, 50, 60] as const;
 
-/** Default session cache TTL in minutes (matches the CLI 300s idle default). */
+/** Default session cache TTL in minutes. */
 export const DEFAULT_CACHE_TTL_MINUTES = 5;
 
 export const cacheTtlOptions: SelectOption[] = CACHE_TTL_MINUTES_OPTIONS.map(
@@ -999,6 +999,8 @@ export const defaultComposer: ComposerSettings = {
   workspace: '',
   workspaceFolders: [],
   modelStrategy: 'inherit',
+  gddMode: false,
+  gddModeStartedAt: null,
   imageMode: false,
   imageModeStartedAt: null,
   musicMode: false,
@@ -1013,8 +1015,12 @@ export const defaultComposer: ComposerSettings = {
   spriteModeStartedAt: null,
   comfyMode: false,
   comfyModeStartedAt: null,
+  worldMode: false,
+  worldModeStartedAt: null,
   uiMode: false,
   uiModeStartedAt: null,
+  metahumanMode: false,
+  metahumanModeStartedAt: null,
   blueprintMode: false,
   blueprintModeStartedAt: null,
   blueprintModeArgs: null,

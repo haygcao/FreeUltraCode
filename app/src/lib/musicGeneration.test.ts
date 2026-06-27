@@ -89,7 +89,7 @@ describe('music generation settings and routing', () => {
       providerKeys: { 'beatoven-maestro': ' token ', unknown: 'x' },
       providerModels: { 'beatoven-maestro': ' maestro-loop ' },
     });
-    expect(settings.enabled).toBe(false);
+    expect(settings.enabled).toBe(true);
     expect(settings.preferredProviderId).toBe('beatoven-maestro');
     expect(settings.providerKeys['beatoven-maestro']).toBe('token');
     expect(settings.providerModels['beatoven-maestro']).toBe('maestro-loop');
@@ -151,11 +151,14 @@ describe('music generation settings and routing', () => {
       'tempolor-instrumental',
       'mubert',
       'sunoapi-music',
+      'kie-suno-music',
+      'suno-relay-music',
       'sonauto-song',
       'sonauto-instrumental',
       'fal-ace-step',
       'fal-stable-audio',
       'minimax-302-music',
+      'ali-fun-music',
     ]);
     expect(free).toEqual([
       'minimax-music-free',
@@ -210,6 +213,47 @@ describe('music generation settings and routing', () => {
         }),
       }),
     );
+  });
+
+  it('calls Ali Fun music with prompt and parses nested output audio', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          output: { audio: { url: 'https://dashscope-result.example.com/fun.mp3' } },
+          request_id: 'req-1',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    const result = await generateMusic(
+      {
+        prompt: '/music 夏日清新民谣，木吉他伴奏，旅行Vlog背景音乐',
+        providerId: 'ali-fun-music',
+      },
+      {
+        ...DEFAULT_MUSIC_GENERATION_SETTINGS,
+        providerKeys: { 'ali-fun-music': 'sk-test' },
+        providerBaseUrls: {},
+        providerModels: {},
+      },
+    );
+
+    expect(result.audios).toEqual(['https://dashscope-result.example.com/fun.mp3']);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk-test',
+          'Content-Type': 'application/json',
+        }),
+      }),
+    );
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.model).toBe('fun-music-v1');
+    expect(body.input.prompt).toContain('夏日清新民谣');
+    expect(body.input.lyrics).toBeUndefined();
   });
 
   it('trims overlong returned audio to the requested duration', async () => {

@@ -45,7 +45,7 @@ describe('sprite generation settings and routing', () => {
       defaultFrameSize: 1,
       removeBackground: false,
     });
-    expect(normalized.enabled).toBe(false);
+    expect(normalized.enabled).toBe(true);
     expect(normalized.preferredProviderId).toBe(
       DEFAULT_SPRITE_GENERATION_SETTINGS.preferredProviderId,
     );
@@ -147,6 +147,9 @@ describe('sprite generation settings and routing', () => {
     expect(imagePrompt).toContain('Sprite Forge compatible raw spritesheet constraints');
     expect(imagePrompt).toContain('exact layout: 4 rows x 4 columns, 16 frames');
     expect(imagePrompt).toContain('solid #FF00FF chroma key');
+    expect(imagePrompt).toContain('one raw spritesheet image only');
+    expect(imagePrompt).toContain('real animation poses only');
+    expect(imagePrompt).toContain('manifest metadata');
     expect(url.searchParams.get('model')).toBe('flux');
   });
 
@@ -239,17 +242,4 @@ describe('sprite generation settings and routing', () => {
     expect(imagePrompt).toContain('exact layout: 2 rows x 3 columns, 6 frames');
   });
 
-  it('throws when generation is disabled', async () => {
-    await expect(
-      generateSprite(
-        { prompt: 'idle robot', providerId: 'pollinations' },
-        { ...DEFAULT_SPRITE_GENERATION_SETTINGS, enabled: false },
-        {
-          ...DEFAULT_IMAGE_GENERATION_SETTINGS,
-          preferredProviderId: 'pollinations',
-          providerKeys: { pollinations: 'pollinations-key' },
-        },
-      ),
-    ).rejects.toThrow('SPRITE_GENERATION_DISABLED');
-  });
 });

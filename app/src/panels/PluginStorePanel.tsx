@@ -18,6 +18,7 @@ import {
   isTauri,
   installSkillFromText,
   installSkillFromUrl,
+  installSkillFromZipUrl,
   openExternal,
   refreshSlashCatalog,
   skillInstallTargets,
@@ -98,7 +99,13 @@ function pluginStoreTrustLabel(item: PluginStoreItem): string {
 }
 
 function pluginStoreActionLabel(item: PluginStoreItem): string {
-  if (item.installKind === 'skill') return '安装';
+  if (
+    item.installKind === 'skill' ||
+    item.installKind === 'skillText' ||
+    item.installKind === 'skillZip'
+  ) {
+    return '安装';
+  }
   if (item.installKind === 'pluginManifest') return '复制清单';
   if (item.installKind === 'external') return '复制地址';
   return '打开来源';
@@ -229,23 +236,38 @@ export function PluginStorePanel({
           projectRoot,
         };
         const installed =
-          item.installTransform === 'wrapMarkdownAsSkill'
-            ? await installSkillFromText({
+          item.installKind === 'skillZip'
+            ? await installSkillFromZipUrl({
                 ...installParams,
-                text: buildSkillInstallTextFromMarkdown(
-                  item,
-                  await fetch(item.installUrl, { cache: 'no-store' }).then((response) => {
+                url: item.installUrl,
+              })
+            : item.installKind === 'skillText'
+              ? await installSkillFromText({
+                  ...installParams,
+                  text: await fetch(item.installUrl, { cache: 'no-store' }).then((response) => {
                     if (!response.ok) {
                       throw new Error(`${response.status} ${response.statusText}`);
                     }
                     return response.text();
                   }),
-                ),
-              })
-            : await installSkillFromUrl({
-                ...installParams,
-                url: item.installUrl,
-              });
+                })
+              : item.installTransform === 'wrapMarkdownAsSkill'
+              ? await installSkillFromText({
+                  ...installParams,
+                  text: buildSkillInstallTextFromMarkdown(
+                    item,
+                    await fetch(item.installUrl, { cache: 'no-store' }).then((response) => {
+                      if (!response.ok) {
+                        throw new Error(`${response.status} ${response.statusText}`);
+                      }
+                      return response.text();
+                    }),
+                  ),
+                })
+              : await installSkillFromUrl({
+                  ...installParams,
+                  url: item.installUrl,
+                });
         await refreshSlashCatalog();
         await loadTargets();
         onSkillInstalled?.();
@@ -273,7 +295,12 @@ export function PluginStorePanel({
   );
 
   const handleAction = async (item: PluginStoreItem) => {
-    if (item.installKind === 'skill' && item.installUrl) {
+    if (
+      (item.installKind === 'skill' ||
+        item.installKind === 'skillText' ||
+        item.installKind === 'skillZip') &&
+      item.installUrl
+    ) {
       await handleInstall(item, false);
       return;
     }
@@ -478,8 +505,12 @@ function PluginStoreItemCard({
   onAction: () => void;
   onOpen: () => void;
 }) {
-  const canInstallSkill = item.installKind === 'skill' && desktop;
-  const primaryDisabled = item.installKind === 'skill' && !canInstallSkill;
+  const isInstallableSkill =
+    item.installKind === 'skill' ||
+    item.installKind === 'skillText' ||
+    item.installKind === 'skillZip';
+  const canInstallSkill = isInstallableSkill && desktop;
+  const primaryDisabled = isInstallableSkill && !canInstallSkill;
   const actionLabel = primaryDisabled ? '桌面版安装' : pluginStoreActionLabel(item);
   const { descriptionRef, description } = useVisiblePluginDescription(
     item,

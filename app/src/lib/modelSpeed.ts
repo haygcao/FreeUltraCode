@@ -24,6 +24,10 @@ export interface ModelCallTiming {
 
 export interface CliTimeoutPolicy {
   timeoutSeconds: number;
+  /**
+   * No-progress timeout in seconds. 0 disables the idle watchdog; long-running
+   * tool calls can stay silent while waiting for external work such as CI.
+   */
   idleTimeoutSeconds: number;
 }
 
@@ -46,7 +50,7 @@ interface StoredSpeed {
 
 type StoredSpeedMap = Record<string, StoredSpeed>;
 
-const STORAGE_KEY = 'fuc_model_speed_v1';
+const STORAGE_KEY = 'ugs_model_speed_v1';
 const EWMA_ALPHA = 0.35;
 const FAST_MS = 90_000;
 const SLOW_MS = 210_000;
@@ -232,31 +236,22 @@ export function timeoutPolicyForSelection(
   const boost = promptBoostSeconds(prompt);
   const base =
     profile.tier === 'fast'
-      ? { hard: 1800, idle: 300 }
+      ? { hard: 1800 }
       : profile.tier === 'standard'
-        ? { hard: 2400, idle: 450 }
-        : { hard: 3600, idle: 900 };
+        ? { hard: 2400 }
+        : { hard: 3600 };
 
   const observedHard =
     profile.ewmaMs == null
       ? base.hard
       : Math.ceil(profile.ewmaMs / 1000) * 3 + 300;
-  const observedIdle =
-    profile.firstProgressEwmaMs == null
-      ? base.idle
-      : Math.ceil(profile.firstProgressEwmaMs / 1000) * 2 + 120;
-
   return {
     timeoutSeconds: clampSeconds(
       Math.max(base.hard, observedHard) + boost,
       600,
       7200,
     ),
-    idleTimeoutSeconds: clampSeconds(
-      Math.max(base.idle, observedIdle) + Math.floor(boost / 2),
-      180,
-      1800,
-    ),
+    idleTimeoutSeconds: 0,
   };
 }
 
@@ -286,9 +281,18 @@ export function effectiveGenerationConsensusPlan(
 ): GenerationConsensusPlan {
   const profile = modelSpeedProfile(selection);
   const configured = Math.max(
-    2,
-    Math.min(5, Math.floor(configuredCandidates) || 2),
+    1,
+    Math.min(5, Math.floor(configuredCandidates) || 1),
   );
+  if (configured <= 1) {
+    return {
+      enabled: false,
+      count: 1,
+      concurrency: 1,
+      tier: profile.tier,
+      reason: '生成期多候选未开启',
+    };
+  }
   if (profile.tier !== 'fast') {
     return {
       enabled: false,

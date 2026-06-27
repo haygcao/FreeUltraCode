@@ -2,6 +2,8 @@ export type PluginStoreKind = 'skill' | 'plugin' | 'index';
 export type PluginStoreTrust = 'official' | 'curated' | 'community' | 'registry';
 export type PluginStoreInstallKind =
   | 'skill'
+  | 'skillText'
+  | 'skillZip'
   | 'pluginManifest'
   | 'external'
   | 'none';
@@ -84,6 +86,29 @@ interface GitHubTree {
   truncated?: boolean;
 }
 
+interface LobeHubMarketSkillListItem {
+  author?: string;
+  category?: string;
+  createdAt?: string;
+  description?: string;
+  github?: {
+    url?: string;
+    stars?: number;
+  };
+  homepage?: string;
+  identifier?: string;
+  isOfficial?: boolean;
+  isValidated?: boolean;
+  name?: string;
+  tags?: string[];
+  updatedAt?: string;
+  version?: string;
+}
+
+interface LobeHubMarketSkillListResponse {
+  items?: LobeHubMarketSkillListItem[];
+}
+
 interface GameSkillRepository {
   owner: string;
   repo: string;
@@ -100,6 +125,8 @@ const OPENAI_SKILL_ROOTS = ['skills/.curated', 'skills/.system'];
 const OPENAI_REPO_RAW = 'https://raw.githubusercontent.com/openai/skills/main';
 const OPENAI_REPO_API = 'https://api.github.com/repos/openai/skills/contents';
 export const GAME_SKILL_RECOMMENDATION_SOURCE_ID = 'game-skill-recommendations';
+const LOBEHUB_MARKET_BASE_URL = 'https://market.lobehub.com';
+const LOBEHUB_SKILLS_SOURCE_ID = 'lobehub-skills';
 
 const GAME_SKILL_RECOMMENDATION_SOURCE_NAME = '游戏 Skill 推荐';
 
@@ -154,6 +181,72 @@ const GAME_SKILL_RECOMMENDATION_REPOSITORIES: GameSkillRepository[] = [
 ];
 
 const BUILT_IN_PLUGIN_STORE_ITEMS: PluginStoreItem[] = [
+  {
+    id: 'skill:lobehub:self:skills-search-engine',
+    name: 'lobehub-skills-search-engine',
+    title: 'LobeHub Skills 搜索',
+    description:
+      'LobeHub 官方 Skill：通过 @lobehub/market-cli 搜索、评估、安装和反馈 LobeHub Skills 市场中的技能。',
+    kind: 'skill',
+    sourceId: LOBEHUB_SKILLS_SOURCE_ID,
+    sourceName: 'LobeHub Skills',
+    sourceUrl: 'https://lobehub.com/skills',
+    installUrl: `${LOBEHUB_MARKET_BASE_URL}/s/skills`,
+    installKind: 'skillText',
+    category: 'Marketplace',
+    author: 'LobeHub',
+    tags: ['lobehub', 'skills', 'market', 'cli', 'search'],
+    trust: 'official',
+  },
+  {
+    id: 'skill:lobehub:self:mcp-publisher',
+    name: 'lobehub-mcp-publisher',
+    title: 'LobeHub MCP 发布',
+    description:
+      'LobeHub 官方 Skill：使用 @lobehub/market-cli 发布、认领、更新和管理 LobeHub MCP 市场条目。',
+    kind: 'skill',
+    sourceId: LOBEHUB_SKILLS_SOURCE_ID,
+    sourceName: 'LobeHub Skills',
+    sourceUrl: 'https://lobehub.com/mcp',
+    installUrl: `${LOBEHUB_MARKET_BASE_URL}/s/publish-mcp`,
+    installKind: 'skillText',
+    category: 'MCP',
+    author: 'LobeHub',
+    tags: ['lobehub', 'mcp', 'market', 'publish', 'cli'],
+    trust: 'official',
+  },
+  {
+    id: 'index:lobehub-skills',
+    name: 'lobehub-skills',
+    title: 'LobeHub Skills',
+    description:
+      'LobeHub Agent Skills 市场；支持通过 LobeHub Market 下载 ZIP 格式 Skill 包。',
+    kind: 'index',
+    sourceId: 'built-in',
+    sourceName: '内置精选',
+    sourceUrl: 'https://lobehub.com/skills',
+    installKind: 'external',
+    category: '索引',
+    author: 'LobeHub',
+    tags: ['lobehub', 'skills', 'market', 'agent'],
+    trust: 'registry',
+  },
+  {
+    id: 'index:lobehub-mcp',
+    name: 'lobehub-mcp',
+    title: 'LobeHub MCP',
+    description:
+      'LobeHub MCP 市场；集中索引 MCP 插件、连接方式、工具能力与评分信息。',
+    kind: 'index',
+    sourceId: 'built-in',
+    sourceName: '内置精选',
+    sourceUrl: 'https://lobehub.com/mcp',
+    installKind: 'external',
+    category: '索引',
+    author: 'LobeHub',
+    tags: ['lobehub', 'mcp', 'market', 'plugin'],
+    trust: 'registry',
+  },
   {
     id: 'index:voltagent-awesome-agent-skills',
     name: 'awesome-agent-skills',
@@ -492,6 +585,11 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   return (await response.json()) as T;
 }
 
+function isLobeHubAuthRequiredError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /(?:401|403|missing bearer|credentials)/i.test(message);
+}
+
 async function fetchText(url: string, signal?: AbortSignal): Promise<string> {
   const response = await fetch(url, { signal, cache: 'no-store' });
   if (!response.ok) {
@@ -577,6 +675,56 @@ async function fetchGameSkillRepository(
   return (tree.tree ?? [])
     .filter((entry) => entry.type === 'blob')
     .map((entry) => gameSkillItemFromPath(repo, entry.path))
+    .filter((item): item is PluginStoreItem => Boolean(item));
+}
+
+async function fetchLobeHubSkills(signal?: AbortSignal): Promise<PluginStoreItem[]> {
+  let catalog: LobeHubMarketSkillListResponse;
+  try {
+    catalog = await fetchJson<LobeHubMarketSkillListResponse>(
+      `${LOBEHUB_MARKET_BASE_URL}/api/v1/skills?page=1&pageSize=60&sort=recommended&order=desc&locale=zh-CN`,
+      signal,
+    );
+  } catch (err) {
+    if (isLobeHubAuthRequiredError(err)) return [];
+    throw err;
+  }
+  return (catalog.items ?? [])
+    .map((skill): PluginStoreItem | null => {
+      const identifier = compactText(skill.identifier);
+      if (!identifier) return null;
+      const title = compactText(skill.name) || humanizeSlug(identifier);
+      const sourceUrl = `https://lobehub.com/skills/${encodeURIComponent(identifier)}`;
+      const installUrl = `${LOBEHUB_MARKET_BASE_URL}/api/v1/skills/${encodeURIComponent(identifier)}/download`;
+      return {
+        id: `skill:lobehub:${identifier}`,
+        name: slugFromName(identifier),
+        title,
+        description:
+          compactText(skill.description) || `${title} LobeHub marketplace skill.`,
+        kind: 'skill',
+        sourceId: LOBEHUB_SKILLS_SOURCE_ID,
+        sourceName: 'LobeHub Skills',
+        sourceUrl,
+        installUrl,
+        installKind: 'skillZip',
+        category: compactText(skill.category) || 'Skill',
+        author: compactText(skill.author) || 'LobeHub',
+        version: compactText(skill.version) || undefined,
+        updatedAt: compactText(skill.updatedAt) || compactText(skill.createdAt) || undefined,
+        tags: [
+          'lobehub',
+          'skill',
+          compactText(skill.category),
+          ...(skill.tags ?? []),
+          skill.isOfficial ? 'official' : '',
+          skill.isValidated ? 'validated' : '',
+        ]
+          .filter(Boolean)
+          .map((tag) => tag.toLowerCase()),
+        trust: skill.isOfficial ? 'official' : skill.isValidated ? 'registry' : 'community',
+      };
+    })
     .filter((item): item is PluginStoreItem => Boolean(item));
 }
 
@@ -704,6 +852,11 @@ export async function loadPluginStoreCatalog(
       sourceId: 'openai-skills',
       sourceName: 'OpenAI Skills',
       load: fetchOpenAiSkills,
+    },
+    {
+      sourceId: LOBEHUB_SKILLS_SOURCE_ID,
+      sourceName: 'LobeHub Skills',
+      load: fetchLobeHubSkills,
     },
     {
       sourceId: 'claude-code-marketplace',

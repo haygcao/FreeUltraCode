@@ -143,7 +143,7 @@ export function segmentMessage(text: string, streaming = false): Segment[] {
 
 /**
  * Second pass: split each answer segment on inline tool sentinels
- * (`<<FUC_TOOL>>…`), turning them into ordered answer/tools segments. Adjacent
+ * (`<<UGS_TOOL>>…`), turning them into ordered answer/tools segments. Adjacent
  * tool events across the whole message are merged by id so a `running` event
  * and its later `done` patch collapse into one card. The merge is global (not
  * per answer-segment) so a tool that starts before a reasoning block and
@@ -159,10 +159,20 @@ function expandTools(segments: Segment[], streaming: boolean): Segment[] {
   if (!anySentinels && !anyLegacyToolLines) return segments;
 
   // Decode every patch first (in stream order) so we can merge globally by id.
+  // Only the final answer segment can carry a half-streamed trailing sentinel,
+  // so we pass `streamingTail` just for that segment while live.
+  const lastAnswerIndex = (() => {
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      if (segments[i].type === 'answer') return i;
+    }
+    return -1;
+  })();
   const allPatches: ToolEventPatch[] = [];
-  for (const s of segments) {
+  for (let i = 0; i < segments.length; i += 1) {
+    const s = segments[i];
     if (s.type === 'answer' && hasToolSentinel(s.text)) {
-      allPatches.push(...extractToolSentinels(s.text).patches);
+      const streamingTail = streaming && i === lastAnswerIndex;
+      allPatches.push(...extractToolSentinels(s.text, { streamingTail }).patches);
     }
   }
   const merged = mergeToolPatches(allPatches);
@@ -223,7 +233,8 @@ function expandTools(segments: Segment[], streaming: boolean): Segment[] {
     }
   };
 
-  for (const s of segments) {
+  for (let i = 0; i < segments.length; i += 1) {
+    const s = segments[i];
     if (s.type !== 'answer') {
       out.push(s);
       continue;
@@ -232,8 +243,9 @@ function expandTools(segments: Segment[], streaming: boolean): Segment[] {
       pushTextWithLegacyTools(s.text);
       continue;
     }
+    const streamingTail = streaming && i === lastAnswerIndex;
     // Walk the ordered parts so tool cards land exactly between prose runs.
-    for (const part of extractToolSentinels(s.text).parts) {
+    for (const part of extractToolSentinels(s.text, { streamingTail }).parts) {
       if ('text' in part) pushTextWithLegacyTools(part.text);
       else pushTool(part.patch);
     }

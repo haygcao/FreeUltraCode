@@ -173,9 +173,7 @@ export function defaultPersonalInstructionsByModel(
   return out;
 }
 
-export function shouldInjectPersonalInstructions(
-  _adapter: string | null | undefined,
-): boolean {
+export function shouldInjectPersonalInstructions(): boolean {
   // All three adapters (Claude Code / Codex / Gemini) now receive the
   // user's personal defaults. Codex is no longer skipped.
   return true;
@@ -185,14 +183,15 @@ export function personalInstructionsBlock(
   instructions: string | null | undefined,
   adapter?: string | null,
 ): string {
-  if (!shouldInjectPersonalInstructions(adapter)) return '';
+  void adapter;
+  if (!shouldInjectPersonalInstructions()) return '';
   const trimmed = instructions?.trim();
   if (!trimmed) return '';
   return [
     '',
     '---',
     '【用户个人默认指令（低优先级）】',
-    '以下内容来自「设置 > 个性化」。请尽量遵守；若与 FreeUltraCode 系统规则、workflow 模式约束、工具安全规则或本轮用户最新指令冲突，以后者为准。',
+    '以下内容来自「设置 > 个性化」。请尽量遵守；若与 UltraGameStudio 系统规则、workflow 模式约束、工具安全规则或本轮用户最新指令冲突，以后者为准。',
     trimmed,
   ].join('\n');
 }

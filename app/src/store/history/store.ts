@@ -1,6 +1,6 @@
 import type { IRGraph } from '@/core/ir';
 import { loadComposer } from '@/lib/composerStorage';
-import { FUC_STORAGE_KEY } from '@/lib/persist';
+import { UGS_STORAGE_KEY } from '@/lib/persist';
 import { tauriAvailable } from '@/lib/tauri';
 import type { Message } from '@/store/types';
 import {
@@ -72,9 +72,13 @@ export interface HistoryStore {
 
 const CONFIG_PATH = 'config.json';
 const WORKSPACES_INDEX = 'workspaces/index.json';
-const FALLBACK_PREFIX = 'freeultracode.history.v1:';
+const FALLBACK_PREFIX = 'ultragamestudio.history.v1:';
+const SESSION_RECORD_CACHE_LIMIT = 5;
+const SESSION_RECORD_PREWARM_LIMIT = 5;
 
 let writeQueue: Promise<unknown> = Promise.resolve();
+const sessionRecordCache = new Map<string, Map<string, SessionRecord>>();
+const sessionPrewarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function enqueue<T>(fn: () => Promise<T>): Promise<T> {
   const run = writeQueue.then(fn, fn);
@@ -251,6 +255,95 @@ function sessionPath(workspaceId: string, sessionId: string): string {
   return `workspaces/${workspaceId}/sessions/${sessionId}.json`;
 }
 
+function sessionCacheForWorkspace(
+  workspaceId: string,
+): Map<string, SessionRecord> {
+  let cache = sessionRecordCache.get(workspaceId);
+  if (!cache) {
+    cache = new Map();
+    sessionRecordCache.set(workspaceId, cache);
+  }
+  return cache;
+}
+
+function cachedSessionRecord(
+  workspaceId: string,
+  sessionId: string,
+): SessionRecord | null {
+  const cache = sessionRecordCache.get(workspaceId);
+  const record = cache?.get(sessionId);
+  if (!record || !cache) return null;
+  cache.delete(sessionId);
+  cache.set(sessionId, record);
+  return record;
+}
+
+function rememberSessionRecord(record: SessionRecord): SessionRecord {
+  const cache = sessionCacheForWorkspace(record.workspaceId);
+  cache.delete(record.id);
+  cache.set(record.id, record);
+  while (cache.size > SESSION_RECORD_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (!oldest) break;
+    cache.delete(oldest);
+  }
+  return record;
+}
+
+function forgetSessionRecord(workspaceId: string, sessionId: string): void {
+  const cache = sessionRecordCache.get(workspaceId);
+  if (!cache) return;
+  cache.delete(sessionId);
+  if (cache.size === 0) sessionRecordCache.delete(workspaceId);
+}
+
+function forgetWorkspaceSessionRecords(workspaceId: string): void {
+  sessionRecordCache.delete(workspaceId);
+  const timer = sessionPrewarmTimers.get(workspaceId);
+  if (timer) clearTimeout(timer);
+  sessionPrewarmTimers.delete(workspaceId);
+}
+
+function clearSessionRecordCache(): void {
+  for (const timer of sessionPrewarmTimers.values()) clearTimeout(timer);
+  sessionPrewarmTimers.clear();
+  sessionRecordCache.clear();
+}
+
+async function prewarmRecentSessionRecords(
+  workspaceId: string,
+  sessions: SessionSummary[],
+): Promise<void> {
+  for (const summary of sessions.slice(0, SESSION_RECORD_PREWARM_LIMIT)) {
+    if (cachedSessionRecord(workspaceId, summary.id)) continue;
+    const record = await readJson<SessionRecord>(
+      sessionPath(workspaceId, summary.id),
+    );
+    if (record) rememberSessionRecord(record);
+  }
+}
+
+function scheduleRecentSessionPrewarm(
+  workspaceId: string,
+  sessions: SessionSummary[],
+): void {
+  const recent = sessions.slice(0, SESSION_RECORD_PREWARM_LIMIT);
+  if (recent.length === 0) return;
+  const existing = sessionPrewarmTimers.get(workspaceId);
+  if (existing) clearTimeout(existing);
+  sessionPrewarmTimers.set(
+    workspaceId,
+    setTimeout(async () => {
+      sessionPrewarmTimers.delete(workspaceId);
+      try {
+        await prewarmRecentSessionRecords(workspaceId, recent);
+      } catch {
+        /* non-fatal */
+      }
+    }, 0),
+  );
+}
+
 function preview(messages: Message[]): string | undefined {
   const text = messages[messages.length - 1]?.text?.trim();
   if (!text) return undefined;
@@ -372,6 +465,34 @@ function sortSessions(records: SessionSummary[]): SessionSummary[] {
   return [...records].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+function sessionFileIdFromName(name: string): string | null {
+  if (!name.endsWith('.json') || name === 'index.json') return null;
+  return name.slice(0, -'.json'.length);
+}
+
+async function listSessionFileIdsInternal(workspaceId: string): Promise<string[]> {
+  const fileNames = await listDir(`workspaces/${workspaceId}/sessions`);
+  return fileNames
+    .map(sessionFileIdFromName)
+    .filter((id): id is string => id != null);
+}
+
+function sessionIndexMatchesFiles(
+  index: SessionSummary[],
+  fileIds: string[],
+): boolean {
+  if (index.length !== fileIds.length) return false;
+  const indexed = new Set(index.map((session) => session.id));
+  return fileIds.every((id) => indexed.has(id));
+}
+
+async function readSessionIndexInternal(
+  workspaceId: string,
+): Promise<SessionSummary[] | null> {
+  const list = await readJson<unknown>(sessionIndexPath(workspaceId));
+  return Array.isArray(list) ? sortSessions(list as SessionSummary[]) : null;
+}
+
 function finiteTimestamp(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -467,10 +588,7 @@ async function readSessionRecordsFromWorkspaceDirectoryInternal(
   workspaceId: string,
   allowedWorkspaceIds = new Set([workspaceId]),
 ): Promise<SessionRecord[]> {
-  const fileNames = await listDir(`workspaces/${workspaceId}/sessions`);
-  const sessionIds = fileNames
-    .filter((name) => name.endsWith('.json') && name !== 'index.json')
-    .map((name) => name.slice(0, -'.json'.length));
+  const sessionIds = await listSessionFileIdsInternal(workspaceId);
   return (
     await Promise.all(
       sessionIds.map((sessionId) => getSessionInternal(workspaceId, sessionId)),
@@ -846,6 +964,13 @@ async function resolveWorkspaceInternal(
 async function listSessionsInternal(
   workspaceId: string,
 ): Promise<SessionSummary[]> {
+  const indexed = await readSessionIndexInternal(workspaceId);
+  if (indexed) {
+    const fileIds = await listSessionFileIdsInternal(workspaceId);
+    if (sessionIndexMatchesFiles(indexed, fileIds)) {
+      return indexed;
+    }
+  }
   return rebuildWorkspaceSessionIndexFromFilesInternal(workspaceId);
 }
 
@@ -881,7 +1006,12 @@ async function getSessionInternal(
   workspaceId: string,
   sessionId: string,
 ): Promise<SessionRecord | null> {
-  return readJson<SessionRecord>(sessionPath(workspaceId, sessionId));
+  const cached = cachedSessionRecord(workspaceId, sessionId);
+  if (cached) return cached;
+  const record = await readJson<SessionRecord>(
+    sessionPath(workspaceId, sessionId),
+  );
+  return record ? rememberSessionRecord(record) : null;
 }
 
 async function writeSessionInternal(
@@ -900,7 +1030,7 @@ async function writeSessionInternal(
     record.updatedAt,
     next.length,
   );
-  return record;
+  return rememberSessionRecord(record);
 }
 
 async function createSessionInternal(
@@ -972,7 +1102,7 @@ async function migrateLocalWorkflowInternal(): Promise<void> {
   const config = await getConfigInternal();
   if (config.migratedFromLocalStorage) return;
 
-  const raw = localGet(FUC_STORAGE_KEY);
+  const raw = localGet(UGS_STORAGE_KEY);
   let migrated = false;
   if (raw) {
     try {
@@ -1012,6 +1142,7 @@ async function migrateLocalWorkflowInternal(): Promise<void> {
 
 export const historyStore: HistoryStore = {
   async ready() {
+    clearSessionRecordCache();
     await enqueue(async () => {
       const config = await getConfigInternal();
       if (!config.schemaVersion) {
@@ -1046,7 +1177,7 @@ export const historyStore: HistoryStore = {
     if (tauriAvailable()) {
       return command<string>('history_root');
     }
-    return 'localStorage://freeultracode.history.v1';
+    return 'localStorage://ultragamestudio.history.v1';
   },
 
   getConfig() {
@@ -1103,6 +1234,7 @@ export const historyStore: HistoryStore = {
   deleteWorkspace(id, soft = true) {
     return enqueue(async () => {
       await removePath(`workspaces/${id}`, soft);
+      forgetWorkspaceSessionRecords(id);
       const current = await listWorkspacesInternal();
       await writeWorkspaceIndexInternal(current.filter((w) => w.id !== id));
       const config = await getConfigInternal();
@@ -1117,7 +1249,10 @@ export const historyStore: HistoryStore = {
   },
 
   listSessions(workspaceId) {
-    return listSessionsInternal(workspaceId);
+    return listSessionsInternal(workspaceId).then((sessions) => {
+      scheduleRecentSessionPrewarm(workspaceId, sessions);
+      return sessions;
+    });
   },
 
   getSession(workspaceId, sessionId) {
@@ -1135,6 +1270,7 @@ export const historyStore: HistoryStore = {
   deleteSession(workspaceId, sessionId, soft = true) {
     return enqueue(async () => {
       await removePath(sessionPath(workspaceId, sessionId), soft);
+      forgetSessionRecord(workspaceId, sessionId);
       const current = await listSessionsInternal(workspaceId);
       await writeSessionIndexInternal(
         workspaceId,
@@ -1175,3 +1311,7 @@ export const historyStore: HistoryStore = {
     ).then(() => undefined);
   },
 };
+
+export function __resetHistorySessionCacheForTests(): void {
+  clearSessionRecordCache();
+}

@@ -121,9 +121,58 @@ export function mcpCommandText(definition: McpServerDefinition): string {
   return [definition.command, ...definition.args].map(quoteArg).join(' ');
 }
 
+function commandLineText(command: string, args: readonly string[]): string {
+  return [command, ...args].map(quoteArg).join(' ');
+}
+
 interface McpRegistryRemote {
   type?: string;
   url?: string;
+}
+
+interface McpRegistryHeader {
+  name?: string;
+  description?: string;
+  value?: string;
+  isRequired?: boolean;
+  isSecret?: boolean;
+}
+
+interface McpRegistryArgument {
+  name?: string;
+  description?: string;
+  type?: string;
+  isRequired?: boolean;
+  default?: string;
+  value?: string;
+  valueHint?: string;
+  variables?: Record<string, McpRegistryArgument>;
+}
+
+interface McpRegistryEnvVar {
+  name?: string;
+  description?: string;
+  isRequired?: boolean;
+  isSecret?: boolean;
+  default?: string;
+  value?: string;
+}
+
+interface McpRegistryTransport {
+  type?: string;
+  url?: string;
+  headers?: McpRegistryHeader[];
+}
+
+interface McpRegistryPackage {
+  registryType?: string;
+  identifier?: string;
+  version?: string;
+  runtimeHint?: string;
+  transport?: McpRegistryTransport;
+  environmentVariables?: McpRegistryEnvVar[];
+  packageArguments?: McpRegistryArgument[];
+  runtimeArguments?: McpRegistryArgument[];
 }
 
 interface McpRegistryRepository {
@@ -139,6 +188,7 @@ interface McpRegistryServer {
   version?: string;
   websiteUrl?: string;
   repository?: McpRegistryRepository;
+  packages?: McpRegistryPackage[];
   remotes?: McpRegistryRemote[];
 }
 
@@ -149,9 +199,40 @@ interface McpRegistryEntry {
 
 interface McpRegistryResponse {
   servers?: McpRegistryEntry[];
+  metadata?: { nextCursor?: string; count?: number };
 }
 
-const MCP_REGISTRY_API = 'https://registry.modelcontextprotocol.io/v0/servers?limit=80';
+const MCP_REGISTRY_BASE = 'https://registry.modelcontextprotocol.io/v0/servers';
+const MCP_REGISTRY_PAGE_LIMIT = 100;
+const MCP_REGISTRY_PREVIEW_PAGES = 3;
+const LOBEHUB_MARKET_BASE_URL = 'https://market.lobehub.com';
+
+interface LobeHubPluginItem {
+  capabilities?: {
+    prompts?: boolean;
+    resources?: boolean;
+    tools?: boolean;
+  };
+  category?: string;
+  connectionType?: string;
+  createdAt?: string;
+  description?: string;
+  github?: {
+    url?: string;
+  };
+  identifier?: string;
+  installationMethods?: string;
+  isOfficial?: boolean;
+  isValidated?: boolean;
+  name?: string;
+  tags?: string[];
+  updatedAt?: string;
+  version?: string;
+}
+
+interface LobeHubPluginListResponse {
+  items?: LobeHubPluginItem[];
+}
 
 function compactText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -167,6 +248,25 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
     throw new Error(`${response.status} ${response.statusText}`);
   }
   return (await response.json()) as T;
+}
+
+function isLobeHubAuthRequiredError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /(?:401|403|missing bearer|credentials)/i.test(message);
+}
+
+function fetchMcpRegistryPage(
+  cursor: string | undefined,
+  query: string,
+  signal?: AbortSignal,
+): Promise<McpRegistryResponse> {
+  const params = new URLSearchParams({
+    limit: String(MCP_REGISTRY_PAGE_LIMIT),
+    version: 'latest',
+  });
+  if (query) params.set('search', query);
+  if (cursor) params.set('cursor', cursor);
+  return fetchJson<McpRegistryResponse>(`${MCP_REGISTRY_BASE}?${params}`, signal);
 }
 
 function slugFromMcpName(value: string): string {
@@ -241,12 +341,216 @@ function inferMcpCategory(server: McpRegistryServer): McpServerCategory {
   return 'cloud';
 }
 
+function pickBestMcpPackage(packages: readonly McpRegistryPackage[]): McpRegistryPackage | null {
+  return (
+    packages.find((pkg) => pkg.registryType === 'npm' && pkg.transport?.type === 'stdio') ??
+    packages.find((pkg) => pkg.transport?.type === 'stdio') ??
+    packages.find((pkg) => compactText(pkg.identifier)) ??
+    null
+  );
+}
+
+function mcpPackageCommand(pkg: McpRegistryPackage): string {
+  const hint = compactText(pkg.runtimeHint);
+  if (hint) return hint;
+  switch (compactText(pkg.registryType)) {
+    case 'npm':
+      return 'npx';
+    case 'pypi':
+      return 'uvx';
+    case 'oci':
+      return 'docker';
+    default:
+      return 'npx';
+  }
+}
+
+function mcpRegistryArgumentValue(arg: McpRegistryArgument): string {
+  const name = compactText(arg.name);
+  const fixedValue = compactText(arg.value);
+  const defaultValue = compactText(arg.default);
+  const valueHint = compactText(arg.valueHint);
+  if (fixedValue) return fixedValue;
+  if (defaultValue) return defaultValue;
+  if (valueHint) return `{${valueHint}}`;
+  return name ? `{${name.replace(/^-+/, '')}}` : '';
+}
+
+function appendMcpRegistryArguments(args: string[], registryArgs: readonly McpRegistryArgument[]): void {
+  for (const arg of registryArgs) {
+    if (!arg.isRequired && !compactText(arg.value) && !compactText(arg.default)) continue;
+    const value = mcpRegistryArgumentValue(arg);
+    const name = compactText(arg.name);
+    if (!value) continue;
+    if (arg.type === 'positional') {
+      args.push(value);
+    } else if (name) {
+      args.push(name.startsWith('-') ? name : `--${name}`, value);
+    }
+  }
+}
+
+function mcpPackageArgs(pkg: McpRegistryPackage): string[] {
+  const identifier = compactText(pkg.identifier);
+  const args: string[] = [];
+  const runtimeArgs = pkg.runtimeArguments ?? [];
+  switch (compactText(pkg.registryType)) {
+    case 'npm':
+      if (runtimeArgs.length > 0) appendMcpRegistryArguments(args, runtimeArgs);
+      else args.push('-y');
+      args.push(identifier);
+      break;
+    case 'pypi':
+      appendMcpRegistryArguments(args, runtimeArgs);
+      args.push(identifier);
+      break;
+    case 'oci':
+      args.push('run', '-i', '--rm');
+      appendMcpRegistryArguments(args, runtimeArgs);
+      args.push(identifier);
+      break;
+    default:
+      appendMcpRegistryArguments(args, runtimeArgs);
+      args.push(identifier);
+      break;
+  }
+
+  appendMcpRegistryArguments(args, pkg.packageArguments ?? []);
+
+  return args.filter(Boolean);
+}
+
+function registryPackageRequiresUserInput(pkg: McpRegistryPackage): boolean {
+  const requiresArgInput = (arg: McpRegistryArgument): boolean =>
+    Object.values(arg.variables ?? {}).some((variable) => variable.isRequired === true);
+  return [...(pkg.runtimeArguments ?? []), ...(pkg.packageArguments ?? [])].some(
+    (arg) =>
+      (arg.isRequired === true && !compactText(arg.value) && !compactText(arg.default)) ||
+      requiresArgInput(arg),
+  );
+}
+
+function registryEnvSpecs(pkg: McpRegistryPackage): McpEnvVarSpec[] {
+  return (pkg.environmentVariables ?? [])
+    .map((item): McpEnvVarSpec | null => {
+      const key = compactText(item.name);
+      if (!key || !item.isRequired) return null;
+      return {
+        key,
+        label: compactText(item.description) || key,
+        placeholder: compactText(item.value) || compactText(item.default) || `${key}=...`,
+        secret: item.isSecret === true,
+      };
+    })
+    .filter((item): item is McpEnvVarSpec => Boolean(item));
+}
+
+function registryPackageEnv(pkg: McpRegistryPackage): Record<string, string> {
+  return Object.fromEntries(
+    (pkg.environmentVariables ?? [])
+      .map((item): [string, string] | null => {
+        const key = compactText(item.name);
+        if (!key) return null;
+        return [key, compactText(item.value) || compactText(item.default)];
+      })
+      .filter((item): item is [string, string] => Boolean(item)),
+  );
+}
+
+function registryHeadersRequireUserApproval(remotes: readonly McpRegistryRemote[] = []): boolean {
+  return remotes.some((remote) =>
+    (remote as { headers?: McpRegistryHeader[] }).headers?.some(
+      (header) => header.isRequired || header.isSecret,
+    ),
+  );
+}
+
+function registryServerToDefinition(entry: McpRegistryEntry): McpServerDefinition | null {
+  const server = entry.server ?? {};
+  const name = compactText(server.name);
+  if (!name) return null;
+  const remote = server.remotes?.find((item) => compactText(item.url)) ?? null;
+  const remoteUrl = compactText(remote?.url);
+  const remoteType = compactText(remote?.type) || 'streamable-http';
+  const installablePackage = pickBestMcpPackage(server.packages ?? []);
+  const packageTransport = compactText(installablePackage?.transport?.type);
+  const packageIdentifier = compactText(installablePackage?.identifier);
+  const command =
+    installablePackage && packageTransport === 'stdio' && packageIdentifier
+      ? mcpPackageCommand(installablePackage)
+      : '';
+  const args = command && installablePackage ? mcpPackageArgs(installablePackage) : [];
+  const requiredEnv = installablePackage ? registryEnvSpecs(installablePackage) : [];
+  const sourceUrl =
+    compactText(server.websiteUrl) ||
+    compactText(server.repository?.url) ||
+    remoteUrl ||
+    'https://registry.modelcontextprotocol.io';
+  const title = compactText(server.title) || name;
+  const meta = mcpRegistryMeta(entry);
+  const installable = Boolean(command);
+  const packageType = compactText(installablePackage?.registryType);
+  const category = inferMcpCategory(server);
+  const packageRequiresUserInput = installablePackage
+    ? registryPackageRequiresUserInput(installablePackage)
+    : false;
+  return {
+    id: `registry:${slugFromMcpName(name)}`,
+    title,
+    category,
+    description: compactText(server.description) || 'MCP Registry server.',
+    transport: installable ? 'stdio' : remoteType,
+    command,
+    args,
+    env: installablePackage ? registryPackageEnv(installablePackage) : {},
+    url: !installable && remoteUrl ? remoteUrl : undefined,
+    install: installable
+      ? `MCP Registry ${packageType || 'package'}：${commandLineText(command, args)}`
+      : remoteUrl
+        ? `远程 MCP（${remoteType}）：${remoteUrl}`
+        : 'MCP Registry 条目；请查看来源获取连接方式。',
+    sourceUrl,
+    registryName: name,
+    connectionUrl: installable ? undefined : remoteUrl || sourceUrl,
+    version: compactText(server.version) || undefined,
+    updatedAt: meta.updatedAt,
+    installable,
+    requiredEnv: requiredEnv.length > 0 ? requiredEnv : undefined,
+    tags: [
+      'mcp',
+      'registry',
+      packageType,
+      packageIdentifier,
+      remoteType,
+      compactText(server.repository?.source),
+      compactText(server.repository?.subfolder),
+    ].filter(Boolean),
+    recommendationPriority: installable ? 36 : 20,
+    trust: 'registry',
+    requiresUserApproval:
+      requiredEnv.length > 0 ||
+      packageRequiresUserInput ||
+      registryHeadersRequireUserApproval(server.remotes),
+  };
+}
+
 export async function loadMcpRegistryServers(
   signal?: AbortSignal,
+  options: { query?: string; maxPages?: number } = {},
 ): Promise<McpServerDefinition[]> {
-  const catalog = await fetchJson<McpRegistryResponse>(MCP_REGISTRY_API, signal);
+  const query = compactText(options.query);
+  const maxPages = Math.max(1, options.maxPages ?? (query ? 1 : MCP_REGISTRY_PREVIEW_PAGES));
+  const entries: McpRegistryEntry[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const catalog = await fetchMcpRegistryPage(cursor, query, signal);
+    entries.push(...(catalog.servers ?? []));
+    cursor = compactText(catalog.metadata?.nextCursor) || undefined;
+    if (!cursor || (catalog.servers ?? []).length === 0) break;
+  }
+
   const byName = new Map<string, McpRegistryEntry>();
-  for (const entry of catalog.servers ?? []) {
+  for (const entry of entries) {
     const name = compactText(entry.server?.name);
     if (!name) continue;
     const existing = byName.get(name);
@@ -255,54 +559,151 @@ export async function loadMcpRegistryServers(
     }
   }
 
-  const servers = Array.from(byName.values()).map((entry) => {
-    const server = entry.server ?? {};
-    const name = compactText(server.name);
-    const remote = server.remotes?.find((item) => compactText(item.url)) ?? null;
-    const remoteUrl = compactText(remote?.url);
-    const remoteType = compactText(remote?.type) || 'streamable-http';
-    const sourceUrl =
-      compactText(server.websiteUrl) ||
-      compactText(server.repository?.url) ||
-      remoteUrl ||
-      'https://registry.modelcontextprotocol.io';
-    const title = compactText(server.title) || name;
-    const meta = mcpRegistryMeta(entry);
-    return {
-      id: `registry:${slugFromMcpName(name)}`,
-      title,
-      category: inferMcpCategory(server),
-      description: compactText(server.description) || 'MCP Registry server.',
-      transport: remoteType,
-      command: '',
-      args: [],
-      env: {},
-      url: remoteUrl || undefined,
-      install: remoteUrl
-        ? `远程 MCP（${remoteType}）：${remoteUrl}`
-        : 'MCP Registry 条目；请查看来源获取连接方式。',
-      sourceUrl,
-      registryName: name,
-      connectionUrl: remoteUrl || sourceUrl,
-      version: compactText(server.version) || undefined,
-      updatedAt: meta.updatedAt,
-      installable: false,
-      tags: [
-        'mcp',
-        'registry',
-        remoteType,
-        compactText(server.repository?.source),
-        compactText(server.repository?.subfolder),
-      ].filter(Boolean),
-      recommendationPriority: 20,
-      trust: 'registry',
-    } satisfies McpServerDefinition;
-  });
+  const servers = Array.from(byName.values())
+    .map(registryServerToDefinition)
+    .filter((server): server is McpServerDefinition => Boolean(server));
 
   return dedupeMcpServers(servers);
 }
 
+function inferLobeHubMcpCategory(plugin: LobeHubPluginItem): McpServerCategory {
+  return inferMcpCategory({
+    name: plugin.identifier,
+    title: plugin.name,
+    description: plugin.description,
+    repository: {
+      url: plugin.github?.url,
+      subfolder: plugin.category,
+    },
+  });
+}
+
+function lobeHubTransport(value: string): ProjectMcpTransport {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'stdio') return 'stdio';
+  if (normalized === 'sse') return 'sse';
+  if (normalized === 'http' || normalized === 'streamable-http') return 'streamable-http';
+  return 'streamable-http';
+}
+
+export async function loadLobeHubMcpServers(
+  signal?: AbortSignal,
+  options: { query?: string } = {},
+): Promise<McpServerDefinition[]> {
+  const query = compactText(options.query);
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '80',
+    sort: query ? 'relevance' : 'recommended',
+    order: 'desc',
+    locale: 'zh-CN',
+  });
+  if (query) params.set('q', query);
+  let catalog: LobeHubPluginListResponse;
+  try {
+    catalog = await fetchJson<LobeHubPluginListResponse>(
+      `${LOBEHUB_MARKET_BASE_URL}/api/v1/plugins?${params}`,
+      signal,
+    );
+  } catch (err) {
+    if (isLobeHubAuthRequiredError(err)) return [];
+    throw err;
+  }
+  const servers = (catalog.items ?? [])
+    .map((plugin): McpServerDefinition | null => {
+      const identifier = compactText(plugin.identifier);
+      if (!identifier) return null;
+      const title = compactText(plugin.name) || identifier;
+      const transport = lobeHubTransport(compactText(plugin.connectionType));
+      const sourceUrl =
+        compactText(plugin.github?.url) ||
+        `https://lobehub.com/mcp/${encodeURIComponent(identifier)}`;
+      const capabilities = [
+        plugin.capabilities?.tools ? 'tools' : '',
+        plugin.capabilities?.resources ? 'resources' : '',
+        plugin.capabilities?.prompts ? 'prompts' : '',
+      ].filter(Boolean);
+      return {
+        id: `lobehub:${slugFromMcpName(identifier)}`,
+        title,
+        category: inferLobeHubMcpCategory(plugin),
+        description:
+          compactText(plugin.description) || `${title} LobeHub MCP marketplace entry.`,
+        transport,
+        command: '',
+        args: [],
+        env: {},
+        install:
+          compactText(plugin.installationMethods) ||
+          'LobeHub MCP 市场条目；请查看来源获取安装或连接配置。',
+        sourceUrl,
+        registryName: identifier,
+        connectionUrl: `https://lobehub.com/mcp/${encodeURIComponent(identifier)}`,
+        version: compactText(plugin.version) || undefined,
+        updatedAt: compactText(plugin.updatedAt) || compactText(plugin.createdAt) || undefined,
+        installable: false,
+        tags: [
+          'mcp',
+          'lobehub',
+          transport,
+          compactText(plugin.category),
+          ...capabilities,
+          ...(plugin.tags ?? []),
+        ]
+          .filter(Boolean)
+          .map((tag) => tag.toLowerCase()),
+        recommendationPriority: plugin.isOfficial ? 35 : plugin.isValidated ? 30 : 24,
+        trust: plugin.isOfficial ? 'official' : plugin.isValidated ? 'registry' : 'community',
+      };
+    })
+    .filter((server): server is McpServerDefinition => Boolean(server));
+
+  return dedupeMcpServers(servers);
+}
+
+export async function loadOnlineMcpCatalogServers(
+  signal?: AbortSignal,
+  options: { query?: string } = {},
+): Promise<McpServerDefinition[]> {
+  const query = compactText(options.query);
+  const settled = await Promise.allSettled([
+    loadMcpRegistryServers(signal, { query }),
+    loadLobeHubMcpServers(signal, { query }),
+  ]);
+  if (signal?.aborted) return [];
+  const servers = settled
+    .filter(
+      (result): result is PromiseFulfilledResult<McpServerDefinition[]> =>
+        result.status === 'fulfilled',
+    )
+    .flatMap((result) => result.value);
+  if (servers.length > 0) return dedupeMcpServers(servers);
+  const firstError = settled.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (firstError) throw firstError.reason;
+  return [];
+}
+
 export const MCP_CATALOG: McpServerDefinition[] = [
+  {
+    id: 'lobehub-mcp-market',
+    title: 'LobeHub MCP 市场',
+    category: 'devtools',
+    description:
+      'LobeHub MCP 市场索引，覆盖远程与本地 MCP 插件；在线接口可用时会加载具体条目。',
+    transport: 'streamable-http',
+    command: '',
+    args: [],
+    env: {},
+    install: '打开 LobeHub MCP 市场查看安装方式；具体条目会在在线仓库加载成功后显示。',
+    sourceUrl: 'https://lobehub.com/mcp',
+    connectionUrl: 'https://lobehub.com/mcp',
+    installable: false,
+    tags: ['lobehub', 'mcp', 'market', 'registry'],
+    recommendationPriority: 42,
+    trust: 'registry',
+  },
   {
     id: 'filesystem',
     title: 'Filesystem',
@@ -513,6 +914,24 @@ export const MCP_CATALOG: McpServerDefinition[] = [
     trust: 'community',
   },
   {
+    id: 'mcpmarket-auto-install',
+    title: 'MCPMarket Auto Install',
+    category: 'devtools',
+    description:
+      'mcpmarket.com 出品的 MCP 自动安装器：可搜索官方 MCP Registry、查看详情，并生成/写入其它 MCP server 配置。',
+    transport: 'stdio',
+    command: 'npx',
+    args: ['-y', '@mcpmarket/mcp-auto-install@next'],
+    env: {},
+    install:
+      '通过 npx 按需运行；工具本身会访问官方 MCP Registry，并可按目标客户端写入 MCP 配置。执行写入前请确认目标配置文件。',
+    sourceUrl: 'https://github.com/CherryHQ/mcpmarket/tree/main/packages/mcp-auto-install',
+    tags: ['mcpmarket', 'registry', 'auto-install', 'mcp', 'installer', 'community'],
+    recommendationPriority: 66,
+    trust: 'community',
+    requiresUserApproval: true,
+  },
+  {
     id: 'postgres',
     title: 'PostgreSQL',
     category: 'database',
@@ -622,6 +1041,35 @@ export const MCP_CATALOG: McpServerDefinition[] = [
     sourceUrl: 'https://github.com/ahujasid/blender-mcp',
     tags: ['blender', '3d', 'modeling', 'render', 'game', 'dcc', 'community'],
     recommendationPriority: 76,
+    trust: 'community',
+    requiresUserApproval: true,
+  },
+  {
+    id: 'houdini-mcp',
+    title: 'Houdini MCP',
+    category: 'game',
+    description:
+      '连接 SideFX Houdini，通过本地插件与 stdio 桥接脚本创建和修改节点、执行 Python 代码并驱动程序化资产工作流。',
+    transport: 'stdio',
+    command: 'uv',
+    args: ['run', '--directory', '{workspace}/houdini-mcp', 'python', 'houdini_mcp_server.py'],
+    env: {},
+    install:
+      '需要 SideFX Houdini、uv / Python 3.12+；先 git clone wellingfeng/houdini-mcp，并把 Houdini 插件安装到 houdinimcp 脚本目录，在 Houdini 中启动本地服务（默认 localhost:9876）后再连接。',
+    sourceUrl: 'https://github.com/wellingfeng/houdini-mcp',
+    tags: [
+      'houdini',
+      'sidefx',
+      'procedural',
+      'nodes',
+      'vfx',
+      'dcc',
+      'modeling',
+      'game',
+      'wellingfeng',
+      'community',
+    ],
+    recommendationPriority: 75,
     trust: 'community',
     requiresUserApproval: true,
   },

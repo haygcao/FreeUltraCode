@@ -145,6 +145,25 @@ describe('pluginStore', () => {
           { status: 200 },
         );
       }
+      if (url.includes('market.lobehub.com/api/v1/skills')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                identifier: 'github.owner.repo',
+                name: 'Repo Skill',
+                description: 'LobeHub ZIP skill',
+                category: 'coding',
+                author: 'Owner',
+                isValidated: true,
+                tags: ['code'],
+                version: '1.0.0',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
       return new Response('not found', { status: 404, statusText: 'Not Found' });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -180,6 +199,13 @@ describe('pluginStore', () => {
     expect(
       buildSkillInstallTextFromMarkdown(ueMarkdownSkill!, '# Actor Component Modularity'),
     ).toContain('Source: https://github.com/mrSutivu/Unreal-Engine-5-C-Expert-Skills/blob/main/skills/unreal-engine-5/actor-component-modularity.md');
+
+    expect(catalog.items.find((catalogItem) => catalogItem.id === 'skill:lobehub:github.owner.repo')).toMatchObject({
+      sourceName: 'LobeHub Skills',
+      installKind: 'skillZip',
+      installUrl:
+        'https://market.lobehub.com/api/v1/skills/github.owner.repo/download',
+    });
   });
 
   it('decides whether plugin descriptions need locale translation', () => {

@@ -1,7 +1,10 @@
 import {
   readSettingsRaw,
+  type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
+import { generateCloudflareImage, tauriAvailable } from '@/lib/tauri';
+import { APP_VERSION } from '@/lib/updateCheck';
 
 export type BuiltInImageProviderId =
   | 'agnes-image'
@@ -121,6 +124,16 @@ export interface ImageGenerationSettings {
   providerBaseUrls: Partial<Record<ImageProviderId, string>>;
   providerModels: Partial<Record<ImageProviderId, string>>;
   providerModelLists: Partial<Record<ImageProviderId, string[]>>;
+  /**
+   * Visual-QA closed loop. When enabled, a vision model judges each generated
+   * image against the prompt; if it scores below `verifyThreshold`, the channel
+   * folds the model's defect feedback into the prompt and regenerates, up to
+   * `verifyMaxRetries` extra attempts. Requires a direct (anthropic /
+   * openai-compatible) coding channel; otherwise verification is skipped.
+   */
+  verifyEnabled: boolean;
+  verifyThreshold: number;
+  verifyMaxRetries: number;
 }
 
 export interface ImageGenerationResult {
@@ -138,7 +151,7 @@ export interface ImageGenerationRequest {
   signal?: AbortSignal;
 }
 
-const STORAGE_KEY = 'freeultracode.imageGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.imageGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/imageGeneration.v1.json';
 
 export const IMAGE_PROVIDERS: ImageProviderDefinition[] = [
@@ -723,6 +736,9 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
   providerBaseUrls: {},
   providerModels: {},
   providerModelLists: {},
+  verifyEnabled: false,
+  verifyThreshold: 70,
+  verifyMaxRetries: 1,
 };
 
 function isKnownImageProviderId(
@@ -903,10 +919,7 @@ export function normalizeImageGenerationSettings(
   const validKey = (key: unknown): key is ImageProviderId =>
     isKnownImageProviderId(key, providers);
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_IMAGE_GENERATION_SETTINGS.enabled,
+    enabled: true,
     showComposerModelSelect:
       typeof source.showComposerModelSelect === 'boolean'
         ? source.showComposerModelSelect
@@ -918,21 +931,44 @@ export function normalizeImageGenerationSettings(
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
     providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
+    verifyEnabled:
+      typeof source.verifyEnabled === 'boolean'
+        ? source.verifyEnabled
+        : DEFAULT_IMAGE_GENERATION_SETTINGS.verifyEnabled,
+    verifyThreshold: clampVerifyThreshold(source.verifyThreshold),
+    verifyMaxRetries: clampVerifyMaxRetries(source.verifyMaxRetries),
   };
 }
 
-export function loadImageGenerationSettings(): ImageGenerationSettings {
+function clampVerifyThreshold(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_IMAGE_GENERATION_SETTINGS.verifyThreshold;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function clampVerifyMaxRetries(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_IMAGE_GENERATION_SETTINGS.verifyMaxRetries;
+  return Math.max(0, Math.min(3, Math.round(n)));
+}
+
+export function loadImageGenerationSettings(
+  options: SettingsProfileOptions = {},
+): ImageGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeImageGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_IMAGE_GENERATION_SETTINGS;
   }
 }
 
-export function saveImageGenerationSettings(settings: ImageGenerationSettings): boolean {
+export function saveImageGenerationSettings(
+  settings: ImageGenerationSettings,
+  options: SettingsProfileOptions = {},
+): boolean {
   const payload = JSON.stringify(normalizeImageGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     // Surface the failure instead of silently dropping the write — a swallowed
     // QuotaExceededError here is exactly what makes a freshly-added channel look
@@ -940,7 +976,7 @@ export function saveImageGenerationSettings(settings: ImageGenerationSettings): 
     console.error('[imageGeneration] failed to persist settings');
     return false;
   }
-  window.dispatchEvent(new Event('fuc:image-generation-settings-changed'));
+  window.dispatchEvent(new Event('ugs:image-generation-settings-changed'));
   return true;
 }
 
@@ -1037,7 +1073,6 @@ export async function generateImage(
   request: ImageGenerationRequest,
   settings = loadImageGenerationSettings(),
 ): Promise<ImageGenerationResult> {
-  if (!settings.enabled) throw new Error('IMAGE_GENERATION_DISABLED');
   const providerId = request.providerId ?? preferredReadyImageProviderId(settings);
   if (!providerId) throw new Error('NO_READY_IMAGE_PROVIDER');
   if (!imageProviderReady(providerId, settings)) {
@@ -1117,6 +1152,16 @@ async function generateCloudflare(
   const accountId = settings.providerAccountIds.cloudflare?.trim();
   const apiKey = settings.providerKeys.cloudflare?.trim();
   if (!accountId || !apiKey) throw new Error('Cloudflare Account ID or API token is missing.');
+  if (tauriAvailable()) {
+    return [
+      await generateCloudflareImage({
+        accountId,
+        apiKey,
+        model,
+        prompt,
+      }),
+    ];
+  }
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(
       accountId,
@@ -1796,7 +1841,7 @@ async function generateAiHorde(
     headers: {
       apikey: apiKey,
       'Content-Type': 'application/json',
-      'Client-Agent': 'OpenWorkflow:0.2.7:github.com/wellingfeng/OpenWorkflow',
+      'Client-Agent': `UltraGameStudio:${APP_VERSION}:github.com/wellingfeng/UltraGameStudio`,
     },
     body: JSON.stringify({
       prompt,

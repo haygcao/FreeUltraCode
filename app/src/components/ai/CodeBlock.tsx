@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import RawCodeBlock from './RawCodeBlock';
 import MermaidBlock from './MermaidBlock';
 import ComfyGraphBlock from './ComfyGraphBlock';
+import WorldModelBlock from './WorldModelBlock';
 
 /**
  * Recursively collect the plain text of a hast node (rehype-highlight wraps the
@@ -64,6 +65,10 @@ export default function CodeBlock({
 
   if (normalizedLang === 'comfyui' || normalizedLang === 'comfy') {
     return <ComfyGraphBlock code={raw} />;
+  }
+
+  if (normalizedLang === 'worldmodel' || normalizedLang === 'world') {
+    return <WorldModelBlock code={raw} />;
   }
 
   return <RawCodeBlock raw={raw} language={lang}>{children}</RawCodeBlock>;

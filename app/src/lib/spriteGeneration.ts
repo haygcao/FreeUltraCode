@@ -5,7 +5,11 @@ import {
   type ImageGenerationSettings,
   type ImageProviderId,
 } from './imageGeneration';
-import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
+import {
+  readSettingsRaw,
+  type SettingsProfileOptions,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
 
 export type SpriteProviderId = 'ludo-sprite' | 'local-comfyui-sprite';
 
@@ -87,7 +91,7 @@ export interface SpriteGenerationResult {
   metadata: string[];
 }
 
-const STORAGE_KEY = 'freeultracode.spriteGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.spriteGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/spriteGeneration.v1.json';
 const MIN_FRAME_COUNT = 1;
 const MAX_FRAME_COUNT = 64;
@@ -268,10 +272,7 @@ export function normalizeSpriteGenerationSettings(
     ? source.sheetPreset
     : DEFAULT_SPRITE_GENERATION_SETTINGS.sheetPreset;
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_SPRITE_GENERATION_SETTINGS.enabled,
+    enabled: true,
     preferredProviderId,
     providerKeys: cleanRecord(source.providerKeys, isSpriteProviderId),
     providerBaseUrls: cleanRecord(source.providerBaseUrls, isSpriteProviderId),
@@ -337,24 +338,29 @@ export function normalizeSpriteGenerationSettings(
   };
 }
 
-export function loadSpriteGenerationSettings(): SpriteGenerationSettings {
+export function loadSpriteGenerationSettings(
+  options: SettingsProfileOptions = {},
+): SpriteGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeSpriteGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_SPRITE_GENERATION_SETTINGS;
   }
 }
 
-export function saveSpriteGenerationSettings(settings: SpriteGenerationSettings): void {
+export function saveSpriteGenerationSettings(
+  settings: SpriteGenerationSettings,
+  options: SettingsProfileOptions = {},
+): void {
   const payload = JSON.stringify(normalizeSpriteGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[spriteGeneration] failed to persist settings');
     return;
   }
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('fuc:sprite-generation-settings-changed'));
+    window.dispatchEvent(new Event('ugs:sprite-generation-settings-changed'));
   }
 }
 
@@ -453,7 +459,6 @@ export async function generateSprite(
   settings = loadSpriteGenerationSettings(),
   imageSettings: ImageGenerationSettings = loadImageGenerationSettings(),
 ): Promise<SpriteGenerationResult> {
-  if (!settings.enabled) throw new Error('SPRITE_GENERATION_DISABLED');
   const prompt = stripSpriteCommand(request.prompt);
   const settingsGrid = spriteSheetGridForSettings(settings);
   const frameCount =
@@ -555,11 +560,13 @@ function spritePromptWithContract(payload: SpriteProviderPayload): string {
     payload.prompt.trim(),
     '',
     'Sprite Forge compatible raw spritesheet constraints:',
-    `- exact layout: ${grid.rows} rows x ${grid.columns} columns, ${payload.frameCount} frames, each frame ${payload.frameSize}x${payload.frameSize}px`,
-    `- ${backgroundLine}`,
+    '- output one raw spritesheet image only; no separate panels, no rendered manifest, no descriptive text inside the image',
+    `- exact layout: ${grid.rows} rows x ${grid.columns} columns, ${payload.frameCount} frames, each frame ${payload.frameSize}x${payload.frameSize}px, identical canvas size per cell`,
+    `- ${backgroundLine}; raw sheet should remain suitable for lossless normalization`,
     '- one subject and one action only, consistent identity, proportions, facing direction, lighting, and silhouette across all frames',
-    `- stable ${payload.frameAnchor} anchor, centered subject, even spacing, safe margins, no frame touches canvas edge`,
+    '- real animation poses only: change limbs, body posture, timing, or VFX shape; do not fake motion by sliding, zooming, or rotating a static pose across cells',
+    `- stable ${payload.frameAnchor} root anchor, centered subject, even spacing, safe margins, no frame touches canvas edge, subject fit around ${Math.round(payload.fitScale * 100)}% of each cell`,
     '- no text, labels, UI, watermark, border, grid line, scenery, shadow-only artifacts, duplicate poses, or mixed actions',
-    '- output a single game-ready spritesheet suitable for deterministic chroma-key cleanup, frame extraction, alignment, and QC',
+    '- compatible with deterministic chroma-key cleanup, frame extraction, anchor alignment, normalized sheet export, GIF preview, manifest metadata, and QC',
   ].join('\n');
 }

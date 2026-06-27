@@ -7,9 +7,9 @@
  * every model: when a node needs the user to choose between options or type
  * something, it emits a delimited JSON block and ends its turn:
  *
- *     <<FUC_ASK>>
+ *     <<UGS_ASK>>
  *     { "type": "select", "prompt": "选择部署环境", "options": ["staging","prod"] }
- *     <<FUC_ASK_END>>
+ *     <<UGS_ASK_END>>
  *
  * The run loop parses that block, renders an interactive widget in the AI-return
  * dock, waits for the user's answer, appends the answer to the node prompt, and
@@ -21,6 +21,9 @@
  * text, the request/answer types, and the tolerant parse / strip / format-back
  * helpers.
  */
+
+import { MEMORY_OPEN } from './memoryProtocol';
+import { RECALL_OPEN } from './recallProtocol';
 
 /** The kinds of user interaction a node can request. */
 export type InteractionKind = 'select' | 'input' | 'confirm';
@@ -55,8 +58,8 @@ export interface InteractionAnswer {
   confirmed?: boolean;
 }
 
-const ASK_OPEN = '<<FUC_ASK>>';
-const ASK_CLOSE = '<<FUC_ASK_END>>';
+const ASK_OPEN = '<<UGS_ASK>>';
+const ASK_CLOSE = '<<UGS_ASK_END>>';
 
 /**
  * Instruction block appended to every executable node prompt. Kept terse and
@@ -124,7 +127,7 @@ function firstJsonObject(text: string): string | null {
 
 /**
  * Parse a node's output for an interaction request. Keyed strictly on the
- * `<<FUC_ASK>>` sentinel — a unique token we inject and instruct every model to
+ * `<<UGS_ASK>>` sentinel — a unique token we inject and instruct every model to
  * use — so normal output that happens to contain JSON (e.g. a code-generating
  * node) never false-positives and wrongly pauses the run. Returns null when no
  * valid request is present.
@@ -200,6 +203,10 @@ export function liveProse(text: string): string {
   if (ask !== -1) cuts.push(ask);
   const fence = text.indexOf('```');
   if (fence !== -1) cuts.push(fence);
+  const mem = text.indexOf(MEMORY_OPEN);
+  if (mem !== -1) cuts.push(mem);
+  const recall = text.indexOf(RECALL_OPEN);
+  if (recall !== -1) cuts.push(recall);
   const visible = cuts.length === 0 ? text : text.slice(0, Math.min(...cuts)).trimEnd();
   return compactRuntimeHeartbeatLines(visible);
 }

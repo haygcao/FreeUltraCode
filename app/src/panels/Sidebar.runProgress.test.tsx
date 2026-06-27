@@ -53,6 +53,8 @@ type MockStoreState = {
   sessionTree: Record<string, MockSession[]>;
   activeWorkspaceId: string | null;
   activeSessionId: string | null;
+  composerDraft: string;
+  composerDrafts: Record<string, string>;
   runningSessions: SessionKey[];
   runningSessionProgress: Record<
     string,
@@ -184,8 +186,8 @@ import Sidebar from './Sidebar';
 
 const WORKSPACE: MockWorkspace = {
   id: 'ws_test',
-  path: 'E:\\FreeUltraCode',
-  name: 'FreeUltraCode',
+  path: 'E:\\UltraGameStudio',
+  name: 'UltraGameStudio',
   updatedAt: 1_700_000_000_000,
   sessionCount: 1,
   lastActiveSessionId: 's_workflow',
@@ -215,6 +217,8 @@ function resetSidebarStore(): void {
     sessionTree: { [WORKSPACE.id]: [SESSION] },
     activeWorkspaceId: WORKSPACE.id,
     activeSessionId: SESSION.id,
+    composerDraft: '',
+    composerDrafts: {},
     runningSessions: [],
     runningSessionProgress: {},
     aiEditingSessions: [],
@@ -276,13 +280,20 @@ function runningDot(
 
 function statusDot(
   container: HTMLElement,
-  status: 'none' | 'thinking' | 'unrun' | 'running' | 'success' | 'failed',
+  status:
+    | 'none'
+    | 'thinking'
+    | 'unrun'
+    | 'running'
+    | 'draft'
+    | 'success'
+    | 'failed',
 ): HTMLElement | null {
   return container.querySelector(`[data-status="${status}"]`);
 }
 
 function statusIndicator(dot: HTMLElement | null): HTMLElement | null {
-  return dot?.querySelector<HTMLElement>('.fuc-status-indicator') ?? null;
+  return dot?.querySelector<HTMLElement>('.ugs-status-indicator') ?? null;
 }
 
 function newSessionButton(container: HTMLElement): HTMLButtonElement {
@@ -1167,8 +1178,8 @@ describe('Sidebar running progress dot', () => {
       expect(zeroDot).not.toBeNull();
       const zeroSpinner = statusIndicator(zeroDot);
       expect(zeroSpinner).not.toBeNull();
-      expect(zeroSpinner?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(zeroSpinner?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(zeroSpinner?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(zeroSpinner?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-success)',
       );
 
@@ -1186,8 +1197,8 @@ describe('Sidebar running progress dot', () => {
       expect(completeDot?.getAttribute('title')).toBe('正在运行，进度 100%');
       const completeSpinner = statusIndicator(completeDot);
       expect(completeSpinner).not.toBeNull();
-      expect(completeSpinner?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(completeSpinner?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(completeSpinner?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(completeSpinner?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-success)',
       );
       expect(statusDot(view.container, 'success')).toBeNull();
@@ -1206,10 +1217,55 @@ describe('Sidebar running progress dot', () => {
       expect(dot?.getAttribute('title')).toBe('未运行');
       const indicator = statusIndicator(dot);
       expect(indicator).not.toBeNull();
-      expect(indicator?.classList.contains('fuc-status-spinner')).toBe(false);
-      expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(false);
+      expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-ai-edit)',
       );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('renders a session with an unsent draft as a static purple dot', async () => {
+    resetSidebarStore();
+    // Idle session (not the active one) that still holds composer text.
+    mockState.activeSessionId = null;
+    mockState.composerDrafts = {
+      [`${WORKSPACE.id}::${SESSION.id}`]: 'unsent text',
+    };
+
+    const view = await renderSidebar();
+
+    try {
+      const dot = statusDot(view.container, 'draft');
+      expect(dot).not.toBeNull();
+      expect(dot?.getAttribute('title')).toBe('有未发送草稿');
+      const indicator = statusIndicator(dot);
+      expect(indicator).not.toBeNull();
+      // Draft is a static marker, never a spinner.
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(false);
+      expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
+        'var(--status-draft)',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps the running spinner over a draft when a session is both', async () => {
+    resetSidebarStore();
+    // Active session that is running AND has live composer text: running wins.
+    mockState.composerDraft = 'unsent text';
+    mockState.runningSessions = [SESSION_KEY];
+
+    const view = await renderSidebar();
+
+    try {
+      expect(statusDot(view.container, 'draft')).toBeNull();
+      const dot = statusDot(view.container, 'running');
+      expect(dot).not.toBeNull();
+      const indicator = statusIndicator(dot);
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(true);
     } finally {
       await view.cleanup();
     }
@@ -1233,7 +1289,7 @@ describe('Sidebar running progress dot', () => {
         '[data-status="none"]',
       );
       expect(emptySlot).not.toBeNull();
-      expect(emptySlot?.classList.contains('fuc-status-slot')).toBe(true);
+      expect(emptySlot?.classList.contains('ugs-status-slot')).toBe(true);
       expect(statusIndicator(emptySlot as HTMLElement)).toBeNull();
     } finally {
       await view.cleanup();
@@ -1257,8 +1313,8 @@ describe('Sidebar running progress dot', () => {
       expect(dot?.getAttribute('title')).toBe('正在运行，进度未知');
       const indicator = statusIndicator(dot);
       expect(indicator).not.toBeNull();
-      expect(indicator?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-success)',
       );
       expect(statusDot(view.container, 'thinking')).toBeNull();
@@ -1288,8 +1344,8 @@ describe('Sidebar running progress dot', () => {
         expect(dot?.getAttribute('title')).toBe(label);
         const indicator = statusIndicator(dot);
         expect(indicator).not.toBeNull();
-        expect(indicator?.classList.contains('fuc-status-spinner')).toBe(false);
-        expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+        expect(indicator?.classList.contains('ugs-status-spinner')).toBe(false);
+        expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
           color,
         );
       } finally {
@@ -1319,8 +1375,8 @@ describe('Sidebar running progress dot', () => {
         expect(dot?.getAttribute('title')).toBe(label);
         const indicator = statusIndicator(dot);
         expect(indicator).not.toBeNull();
-        expect(indicator?.classList.contains('fuc-status-spinner')).toBe(false);
-        expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+        expect(indicator?.classList.contains('ugs-status-spinner')).toBe(false);
+        expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
           color,
         );
       } finally {
@@ -1400,8 +1456,8 @@ describe('Sidebar running progress dot', () => {
       expect(dot?.getAttribute('title')).toBe('AI 思考中');
       const indicator = statusIndicator(dot);
       expect(indicator).not.toBeNull();
-      expect(indicator?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-ai-edit)',
       );
     } finally {
@@ -1627,6 +1683,83 @@ describe('Sidebar live session ordering', () => {
     mockState.aiEditingSessions = [
       { workspaceId: null, sessionId: thinkingSession.id },
     ];
+
+    const view = await renderSidebar();
+
+    try {
+      expect(sessionTitleOrder(view.container, titles)).toEqual(titles);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('promotes sessions with an unsent composer draft above idle ones', async () => {
+    resetSidebarStore();
+    const draftSession = {
+      ...SESSION,
+      id: 's_draft_old',
+      title: 'Drafted old',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    };
+    const recentSession = {
+      ...SESSION,
+      id: 's_recent_idle',
+      title: 'Recent idle',
+      createdAt: 1_700_000_200_000,
+      updatedAt: 1_700_000_200_000,
+    };
+    // Drafted (older) should float above the more recent idle session.
+    const titles = [draftSession.title, recentSession.title];
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [recentSession, draftSession],
+    };
+    mockState.sessions = [recentSession, draftSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+    mockState.activeSessionId = recentSession.id;
+    mockState.composerDrafts = {
+      [`${WORKSPACE.id}::${draftSession.id}`]: 'unsent text',
+    };
+
+    const view = await renderSidebar();
+
+    try {
+      expect(sessionTitleOrder(view.container, titles)).toEqual(titles);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps running sessions above drafted-but-idle ones', async () => {
+    resetSidebarStore();
+    const runningSession = {
+      ...SESSION,
+      id: 's_running_old',
+      title: 'Running old',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    };
+    const draftSession = {
+      ...SESSION,
+      id: 's_draft_new',
+      title: 'Drafted new',
+      createdAt: 1_700_000_200_000,
+      updatedAt: 1_700_000_200_000,
+    };
+    // Running outranks a draft even though the draft is more recent.
+    const titles = [runningSession.title, draftSession.title];
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [draftSession, runningSession],
+    };
+    mockState.sessions = [draftSession, runningSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+    mockState.activeSessionId = runningSession.id;
+    mockState.runningSessions = [
+      { workspaceId: WORKSPACE.id, sessionId: runningSession.id },
+    ];
+    mockState.composerDrafts = {
+      [`${WORKSPACE.id}::${draftSession.id}`]: 'unsent text',
+    };
 
     const view = await renderSidebar();
 

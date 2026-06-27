@@ -806,6 +806,7 @@ describe('workflow read-only guard', () => {
         workspace: '',
         workspaceFolders: [],
         modelStrategy: 'inherit',
+        gddMode: false,
         imageMode: false,
         musicMode: false,
         threeDMode: false,
@@ -814,7 +815,9 @@ describe('workflow read-only guard', () => {
         spriteMode: false,
         comfyMode: false,
         uiMode: false,
+        metahumanMode: false,
         blueprintMode: false,
+        worldMode: false,
       },
     });
 

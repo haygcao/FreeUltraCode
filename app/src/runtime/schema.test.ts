@@ -118,6 +118,19 @@ describe('validateAgainstSchema (example-object style)', () => {
     expect(validateAgainstSchema('anything', undefined)).toEqual({
       ok: true,
       problems: [],
+      diagnostics: [],
+    });
+  });
+});
+
+describe('validateAgainstSchema diagnostics', () => {
+  it('includes path, expected value, and actual value for structured feedback', () => {
+    const r = validateAgainstSchema({ name: 'x', count: 'bad' }, { name: '', count: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]).toMatchObject({
+      path: '根.count',
+      expected: 'number',
+      actual: 'string',
     });
   });
 });
@@ -225,7 +238,7 @@ describe('runAgentWithInteraction + schema enforcement', () => {
     expect(seenPrompt).toContain('- 默认使用中文');
   });
 
-  it('skips app personal instructions for the Codex adapter', async () => {
+  it('injects app personal instructions for the Codex adapter', async () => {
     let seenPrompt = '';
     const gw = fakeGateway(async (prompt) => {
       seenPrompt = prompt;
@@ -246,8 +259,8 @@ describe('runAgentWithInteraction + schema enforcement', () => {
       cli: {},
     });
 
-    expect(seenPrompt).not.toContain('【用户个人默认指令（低优先级）】');
-    expect(seenPrompt).not.toContain('- 默认使用中文');
+    expect(seenPrompt).toContain('【用户个人默认指令（低优先级）】');
+    expect(seenPrompt).toContain('- 默认使用中文');
   });
 
   it('selects personal instructions by the executed model selection', async () => {

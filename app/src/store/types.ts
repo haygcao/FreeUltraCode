@@ -7,7 +7,7 @@ import type {
   InteractionAnswer,
   InteractionRequest,
 } from '@/core/interaction';
-import type { UltracodeRunProgress } from '@/runtime/ultracodeProgress';
+import type { StudioRunProgress } from '@/runtime/studioProgress';
 import type {
   Locale,
   PromptGroupLocaleValue,
@@ -15,6 +15,14 @@ import type {
 } from '@/lib/i18n';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
+
+export type MessageAppAction =
+  | {
+      type: 'blueprint-mode-install';
+      rootPath: string;
+      modeArgs?: string | null;
+      prompt?: string;
+    };
 
 /** Per-node execution status while a workflow is running. */
 export type NodeRunState = IRRunStatus;
@@ -65,13 +73,15 @@ export interface Message {
   interactionAnswer?: InteractionAnswer;
   /** Widget lifecycle; gates rendering (pending = active, else read-only). */
   interactionStatus?: InteractionStatus;
+  /** App-owned interactive actions rendered through the same AI return widget. */
+  appAction?: MessageAppAction;
   /**
-   * Present on the assistant message of a live `/ultracode` run: a structured
+   * Present on the assistant message of a live `/studio` run: a structured
    * snapshot of run progress (agent count, elapsed, per-node status) decoded
-   * from the CLI's `<<FUC_PROGRESS>>` sentinels. Drives the run-progress card
-   * rendered above the message's log text. See runtime/ultracodeProgress.ts.
+   * from the CLI's `<<UGS_PROGRESS>>` sentinels. Drives the run-progress card
+   * rendered above the message's log text. See runtime/studioProgress.ts.
    */
-  runProgress?: UltracodeRunProgress;
+  runProgress?: StudioRunProgress;
   /**
    * Per-turn token usage for an assistant message: the snapshot delta across the
    * turn that produced it (a turn may issue several model sub-calls). Persisted
@@ -197,9 +207,9 @@ export interface ComposerSettings {
   /** matches a modelOptions[].id */
   model: string;
   /**
-   * 会话缓存时间(TTL)，单位分钟。决定一次会话在没有新输出时上下文/进程的
-   * 保活时长(映射到 CLI 的 idle/keep-alive 超时)。仅允许 5/10/20/30/40/50/60,
-   * 默认 5。会话开启(发出首条消息)后锁定，不再可改。
+   * 会话缓存时间(TTL)，单位分钟。用于标记会话上下文希望保留的时长。
+   * 仅允许 5/10/20/30/40/50/60, 默认 5。会话开启(发出首条消息)
+   * 后锁定，不再可改。
    */
   cacheTtlMinutes: number;
   /**
@@ -214,6 +224,13 @@ export interface ComposerSettings {
   workspaceFolders: string[];
   /** AI 改图时为每个节点自动选模型的策略 */
   modelStrategy: ModelStrategy;
+  /**
+   * 粘性 GDD 草稿模式。true 时裸文本走“反复修改 GDD/资产清单/实现计划”
+   * 流程；由 /gdd-mode-start 开启、/gdd-mode-end 冻结并退出。
+   */
+  gddMode: boolean;
+  /** Epoch ms when sticky GDD mode started. */
+  gddModeStartedAt?: number | null;
   /**
    * 粘性生图模式。true 时输入框里的裸文本(无 slash 命令)走图片生成而非
    * AI 编程;由 /image-mode-start 开启、/image-mode-end 关闭。
@@ -266,6 +283,15 @@ export interface ComposerSettings {
   /** Epoch ms when sticky ComfyUI mode started; used to merge mode-local prompts. */
   comfyModeStartedAt?: number | null;
   /**
+   * 粘性世界模型模式。true 时输入框里的裸文本(无 slash 命令)走交互式可玩世界
+   * 模型生成而非 AI 编程;由 /worldmodel-mode-start 开启、/worldmodel-mode-end
+   * 关闭。编程模型被要求输出一个 ```worldmodel 代码块(世界定义 JSON),信息流
+   * 将其渲染为可展开、可直接试玩的内嵌世界预览。
+   */
+  worldMode: boolean;
+  /** Epoch ms when sticky world-model mode started; used to merge mode-local prompts. */
+  worldModeStartedAt?: number | null;
+  /**
    * 粘性 UI 设计模式。true 时输入框里的裸文本(无 slash 命令)走游戏 UI 设计流程而非
    * 普通 AI 编程;由 /ui-mode-start 开启、/ui-mode-end 关闭。编程模型被要求按默认
    * UI 渠道产出界面设计稿与可交付资产。
@@ -273,6 +299,14 @@ export interface ComposerSettings {
   uiMode: boolean;
   /** Epoch ms when sticky UI mode started; used to merge mode-local prompts. */
   uiModeStartedAt?: number | null;
+  /**
+   * 粘性 MetaHuman MVP 模式。true 时输入框里的裸文本走“参考脸图 → 3D 人脸
+   * mesh/参数拟合 → UE 本地 MetaHuman Identity/Character”的分阶段确认流程，
+   * 而不是普通 AI 编程;由 /metahuman-mode-start 开启、/metahuman-mode-end 关闭。
+   */
+  metahumanMode: boolean;
+  /** Epoch ms when sticky MetaHuman MVP mode started. */
+  metahumanModeStartedAt?: number | null;
   /**
    * 粘性 UE 蓝图模式。true 时输入框里的裸文本走 UE 蓝图编排提示，而不是普通
    * AI 编程;由 /blueprint-mode-start 开启、/blueprint-mode-end 关闭。

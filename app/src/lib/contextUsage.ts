@@ -3,6 +3,7 @@ import type { RuntimeAdapterId } from '@/lib/adapters';
 import type { Message } from '@/store/types';
 
 export const SIMPLE_CHAT_CONTEXT_MESSAGE_LIMIT = 20;
+export const SIMPLE_CHAT_CONTEXT_INITIAL_MESSAGE_LIMIT = 5;
 
 const DEFAULT_CONTEXT_LIMIT_TOKENS = 200_000;
 const GEMINI_CONTEXT_LIMIT_TOKENS = 1_000_000;
@@ -27,7 +28,7 @@ function stripRouteLine(text: string): string {
 
 function contextMessageText(message: Message): string {
   const raw =
-    message.role === 'assistant' && message.text.includes('<<FUC_TOOL>>')
+    message.role === 'assistant' && message.text.includes('<<UGS_TOOL>>')
       ? extractToolSentinels(message.text).text
       : message.text;
   return stripRouteLine(raw);
@@ -49,6 +50,34 @@ function explicitContextLimitFromModel(model: string): number | null {
   if (thousand) return Math.round(Number(thousand[1]) * 1_000);
 
   return null;
+}
+
+function contextMessagesForEstimate(
+  messages: Message[],
+  simpleChatMode: boolean,
+  simpleChatMessageLimit = SIMPLE_CHAT_CONTEXT_MESSAGE_LIMIT,
+): Array<{ message: Message; text: string }> {
+  if (!simpleChatMode) {
+    return messages.flatMap((message) => {
+      if (message.role === 'system') return [];
+      const text = contextMessageText(message);
+      return text ? [{ message, text }] : [];
+    });
+  }
+
+  const out: Array<{ message: Message; text: string }> = [];
+  for (
+    let i = messages.length - 1;
+    i >= 0 && out.length < simpleChatMessageLimit;
+    i -= 1
+  ) {
+    const message = messages[i];
+    if (message.role === 'system') continue;
+    const text = contextMessageText(message);
+    if (text) out.push({ message, text });
+  }
+  out.reverse();
+  return out;
 }
 
 export function contextLimitForModel(
@@ -90,22 +119,22 @@ export function estimateContextUsage({
   adapter,
   model,
   simpleChatMode,
+  simpleChatMessageLimit,
 }: {
   messages: Message[];
   draft: string;
   adapter: RuntimeAdapterId;
   model?: string | null;
   simpleChatMode: boolean;
+  simpleChatMessageLimit?: number;
 }): ContextUsageEstimate {
-  const relevantMessages = messages.filter(
-    (message) => message.role !== 'system' && contextMessageText(message),
+  const contextMessages = contextMessagesForEstimate(
+    messages,
+    simpleChatMode,
+    simpleChatMessageLimit,
   );
-  const contextMessages = simpleChatMode
-    ? relevantMessages.slice(-SIMPLE_CHAT_CONTEXT_MESSAGE_LIMIT)
-    : relevantMessages;
   const transcript = contextMessages
-    .map((message) => {
-      const text = contextMessageText(message);
+    .map(({ message, text }) => {
       const role = message.role === 'user' ? 'User' : 'Assistant';
       return `${role}: ${text}`;
     })

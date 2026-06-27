@@ -20,41 +20,97 @@ describe('toolEvent sentinel codec', () => {
   });
 
   it('leaves an incomplete trailing sentinel in place', () => {
-    const partial = 'text <<FUC_TOOL>>{"id":"x"';
+    const partial = 'text <<UGS_TOOL>>{"id":"x"';
     const { text, patches } = extractToolSentinels(partial);
     expect(patches).toEqual([]);
-    expect(text).toContain('<<FUC_TOOL>>');
+    expect(text).toContain('<<UGS_TOOL>>');
   });
 
-  it('keeps a literal FUC_TOOL marker in prose instead of dropping it', () => {
+  it('renders a half-streamed trailing sentinel as an in-progress patch', () => {
+    // Mirrors the real bug: a tool whose args carry a large body streams the
+    // opening `<<UGS_TOOL>>{…` long before its `<<UGS_TOOL_END>>` arrives. With
+    // streamingTail it must surface as a running tool card, not raw JSON prose.
+    const partial =
+      'Writing the file.\n<<UGS_TOOL>>{"id":"t1","name":"Edit","subject":"SKILL.md","status":"running","args":{"file_path":"SKILL.md","new_string":"# Title\\nlots of stream';
+    const { text, patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches).toEqual([
+      { id: 't1', name: 'Edit', status: 'running', subject: 'SKILL.md' },
+    ]);
+    expect(text).not.toContain('UGS_TOOL');
+    expect(text).not.toContain('new_string');
+    expect(text).toContain('Writing the file.');
+  });
+
+  it('infers name/subject for a half-streamed sentinel that lacks them yet', () => {
+    // Some emitters put `args` first; before `name`/`subject` arrive we still
+    // want a sensible card from whatever streamed.
+    const partial =
+      '<<UGS_TOOL>>{"args":{"file_path":"Config/Skills/SKILL.md","new_string":"big body that never closes';
+    const { patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toMatchObject({
+      name: 'Edit',
+      status: 'running',
+      subject: 'Config/Skills/SKILL.md',
+    });
+  });
+
+  it('ignores a field name that only appears inside the streaming body', () => {
+    // A `"name"` substring inside the unterminated new_string body must not be
+    // mistaken for the tool name.
+    const partial =
+      '<<UGS_TOOL>>{"id":"t2","new_string":"const \\"name\\": \\"trap\\" still streaming';
+    const { patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches[0]).toMatchObject({ id: 't2', name: 'Edit', status: 'running' });
+  });
+
+  it('does not treat a literal prose marker as a streaming tool card', () => {
+    // The model explaining the protocol writes `<<UGS_TOOL>>` followed by prose,
+    // not a JSON object — keep it verbatim even under streamingTail.
+    const partial = 'The marker is <<UGS_TOOL>> and it opens a block.';
+    const { text, patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches).toEqual([]);
+    expect(text).toContain('<<UGS_TOOL>>');
+  });
+
+  it('keeps the incomplete sentinel verbatim when not streaming', () => {
+    // A final (non-streaming) render has no more chunks coming, so the old
+    // verbatim behaviour stands — we don't fabricate a card that never closed.
+    const partial = 'text <<UGS_TOOL>>{"id":"x","name":"Edit"';
+    const { text, patches } = extractToolSentinels(partial);
+    expect(patches).toEqual([]);
+    expect(text).toContain('<<UGS_TOOL>>');
+  });
+
+  it('keeps a literal UGS_TOOL marker in prose instead of dropping it', () => {
     // The model wrote the token itself (e.g. explaining the protocol). Its body
     // isn't a valid patch, so it must survive as prose rather than be dropped.
     const { text, patches } = extractToolSentinels(
-      '<<FUC_TOOL>>not json<<FUC_TOOL_END>>',
+      '<<UGS_TOOL>>not json<<UGS_TOOL_END>>',
     );
     expect(patches).toEqual([]);
-    expect(text).toContain('<<FUC_TOOL>>');
+    expect(text).toContain('<<UGS_TOOL>>');
   });
 
   it('does not swallow real sentinels after a literal marker in prose', () => {
-    // Regression: a literal `<<FUC_TOOL>>` written in the answer used to pair
-    // with a genuine sentinel's `<<FUC_TOOL_END>>` downstream, treating the
+    // Regression: a literal `<<UGS_TOOL>>` written in the answer used to pair
+    // with a genuine sentinel's `<<UGS_TOOL_END>>` downstream, treating the
     // whole span as one unparseable block — which JSON.parse dropped, silently
     // truncating the rendered message at the literal marker.
     const real = encodeToolPatch({ id: 'a', name: 'Bash', status: 'done' });
-    const text = `prose mentioning <<FUC_TOOL>> then more prose${real}tail`;
+    const text = `prose mentioning <<UGS_TOOL>> then more prose${real}tail`;
     const { text: out, patches } = extractToolSentinels(text);
     expect(patches).toEqual([{ id: 'a', name: 'Bash', status: 'done' }]);
-    expect(out).toContain('<<FUC_TOOL>>');
+    expect(out).toContain('<<UGS_TOOL>>');
     expect(out).toContain('then more prose');
     expect(out).toContain('tail');
   });
 
   it('round-trips a result that contains the literal sentinel markers', () => {
-    // Reading a file whose source mentions <<FUC_TOOL>> / <<FUC_TOOL_END>> must
+    // Reading a file whose source mentions <<UGS_TOOL>> / <<UGS_TOOL_END>> must
     // not let those markers prematurely close the block and leak as prose.
     const result =
-      'const OPEN = "<<FUC_TOOL>>";\nconst CLOSE = "<<FUC_TOOL_END>>";\n';
+      'const OPEN = "<<UGS_TOOL>>";\nconst CLOSE = "<<UGS_TOOL_END>>";\n';
     const block = encodeToolPatch({ id: 'r', name: 'Read', status: 'done', result });
     const { text, patches } = extractToolSentinels(`before${block}after`);
     expect(text.replace(/\s/g, '')).toBe('beforeafter');
@@ -66,11 +122,11 @@ describe('toolEvent sentinel codec', () => {
       id: 's',
       name: 'Grep',
       status: 'running',
-      subject: '<<FUC_TOOL_END>>',
+      subject: '<<UGS_TOOL_END>>',
     });
     const { patches } = extractToolSentinels(block);
     expect(patches).toEqual([
-      { id: 's', name: 'Grep', status: 'running', subject: '<<FUC_TOOL_END>>' },
+      { id: 's', name: 'Grep', status: 'running', subject: '<<UGS_TOOL_END>>' },
     ]);
   });
 
@@ -251,13 +307,39 @@ describe('segmentMessage tool segments', () => {
     expect(segmentMessage('just prose')).toEqual([{ type: 'answer', text: 'just prose' }]);
   });
 
+  it('shows a half-streamed trailing tool sentinel as a running card while live', () => {
+    const text =
+      'Writing the skill file.\n' +
+      '<<UGS_TOOL>>{"id":"t9","name":"Edit","subject":"SKILL.md","status":"running","args":{"file_path":"SKILL.md","new_string":"# MoonCodeReview\\nlong body still streaming and never closed';
+    const segs = segmentMessage(text, true);
+    expect(segs.map((s) => s.type)).toEqual(['answer', 'tools']);
+    const tools = segs.find((s) => s.type === 'tools');
+    expect(tools && tools.type === 'tools' && tools.events[0]).toMatchObject({
+      id: 't9',
+      name: 'Edit',
+      status: 'running',
+      subject: 'SKILL.md',
+    });
+    for (const s of segs) {
+      if (s.type === 'answer') expect(s.text).not.toContain('UGS_TOOL');
+    }
+  });
+
+  it('does not fabricate a running card for a half sentinel on the final render', () => {
+    const text =
+      'done\n<<UGS_TOOL>>{"id":"t9","name":"Edit","args":{"new_string":"unterminated';
+    const segs = segmentMessage(text, false);
+    // Non-streaming: the incomplete marker stays as prose (no tools segment).
+    expect(segs.some((s) => s.type === 'tools')).toBe(false);
+  });
+
   it('does not leak prose when a tool result embeds sentinel markers', () => {
     // Mirrors the real bug: reading a source file that contains the literal
-    // <<FUC_TOOL>> / <<FUC_TOOL_END>> strings used to truncate the JSON payload
+    // <<UGS_TOOL>> / <<UGS_TOOL_END>> strings used to truncate the JSON payload
     // and spill the file body into the answer with escaped \n / \t.
     const result =
-      'export const TOOL_OPEN = "<<FUC_TOOL>>";\n' +
-      'export const TOOL_CLOSE = "<<FUC_TOOL_END>>";\n';
+      'export const TOOL_OPEN = "<<UGS_TOOL>>";\n' +
+      'export const TOOL_CLOSE = "<<UGS_TOOL_END>>";\n';
     const text =
       'Let me read the file.' +
       encodeToolPatch({ id: 'a', name: 'Read', status: 'running', subject: 'toolEvent.ts' }) +
@@ -270,7 +352,7 @@ describe('segmentMessage tool segments', () => {
     // No raw sentinel marker or escaped file body bleeds into the answers.
     for (const s of segs) {
       if (s.type === 'answer') {
-        expect(s.text).not.toContain('FUC_TOOL');
+        expect(s.text).not.toContain('UGS_TOOL');
         expect(s.text).not.toContain('TOOL_OPEN');
       }
     }

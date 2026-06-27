@@ -3,6 +3,8 @@ import { Database, Gauge, Hash, Zap } from 'lucide-react';
 import { workflowDefaultGatewaySelection } from '@/lib/modelGateway/resolver';
 import { resolveGatewayRoute } from '@/lib/modelGateway/resolver';
 import {
+  SIMPLE_CHAT_CONTEXT_INITIAL_MESSAGE_LIMIT,
+  SIMPLE_CHAT_CONTEXT_MESSAGE_LIMIT,
   estimateContextUsage,
   formatCompactTokenCount,
   type ContextUsageTone,
@@ -71,14 +73,32 @@ function useGatewayVersion(): number {
     const onStorage = (event: StorageEvent) => {
       if (event.key) bump();
     };
-    window.addEventListener('fuc:gateway-config-changed', bump);
+    window.addEventListener('ugs:gateway-config-changed', bump);
     window.addEventListener('storage', onStorage);
     return () => {
-      window.removeEventListener('fuc:gateway-config-changed', bump);
+      window.removeEventListener('ugs:gateway-config-changed', bump);
       window.removeEventListener('storage', onStorage);
     };
   }, []);
   return version;
+}
+
+function scheduleIdleContextEstimate(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const idleWindow = window as Window &
+    typeof globalThis & {
+      requestIdleCallback?: (
+        callback: () => void,
+        options?: { timeout?: number },
+      ) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+  if (idleWindow.requestIdleCallback) {
+    const handle = idleWindow.requestIdleCallback(callback, { timeout: 200 });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(callback, 80);
+  return () => window.clearTimeout(handle);
 }
 
 export default function StatusBar() {
@@ -132,6 +152,50 @@ export default function StatusBar() {
   const adapter: RuntimeAdapterId =
     RUNTIME_ADAPTERS.find((item) => item.id === route.adapter)?.id ??
     RUNTIME_ADAPTERS[0].id;
+  const contextUsageKey = useMemo(
+    () =>
+      [
+        activeWorkspaceId ?? '',
+        activeSessionId ?? '',
+        messages.length,
+        composerDraft.length,
+        adapter,
+        route.model ?? composerModel ?? '',
+        simpleChatMode ? 'simple' : 'workflow',
+      ].join('|'),
+    [
+      activeWorkspaceId,
+      activeSessionId,
+      messages.length,
+      composerDraft.length,
+      adapter,
+      route.model,
+      composerModel,
+      simpleChatMode,
+    ],
+  );
+  const [contextUsageWindow, setContextUsageWindow] = useState(() => ({
+    key: contextUsageKey,
+    limit: SIMPLE_CHAT_CONTEXT_INITIAL_MESSAGE_LIMIT,
+  }));
+  const effectiveContextMessageLimit =
+    contextUsageWindow.key === contextUsageKey
+      ? contextUsageWindow.limit
+      : SIMPLE_CHAT_CONTEXT_INITIAL_MESSAGE_LIMIT;
+  useEffect(() => {
+    if (!simpleChatMode) return undefined;
+    setContextUsageWindow({
+      key: contextUsageKey,
+      limit: SIMPLE_CHAT_CONTEXT_INITIAL_MESSAGE_LIMIT,
+    });
+    return scheduleIdleContextEstimate(() => {
+      setContextUsageWindow((current) =>
+        current.key === contextUsageKey
+          ? { key: contextUsageKey, limit: SIMPLE_CHAT_CONTEXT_MESSAGE_LIMIT }
+          : current,
+      );
+    });
+  }, [contextUsageKey, simpleChatMode]);
   // Mirror the AI-input estimate so the status bar shows the same context
   // budget percentage the composer used to render as a circular dial.
   const contextUsage = useMemo(
@@ -142,8 +206,17 @@ export default function StatusBar() {
         adapter,
         model: route.model ?? composerModel,
         simpleChatMode,
+        simpleChatMessageLimit: effectiveContextMessageLimit,
       }),
-    [messages, composerDraft, adapter, route.model, composerModel, simpleChatMode],
+    [
+      messages,
+      composerDraft,
+      adapter,
+      route.model,
+      composerModel,
+      simpleChatMode,
+      effectiveContextMessageLimit,
+    ],
   );
 
   const host = displayHost(route, t(locale, 'statusBar.model'));

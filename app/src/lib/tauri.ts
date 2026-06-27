@@ -1,4 +1,7 @@
 import type { IRGraph } from '@/core/ir';
+import type {
+  WorkspaceDirectoryListing,
+} from '@ugs/protocol';
 import { runShellPayload } from '@/lib/shellConfig';
 import {
   markAssetDone,
@@ -115,7 +118,7 @@ export interface SkillUninstallResult {
   removed: boolean;
 }
 
-export interface UltracodeRunOptions {
+export interface StudioRunOptions {
   cwd?: string;
   extraWorkspacePaths?: string[];
   adapter?: string;
@@ -136,7 +139,7 @@ export interface UltracodeRunOptions {
   onProgress?: (text: string) => void;
 }
 
-export interface UltracodeRunResult {
+export interface StudioRunResult {
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -169,23 +172,10 @@ export interface LocalFilePreview {
   base64?: string | null;
 }
 
-export interface WorkspaceTreeEntry {
-  name: string;
-  path: string;
-  relativePath: string;
-  kind: 'directory' | 'file';
-  hidden: boolean;
-  sizeBytes?: number | null;
-  modifiedAtMs?: number | null;
-}
-
-export interface WorkspaceDirectoryListing {
-  rootPath: string;
-  relativePath: string;
-  entries: WorkspaceTreeEntry[];
-  truncated: boolean;
-  totalEntries: number;
-}
+export type {
+  WorkspaceDirectoryListing,
+  WorkspaceTreeEntry,
+} from '@ugs/protocol';
 
 /**
  * Result of preparing an isolated working directory for a "worktree"-mode
@@ -472,6 +462,13 @@ export interface ClipboardImageSaveRequest {
   cwd?: string | null;
 }
 
+export interface LocalFileUploadPayload {
+  bytesBase64: string;
+  fileName: string;
+  mime?: string | null;
+  sizeBytes: number;
+}
+
 export interface SessionCaptureSaveRequest {
   bytesBase64: string;
   mime: string;
@@ -507,6 +504,13 @@ export interface RemoteModelListRequest {
 export interface RemoteModelListResult {
   models: string[];
   url: string;
+}
+
+export interface CloudflareImageRequest {
+  accountId: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
 }
 
 const REMOTE_MODEL_FETCH_TIMEOUT_MS = 6000;
@@ -645,7 +649,7 @@ export interface CliOpts {
   env?: Record<string, string>;
   /** Per-call hard timeout override, in seconds. Backend keeps the larger of env/default and this value. */
   timeoutSeconds?: number;
-  /** Per-call no-progress timeout override, in seconds. Backend keeps the larger of env/default and this value. */
+  /** Per-call no-progress timeout override, in seconds. 0 disables the idle watchdog. */
   idleTimeoutSeconds?: number;
   /** Stable id used to stream progress and cancel the process from the UI. */
   runId?: string;
@@ -952,6 +956,7 @@ function extractRemoteModelIds(value: unknown): string[] {
   const record = value as Record<string, unknown>;
   if (Array.isArray(record.data)) record.data.forEach(visitModel);
   if (Array.isArray(record.models)) record.models.forEach(visitModel);
+  if (Array.isArray(record.result)) record.result.forEach(visitModel);
   visitModel(record);
   return out;
 }
@@ -1007,6 +1012,22 @@ export async function listRemoteModels(
   });
 }
 
+/** Generate a Cloudflare Workers AI image through the desktop backend to avoid WebView CORS. */
+export async function generateCloudflareImage(
+  request: CloudflareImageRequest,
+): Promise<string> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<string>('generate_cloudflare_image', {
+    accountId: request.accountId,
+    apiKey: request.apiKey,
+    model: request.model,
+    prompt: request.prompt,
+  });
+}
+
 /** Launch the bundled Windows Ollama setup script in a visible terminal. */
 export async function setupLocalModel(model: string): Promise<void> {
   if (!tauriAvailable()) {
@@ -1059,7 +1080,7 @@ export async function openExternal(url: string): Promise<void> {
 }
 
 /** Default workspace folder name created when no workspace is selected. */
-export const DEFAULT_WORKSPACE_DIR_NAME = 'FreeUltraCode';
+export const DEFAULT_WORKSPACE_DIR_NAME = 'UltraGameStudio';
 
 /** Detect the current platform from the browser/runtime (best-effort). */
 function currentPlatform(): CliPlatform {
@@ -1075,8 +1096,8 @@ function currentPlatform(): CliPlatform {
  * directory on disk (Tauri only). Used when the user starts a new session
  * without having selected any workspace folder.
  *
- * - Windows: `C:\FreeUltraCode`
- * - macOS / Linux: `<home>/FreeUltraCode`
+ * - Windows: `C:\UltraGameStudio`
+ * - macOS / Linux: `<home>/UltraGameStudio`
  *
  * Returns the absolute path, or null when running outside the desktop shell
  * or when the directory could not be created.
@@ -1237,6 +1258,24 @@ export interface BlueprintModeInstallRequest {
   overwrite?: boolean;
 }
 
+export interface BlueprintModeTargetRequest {
+  rootPath: string;
+  targetDir?: string | null;
+}
+
+export interface BlueprintModeStatusResult {
+  ok: boolean;
+  sourceUrl: string;
+  targetDir: string;
+  exists: boolean;
+  installed: boolean;
+  upluginPath: string | null;
+  versionName: string | null;
+  notes: string[];
+  warnings: string[];
+  error: string | null;
+}
+
 export interface BlueprintModeInstallResult {
   ok: boolean;
   sourceUrl: string;
@@ -1246,6 +1285,25 @@ export interface BlueprintModeInstallResult {
   notes: string[];
   warnings: string[];
   error: string | null;
+}
+
+export interface BlueprintModeUninstallResult {
+  ok: boolean;
+  targetDir: string;
+  removed: boolean;
+  notes: string[];
+  warnings: string[];
+  error: string | null;
+}
+
+export async function blueprintModeStatus(
+  request: BlueprintModeTargetRequest,
+): Promise<BlueprintModeStatusResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<BlueprintModeStatusResult>('blueprint_mode_status', { request });
 }
 
 /**
@@ -1260,6 +1318,16 @@ export async function blueprintModeInstall(
   }
   const invoke = await getInvoke();
   return invoke<BlueprintModeInstallResult>('blueprint_mode_install', { request });
+}
+
+export async function blueprintModeUninstall(
+  request: BlueprintModeTargetRequest,
+): Promise<BlueprintModeUninstallResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<BlueprintModeUninstallResult>('blueprint_mode_uninstall', { request });
 }
 
 export async function godotMcpSetupProject(
@@ -1360,32 +1428,6 @@ export async function listWorkspaceChanges(
   });
 }
 
-/** Read lightweight VCS status for project-tree icon overlays. No diff hunks. */
-export async function listWorkspaceVcsStatus(
-  rootPath: string,
-): Promise<WorkspaceChanges> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  return invoke<WorkspaceChanges>('workspace_vcs_status', {
-    rootPath,
-  });
-}
-
-/** Read root-level VCS status first so project-tree overlays can update incrementally. */
-export async function listWorkspaceVcsStatusShallow(
-  rootPath: string,
-): Promise<WorkspaceChanges> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  return invoke<WorkspaceChanges>('workspace_vcs_status_shallow', {
-    rootPath,
-  });
-}
-
 /** Read the last persisted session-change snapshot without rescanning files. */
 export async function readWorkspaceChangesCache(
   rootPath: string,
@@ -1396,21 +1438,6 @@ export async function readWorkspaceChangesCache(
   }
   const invoke = await getInvoke();
   return invoke<WorkspaceChanges | null>('workspace_changes_cached', {
-    rootPath,
-    cacheKey,
-  });
-}
-
-/** Read the last cached full VCS status snapshot so icons render instantly. */
-export async function readWorkspaceVcsStatusCache(
-  rootPath: string,
-  cacheKey: string,
-): Promise<WorkspaceChanges | null> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  return invoke<WorkspaceChanges | null>('workspace_vcs_status_cached', {
     rootPath,
     cacheKey,
   });
@@ -1431,37 +1458,66 @@ export async function workspaceFileDiff(
   });
 }
 
-/** Queue a background full VCS scan; progress arrives via onWorkspaceVcsScanProgress. */
-export async function startWorkspaceVcsStatusScan(
-  rootPath: string,
-  cacheKey: string,
-): Promise<void> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  await invoke('workspace_vcs_status_scan', { rootPath, cacheKey });
-}
+export type LegacyBrandMigrationPhase =
+  | 'checking'
+  | 'scanning'
+  | 'copying'
+  | 'archiving'
+  | 'done'
+  | 'skipped'
+  | 'error'
+  | string;
 
-export interface WorkspaceVcsScanProgress {
-  rootPath: string;
-  phase: 'scanning' | 'done' | 'error' | string;
-  scannedSpecs: number;
-  foundItems: number;
-  truncated: boolean;
+export interface LegacyBrandMigrationProgress {
+  phase: LegacyBrandMigrationPhase;
+  rootsTotal: number;
+  rootsDone: number;
+  filesTotal: number;
+  filesDone: number;
+  dirsTotal: number;
+  dirsDone: number;
+  copiedFiles: number;
+  skippedFiles: number;
+  archivedRoots: number;
+  currentPath?: string | null;
   message?: string | null;
 }
 
-/** Subscribe to background VCS scan progress events. */
-export async function onWorkspaceVcsScanProgress(
-  cb: (progress: WorkspaceVcsScanProgress) => void,
-): Promise<UnlistenFn> {
-  if (!tauriAvailable()) return () => {};
+/** Run the one-time FreeUltraCode -> UltraGameStudio storage migration. */
+export async function migrateLegacyBrandStorage(
+  onProgress?: (progress: LegacyBrandMigrationProgress) => void,
+): Promise<LegacyBrandMigrationProgress> {
+  const fallback: LegacyBrandMigrationProgress = {
+    phase: 'skipped',
+    rootsTotal: 0,
+    rootsDone: 0,
+    filesTotal: 0,
+    filesDone: 0,
+    dirsTotal: 0,
+    dirsDone: 0,
+    copiedFiles: 0,
+    skippedFiles: 0,
+    archivedRoots: 0,
+    message: '非桌面环境，跳过旧版配置迁移',
+  };
+  if (!tauriAvailable()) return fallback;
+
   const listen = await getListen();
-  return listen<WorkspaceVcsScanProgress>(
-    'workspace-vcs-scan-progress',
-    (event) => cb(event.payload),
+  const unlisten = await listen<LegacyBrandMigrationProgress>(
+    'legacy-brand-migration-progress',
+    (event) => onProgress?.(event.payload),
   );
+
+  try {
+    const invoke = await getInvoke();
+    const result = await invoke<LegacyBrandMigrationProgress>(
+      'migrate_legacy_brand_storage',
+    );
+    onProgress?.(result);
+    return result;
+  } finally {
+    unlisten();
+  }
 }
 
 /** Read a local file for the in-app right-side preview drawer. Desktop-only. */
@@ -1493,6 +1549,17 @@ export async function saveClipboardImage(
     fileName: request.fileName ?? null,
     cwd: request.cwd ?? null,
   });
+}
+
+/** Read a user-selected local file so it can be uploaded to a remote workspace. */
+export async function readLocalFileForUpload(
+  path: string,
+): Promise<LocalFileUploadPayload> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<LocalFileUploadPayload>('read_local_file_for_upload', { path });
 }
 
 /** Persist a generated session screenshot/GIF and return its local preview path. */
@@ -1627,7 +1694,7 @@ export async function saveGeneratedAsset(params: {
   });
 }
 
-/** List durable files in the workspace `.freeultracode` asset cache. */
+/** List durable files in the workspace `.ultragamestudio` asset cache. */
 export async function listCachedAssets(cwd?: string | null): Promise<CachedAssetFile[]> {
   if (!tauriAvailable()) return [];
   const invoke = await getInvoke();
@@ -1665,16 +1732,16 @@ export async function runWorkflow(
   });
 }
 
-/** Execute `/ultracode <task>` through the bundled CLI dynamic harness. */
-export async function runUltracode(
+/** Execute `/studio <task>` through the bundled CLI dynamic harness. */
+export async function runStudio(
   task: string,
-  opts: UltracodeRunOptions = {},
-): Promise<UltracodeRunResult> {
+  opts: StudioRunOptions = {},
+): Promise<StudioRunResult> {
   if (!tauriAvailable()) {
     throw new Error('NO_BACKEND');
   }
   __cliSeq += 1;
-  const runId = opts.runId ?? `ultracode_${Date.now()}_${__cliSeq}`;
+  const runId = opts.runId ?? `studio_${Date.now()}_${__cliSeq}`;
 
   let unlisten: UnlistenFn | undefined;
   const progressBatcher = opts.onProgress
@@ -1694,7 +1761,7 @@ export async function runUltracode(
 
   try {
     const invoke = await getInvoke();
-    return await invoke<UltracodeRunResult>('run_ultracode', {
+    return await invoke<StudioRunResult>('run_studio', {
       task,
       cwd: opts.cwd ?? null,
       extraWorkspacePaths: opts.extraWorkspacePaths ?? [],
@@ -1769,6 +1836,42 @@ export async function installSkillFromUrl(params: {
   }
   const invoke = await getInvoke();
   const installed = await invoke<InstalledSkill>('install_skill_from_url', {
+    url: params.url,
+    name: params.name,
+    slug: params.slug,
+    targetId: params.targetId,
+    overwrite: params.overwrite ?? false,
+    sourceUrl: params.sourceUrl ?? null,
+    projectRoot: params.projectRoot ?? null,
+  });
+  registerAsset({
+    kind: 'skill',
+    source: 'installed',
+    origin: 'local',
+    title: installed.name || installed.slug,
+    status: 'success',
+    localPath: installed.skillFile || installed.path,
+    remoteUrl: installed.sourceUrl ?? params.sourceUrl ?? params.url,
+    meta: { targetId: installed.targetId, slug: installed.slug },
+  });
+  return installed;
+}
+
+/** Download and extract a ZIP skill package into a local skill root. */
+export async function installSkillFromZipUrl(params: {
+  url: string;
+  name: string;
+  slug: string;
+  targetId: string;
+  overwrite?: boolean;
+  sourceUrl?: string | null;
+  projectRoot?: string | null;
+}): Promise<InstalledSkill> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  const installed = await invoke<InstalledSkill>('install_skill_from_zip_url', {
     url: params.url,
     name: params.name,
     slug: params.slug,
@@ -2050,6 +2153,49 @@ export async function openLocalPath(
     return true;
   } catch {
     return false;
+  }
+}
+
+export interface EngineRevealResult {
+  ok: boolean;
+  /** unreal | unity | godot | cocos | unknown */
+  engine: string;
+  /** jumped | not_asset | engine_unreachable | unsupported | error */
+  status: string;
+  message: string;
+}
+
+/**
+ * Try to reveal a file inside its running game editor. Today only Unreal is
+ * wired to a real local channel (RemoteControl HTTP); Unity/Godot/Cocos return
+ * an `unsupported` status the UI surfaces as a hint. Resolves with a clear
+ * result object (never throws) so the caller can show an inline message.
+ */
+export async function engineRevealAsset(
+  rootPath: string,
+  filePath: string,
+): Promise<EngineRevealResult> {
+  if (!tauriAvailable()) {
+    return {
+      ok: false,
+      engine: 'unknown',
+      status: 'error',
+      message: '当前浏览器模式不能在引擎中定位文件。请使用桌面端。',
+    };
+  }
+  try {
+    const invoke = await getInvoke();
+    return (await invoke('engine_reveal_asset', {
+      rootPath,
+      filePath,
+    })) as EngineRevealResult;
+  } catch (err) {
+    return {
+      ok: false,
+      engine: 'unknown',
+      status: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

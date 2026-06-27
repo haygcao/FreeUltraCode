@@ -1,16 +1,10 @@
 import { create } from 'zustand';
 import {
-  DATA,
-  type IREndpoint,
   type GatewaySelection,
-  type ConsensusStrategy,
   type IRGraph,
-  type IRNode,
   type IRRunSnapshot,
   type IRRunStatus,
   type NodeGatewayOverride,
-  type NodeType,
-  type PinKind,
 } from '@/core/ir';
 // [dynamic-only refactor] 静态蓝图编辑相关模块已停用（autoLayout/genPrompt/intentEngine/
 // isEmptyWorkflow/determinism）。源码保留并已从编译图 exclude。simpleBlueprint 是
@@ -36,8 +30,6 @@ import {
 import {
   personalInstructionsBlock,
   personalInstructionsForSelection,
-  withPersonalInstructionsForSelection,
-  type PersonalInstructionsByModel,
 } from '@/core/personalInstructions';
 import {
   assessConsensusFit,
@@ -84,103 +76,73 @@ import {
 } from '@/core/startInputs';
 // [dynamic-only refactor] determinism lint 仅用于蓝图 AI 改图分支，已停用。
 // import { findDeterminismHazards } from '@/core/determinism';
-import { readApiKey, readBaseUrl, setActiveProviderId } from '@/lib/apiConfig';
+import { listProviders, setActiveProviderId } from '@/lib/apiConfig';
 import { appendComposerDraftState } from '@/lib/composerEntryPolicy';
 import {
   clearActiveGatewaySelection,
+  getDefaultGatewaySelection,
   getExplicitActiveGatewaySelection,
   setActiveGatewaySelection,
 } from '@/lib/gatewayConfig';
 import { getCliRuntimeSnapshot } from '@/lib/cliConfig';
-import { maybeRunCcSwitchAutoImportOnFirstRun } from '@/lib/ccSwitchAutoImport';
 import { ensureFreeProxy, isFreeChannelSelection } from '@/lib/freeChannels';
 import { getManifestModeEnabled } from '@/lib/manifestMode';
-import { projectSettingsFromMetadata } from '@/lib/projectSettings';
+import {
+  projectEngineLabel,
+  projectSettingsFromMetadata,
+} from '@/lib/projectSettings';
 import {
   isNotifiableCompletionStatus,
   notifySessionComplete,
   setSessionNotificationClickHandler,
 } from '@/lib/sessionNotification';
 import {
-  generateImage,
   imageProviderById,
-  imageProviderModel,
-  imageProviderReady,
   imageProviders,
   loadImageGenerationSettings,
   preferredReadyImageProviderId,
-  stripImageCommand,
   type ImageProviderId,
 } from '@/lib/imageGeneration';
 import {
-  generateMusic,
   loadMusicGenerationSettings,
-  musicDurationSecondsFromPrompt,
-  musicProviderById,
-  musicProviderModel,
   preferredReadyMusicProviderId,
-  stripMusicCommand,
-  type MusicProviderId,
 } from '@/lib/musicGeneration';
 import {
-  assessThreeDRigging,
-  generateThreeD,
   loadThreeDGenerationSettings,
   preferredReadyThreeDProviderId,
-  stripThreeDCommand,
-  threeDRiggingPromptGuidance,
-  threeDProviderById,
-  threeDProviderModel,
-  type ThreeDProviderId,
 } from '@/lib/threeDGeneration';
 import { stripComfyCommand, fetchComfyObjectInfo, comfyBaseUrl } from '@/lib/comfyui';
 import {
-  loadUiDesignChannelSettings,
-  uiDesignChannelById,
-  uiDesignChannelExportFormat,
-} from '@/lib/uiDesignChannels';
+  loadWorldModelGenerationSettings,
+  worldModelProviderById,
+  worldModelProviders,
+  type WorldModelProviderId,
+} from '@/lib/worldModel';
 import {
-  generateVideo,
   loadVideoGenerationSettings,
   preferredReadyVideoProviderId,
-  stripVideoCommand,
-  videoDurationSecondsFromPrompt,
-  videoProviderById,
-  videoProviderModel,
-  type VideoProviderId,
 } from '@/lib/videoGeneration';
 import {
-  generateSpeech,
   loadSpeechGenerationSettings,
   preferredReadySpeechProviderId,
-  stripSpeechCommand,
-  speechProviderById,
-  speechProviderModel,
-  speechProviderVoice,
-  type SpeechProviderId,
 } from '@/lib/speechGeneration';
 import {
-  generateSprite,
-  loadSpriteGenerationSettings,
   preferredReadySpriteProviderId,
-  spriteSheetGridForSettings,
-  stripSpriteCommand,
 } from '@/lib/spriteGeneration';
+import {
+  loadUiDesignChannelSettings,
+  uiDesignChannelReady,
+} from '@/lib/uiDesignChannels';
 import {
   loadMeshLibrarySettings,
   meshLibraryById,
-  meshSearchQueryNeedsEnglish,
-  resolveMeshSearchQuery,
-  searchMeshLibraries,
-  stripMeshSearchCommand,
   type MeshLibraryAccountSettings,
   type MeshSearchQueryResolution,
   type MeshSearchResult,
 } from '@/lib/meshLibrary';
+import { settingsProfileIdForWorkspacePath } from '@/lib/generationSettingsStore';
 import {
   buildGameExpertPrompt,
-  normalizeGameExpertSettings,
-  type GameExpertSettings,
 } from '@/lib/gameExperts';
 import {
   buildProducerPrompt,
@@ -188,8 +150,6 @@ import {
 } from '@/lib/gameProducer';
 import {
   modelClassFromModelId,
-  nodeParamsWithGatewayOverride,
-  listGatewayRunOptions,
   normalizeGatewaySelection,
   normalizeGatewayWorkflow as migrateWorkflowGateway,
   selectionKey,
@@ -197,32 +157,66 @@ import {
   workflowDefaultGatewaySelection,
 } from '@/lib/modelGateway/resolver';
 import { shortId } from '@/lib/id';
-import { translatePromptFields } from '@/lib/promptTranslation';
-import { translatePublicText } from '@/lib/publicTranslation';
 import {
   aiEditViaCli,
   cancelAiCli,
   downloadModelAsset,
   ensureDefaultWorkspaceDir,
   isTauri,
-  prepareIsolatedWorkspace,
-  runUltracode,
 } from '@/lib/tauri';
-import { captureGeneratedAssets } from '@/lib/assetCapture';
 import {
   linkManagedAssetsFromMessageText,
-  markAssetDone,
-  markAssetFailed,
   registerAsset,
   type AssetKind,
   type AssetOrigin,
 } from '@/lib/downloadRegistry';
 import {
-  parseUltracodePrompt,
-  summarizeUltracodeResult,
-  ultracodeAccepted,
-  ultracodeModeLabel,
-} from './ultracodePrompt';
+  COMFY_PROMPT_SYSTEM,
+  stripGddModeCommand,
+  gddModePromptSystem,
+  gddModeFinalizePromptSystem,
+  stripUiModeCommand,
+  uiDesignPromptSystem,
+  stripBlueprintModeCommand,
+  blueprintModePromptSystem,
+  stripMetaHumanModeCommand,
+  metaHumanModePromptSystem,
+  startImageGenerationTurn,
+  startMusicGenerationTurn,
+  startThreeDGenerationTurn,
+  startWorldModelGenerationTurn,
+  startVideoGenerationTurn,
+  startSpeechGenerationTurn,
+  startSpriteGenerationTurn,
+  startMeshSearchTurn,
+} from './generationActions';
+import {
+  addPromptItem,
+  updatePromptItem,
+  updatePromptItemLocalized,
+  removePromptItem,
+  addPromptGroup,
+  updatePromptGroup,
+  updatePromptGroupLocalized,
+  removePromptGroup,
+  resetPromptGroups,
+} from './promptLibraryActions';
+import {
+  initHistory as initHistorySlice,
+  setWorkflowFavoriteHistorySession,
+  setWorkflowScheduledTaskHistorySession,
+  ensureSessionStartupWorkspace as ensureSessionStartupWorkspaceSlice,
+  setWorkspace as setWorkspaceSlice,
+  addWorkspaceFolder as addWorkspaceFolderSlice,
+  removeWorkspaceFolder as removeWorkspaceFolderSlice,
+  removeWorkspace as removeWorkspaceSlice,
+  applyWorkspaceFolders as applyWorkspaceFoldersSlice,
+} from './historyActions';
+import { createWorkflowEditorSlice } from './workflowEditorSlice';
+import {
+  createSettingsSlice,
+  loadSettingsSliceSeeds,
+} from './settingsSlice';
 import {
   applyGatewayOverride,
   completeGatewayText,
@@ -239,6 +233,33 @@ import {
   buildAssetCapabilityBlock,
   shouldUseAssetCapabilityBlockForPrompt,
 } from '@/lib/anthropic';
+import { renderMemorySnapshot, applyMemoryWrites } from '@/lib/memoryStore';
+import {
+  MEMORY_WRITE_INSTRUCTION,
+  parseMemoryWrites,
+  stripMemoryWrites,
+} from '@/core/memoryProtocol';
+import {
+  RECALL_INSTRUCTION,
+  parseRecall,
+  stripRecall,
+} from '@/core/recallProtocol';
+import {
+  searchSessions,
+  formatRecallHits,
+  type SessionReader,
+} from '@/lib/sessionSearch';
+import {
+  loadMemoryConfig,
+  getLastReviewAt,
+  setLastReviewAt,
+} from '@/lib/memoryConfig';
+import {
+  shouldRunReview,
+  buildReviewTranscript,
+  buildReviewUserPrompt,
+  REVIEW_SYSTEM,
+} from '@/core/memoryReview';
 import {
   INTERACTION_PROTOCOL,
   formatAnswerForPrompt,
@@ -258,25 +279,16 @@ import {
   runFailureMeta,
   runWithConcurrency,
   newSessionId,
-  decodeProgressEvents,
-  emptyProgress,
-  reduceProgress,
   type RunCallbacks,
   type RunContext as RuntimeRunContext,
   type RunFailure,
   type RunGateway,
-  type UltracodeRunProgress,
 } from '@/runtime';
 import {
   DEFAULT_LOCALE,
   languageAdaptationPrompt,
-  localizePromptGroup,
-  localizePromptItem,
-  SUPPORTED_LOCALES,
   t,
   type Locale,
-  withPromptGroupLocale,
-  withPromptItemLocale,
 } from '@/lib/i18n';
 import {
   CACHE_TTL_MINUTES_OPTIONS,
@@ -292,17 +304,10 @@ import {
 } from './sampleSessions';
 import {
   loadComposer,
-  loadGameExpertSettings,
   loadLocale,
-  loadPersonalInstructionsByModel,
-  loadPromptAutoTranslate,
   loadPromptGroups,
   loadPromptGroupsVersion,
   saveComposer,
-  saveGameExpertSettings,
-  saveLocale,
-  savePersonalInstructionsByModel,
-  savePromptAutoTranslate,
   savePromptGroups,
   savePromptGroupsVersion,
 } from '@/lib/composerStorage';
@@ -314,16 +319,13 @@ import {
   workspacePathKey,
 } from '@/lib/workspaceHistory';
 import {
-  applyAppearance,
-  isBuiltinStylePresetId,
-  normalizeAppearanceSettings,
-  streamSchemeForStylePresetId,
-  type AppearanceSettings,
-  type FontFamilyId,
-  type StreamSchemeId,
-  type StylePresetId,
-} from '@/lib/appearance';
-import { loadAppearance, saveAppearance } from '@/lib/appearanceStorage';
+  getRemoteWorkspace,
+  isRemoteWorkspacePath,
+  parseRemoteProviderId,
+  remoteModelForAdapter,
+  remoteRunnerProviderMatchesWorkspace,
+  remoteWorkspaceIdFromPath,
+} from '@/lib/remoteWorkspace';
 import {
   autosave,
   exportWorkflowToFile,
@@ -340,7 +342,6 @@ import {
   titleFromText,
 } from './history/store';
 import {
-  HISTORY_SCHEMA_VERSION,
   type SessionMeta,
   type SessionPatch,
   type SessionRecord,
@@ -353,8 +354,6 @@ import type {
   Message,
   NodeRunState,
   PromptGroup,
-  PromptItem,
-  SelectOption,
   Session,
   SessionComposerSettings,
   SessionRunStatus,
@@ -365,435 +364,84 @@ import {
   selectRunProgress,
   type RunProgressSummary,
 } from './runProgress';
+// Channel types extracted to channelTypes.ts (type-only, no cycle). Re-exported
+// below so `import type { AiEditChannel } from './useStore'` sites keep working.
+import type {
+  RunConfig,
+  RunChannel,
+  AiEditChannel,
+  ChatNativeSession,
+} from './channelTypes';
+export type { AiEditChannel } from './channelTypes';
+// Pure session-key helpers extracted to sessionKey.ts (no cycle). runKey and
+// chatTurnKey are re-exported so existing `import { runKey } from './useStore'`
+// sites (e.g. generationActions) keep working unchanged.
+import {
+  workflowSessionKeyId,
+  runKey,
+  chatTurnKey,
+} from './sessionKey';
+export { runKey, chatTurnKey, workflowSessionKeyId } from './sessionKey';
+import { startRemoteChatTurn } from './remoteChatTurn';
+// Channel registry: owns the run/AI-edit Maps + pure read accessors (no cycle).
+// The Maps are imported so the side-effecting mutators below can write them.
+// aiEditRegistered is re-exported for generationActions.
+import {
+  activeRuns,
+  activeAiEdits,
+  aiEditSnapshots,
+  getRunChannel,
+  getRunChannelByKey,
+  getAiEditChannelByKey,
+  getAiEditChannel,
+  getAiEditSnapshot,
+  getAiEditViewSource,
+  getAiEditChannelsForSession,
+  getAiEditChatChannels,
+  getAiEditSnapshotsForSession,
+  activeRunChannels,
+  activeAiEditChannels,
+  aiEditRegistered,
+} from './channelRegistry';
+export { aiEditRegistered } from './channelRegistry';
+// [M3] Pure run-snapshot <-> session-meta mappers extracted to ./runSnapshot
+// (no cycle). Imported for internal use and re-exported so existing import
+// sites (historyActions, workflowEditorSlice, tests) keep resolving them here.
+import {
+  runProgressFromSnapshot,
+  emptyRunProgress,
+  isRunStatus,
+  persistedStatusForDisplay,
+  runMetaFromSnapshot,
+  runSnapshotFromState,
+  restoreWorkflowRunSnapshot,
+  workflowWithoutRunSnapshot,
+  workflowWithRunSnapshot,
+} from './runSnapshot';
+export {
+  runProgressFromSnapshot,
+  emptyRunProgress,
+  restoreWorkflowRunSnapshot,
+} from './runSnapshot';
+import type {
+  StoreState,
+  WorkflowSessionKey,
+  WorkflowWriteSource,
+} from './storeState';
 
 export { selectRunProgress } from './runProgress';
+export { selectActiveScopeId } from './workflowEditorSlice';
 export type { RunProgressSummary } from './runProgress';
-
-/**
- * The id of the composite node whose subgraph is currently being viewed, or
- * undefined when at the top level. New nodes added via {@link StoreState.addNode}
- * are parented to this scope.
- */
-export function selectActiveScopeId(
-  state: Pick<StoreState, 'graphPath'>,
-): string | undefined {
-  return state.graphPath[state.graphPath.length - 1]?.nodeId;
-}
-
-export type WorkflowSessionKey = {
-  workspaceId: string | null;
-  sessionId: string | null;
-};
-
-export type BlockedSendTip = 'model-switched-while-chatting';
-
-/**
- * CONTRACT: the single zustand store. App.tsx and panels rely on this exact
- * surface — keep these fields and actions stable.
- *
- * State (pre-existing, unchanged):
- *   workflow, selectedNodeId,
- *   sessions, activeSessionId, messages, promptGroups,
- *   composer, composerDraft, composerDrafts, permissionOptions, modelOptions,
- *   workspaceHistory,
- *   appearance
- * State (added this milestone):
- *   mode ('design'|'running'), runState (Record<id,NodeRunState>),
- *   dirty (boolean), currentFilePath (string|null)
- *
- * Actions (pre-existing, unchanged signatures):
- *   selectNode(id), setWorkflow(ir), setAdapter(id), runWorkflow(),
- *   newWorkflow(), newSimpleWorkflow(), newSession(), sendPrompt(text), setComposer(patch),
- *   setComposerDraft(text), appendComposerDraft(text), setWorkspace(path),
- *   setStylePresetId(stylePresetId), setStreamSchemeId(streamSchemeId),
- *   setFontFamilyId(fontFamilyId), setFontSizePx(fontSizePx)
- * Actions (added this milestone — graph editing + run/mode control):
- *   addNode(type, params?) -> id, updateNodeParams(id, patch),
- *   updateNodeLabel(id, label), removeNode(id),
- *   addEdge(from, to, kind) -> id, removeEdge(id),
- *   setNodePosition(id, x, y), setMode(mode),
- *   setRunState(id, state), resetRunState(),
- *   applyGraphEdit(ir), markSaved(path?),
- *   markActiveSessionAsWorkflow() — locked flag, called from any
- *     graph-touching action; once true the session never reverts.
- * Actions (prompt-library CRUD — every mutation persists to localStorage):
- *   addPromptItem(groupId, label, text), updatePromptItem(groupId, itemId, patch),
- *   removePromptItem(groupId, itemId),
- *   addPromptGroup(label) -> id, updatePromptGroup(groupId, label),
- *   removePromptGroup(groupId), resetPromptGroups()
- *
- * Every graph-mutating action sets dirty=true (except setNodePosition, which
- * only touches layout and is flushed via markSaved to avoid polluting the
- * dirty flag during frequent drags).
- */
-export interface StoreState {
-  // Graph state
-  workflow: IRGraph;
-  selectedNodeId: string | null;
-  /**
-   * Drill-down navigation stack for composite nodes. `[]` = top-level graph;
-   * each entry pushes one level into a composite's subgraph. UI-transient only:
-   * it never mutates `workflow` and is not persisted (like canvasViewport, it is
-   * a view concern). The last entry's nodeId is the active scope into which new
-   * nodes are parented. See enterComposite/exitComposite/popToGraph.
-   */
-  graphPath: { nodeId: string; label: string }[];
-
-  // Editor lifecycle state
-  mode: 'design' | 'running';
-  runState: Record<string, NodeRunState>;
-  runOutputs: Record<string, string>;
-  lastRunFailedNodeId: string | null;
-  canvasViewport: CanvasViewport | null;
-  dirty: boolean;
-  currentFilePath: string | null;
-
-  // AI state (browser-direct streaming).
-  /**
-   * True while one or more AI blueprint edits are active. This is an aggregate
-   * background indicator; current-session send locking is derived from
-   * `aiEditingSessions`.
-   */
-  aiStreaming: boolean;
-  /**
-   * Session-bound workflow edits currently owned by the AI-input dock. This is
-   * the source for blueprint read-only locking and Sidebar live badges; keep
-   * `aiStreaming` as request/loading state only.
-   */
-  aiEditingSessions: WorkflowSessionKey[];
-  /**
-   * Session-bound simple-workflow CHAT turns in flight. Like aiEditingSessions
-   * they keep `aiStreaming` truthy and drive Sidebar live badges + delete
-   * protection, but they do NOT lock the workflow read-only (chatting is not
-   * blueprint editing), so consecutive chat messages aren't blocked.
-   */
-  chattingSessions: WorkflowSessionKey[];
-  /**
-   * Sessions whose in-flight turn is parked on a user interaction (a FUC_ASK
-   * select/input/confirm). The turn is still "live" (its channel stays open),
-   * but it is *paused* waiting on the user rather than streaming — so the
-   * Sidebar shows a static "waiting" badge instead of the running spinner, and
-   * the composer accepts the answer instead of treating the box as locked.
-   */
-  waitingInputSessions: WorkflowSessionKey[];
-  /** Short-lived composer tip when a send is rejected by chat concurrency rules. */
-  blockedSendTip: BlockedSendTip | null;
-
-  // Session / UI state
-  sessions: Session[];
-  activeSessionId: string | null;
-  messages: Message[];
-  promptGroups: PromptGroup[];
-  locale: Locale;
-  promptAutoTranslate: boolean;
-  personalInstructionsByModel: PersonalInstructionsByModel;
-  personalInstructions: string;
-  gameExpertSettings: GameExpertSettings;
-  appearance: AppearanceSettings;
-
-  // Composer (AI-input) state — pure UI, never enters the IRGraph.
-  composer: ComposerSettings;
-  /** Per-session composer controls: permission, runtime selection and cwd. */
-  composerBySession: Record<string, SessionComposerSettings>;
-  /** Current text in the AI input box. Pure UI state; not persisted. */
-  composerDraft: string;
-  /** Per-session draft cache so unsent text stays with its workflow session. */
-  composerDrafts: Record<string, string>;
-  /** Incremented when another panel asks the AI input box to focus itself. */
-  composerFocusVersion: number;
-  permissionOptions: SelectOption[];
-  modelOptions: SelectOption[];
-  /** Previously-selected workspace folders, most-recent-first. */
-  workspaceHistory: string[];
-  /** True once `.freeultracode` history has been loaded or gracefully skipped. */
-  historyReady: boolean;
-  /** Last history initialization failure, shown instead of sample sessions. */
-  historyError: string | null;
-  /** Resolved `.freeultracode` root path for diagnostics. */
-  historyRootPath: string | null;
-  /** Workspace buckets rendered as the first level of the history tree. */
-  workspaces: WorkspaceSummary[];
-  /** Session summaries grouped by workspace id for the Sidebar tree. */
-  sessionTree: Record<string, Session[]>;
-  /** Currently selected workspace bucket. */
-  activeWorkspaceId: string | null;
-  /**
-   * Workspace pinned by the top-left workspace switcher (and workspace-header
-   * clicks). This is a pure navigation/browsing selection: it only changes on
-   * explicit workspace navigation (dropdown selection, workspace header click,
-   * init, or deletion fallback) and is deliberately NOT touched when the user
-   * opens a session that happens to live in another workspace. Drives the top
-   * switcher label and the workspace ordering in the Sidebar so opening a
-   * cross-workspace session no longer reshuffles the list. Falls back to
-   * `activeWorkspaceId` when null (e.g. before history init).
-   */
-  selectedWorkspaceId: string | null;
-  /**
-   * Workflow sessions that are currently executing. A run is bound to its owning
-   * session (not the active view), so it keeps running in the background when the
-   * user switches sessions. Drives the Sidebar "running" badges. See the
-   * `RunChannel` machinery below.
-   */
-  runningSessions: WorkflowSessionKey[];
-  /** Lightweight live progress keyed by the owning workflow session. */
-  runningSessionProgress: Record<string, RunProgressSummary>;
-  /**
-   * Compatibility marker for older UI code: the first currently executing
-   * session, or null when nothing is running. Prefer `runningSessions`.
-   */
-  runningSessionId: string | null;
-  /** Workspace id of `runningSessionId`. Prefer `runningSessions`. */
-  runningWorkspaceId: string | null;
-
-  // Actions
-  initHistory: () => void;
-  setLocale: (locale: Locale) => void;
-  setPromptAutoTranslate: (enabled: boolean) => void;
-  setPersonalInstructions: (
-    instructions: string,
-    selection?: GatewaySelection | null,
-  ) => void;
-  setGameExpertSettings: (patch: Partial<GameExpertSettings>) => void;
-  setStylePresetId: (stylePresetId: StylePresetId) => void;
-  setStreamSchemeId: (streamSchemeId: StreamSchemeId) => void;
-  setFontFamilyId: (fontFamilyId: FontFamilyId) => void;
-  setFontSizePx: (fontSizePx: number) => void;
-  selectNode: (id: string | null) => void;
-  /** Drill into a composite node's subgraph (pushes onto graphPath). */
-  enterComposite: (nodeId: string) => void;
-  /** Pop one level out of the current composite subgraph. */
-  exitComposite: () => void;
-  /** Truncate graphPath to `depth` levels (breadcrumb click; 0 = top level). */
-  popToGraph: (depth: number) => void;
-  setWorkflow: (ir: IRGraph) => void;
-  openWorkflowSession: (ir: IRGraph, path?: string) => void;
-  /** Export the current workflow to a user-chosen file (.fuc.json). */
-  exportWorkflow: (title?: string) => void;
-  /** Export a workflow session from history to a user-chosen file. */
-  exportWorkflowSession: (
-    sessionId: string,
-    workspaceId: string | null,
-    title?: string,
-  ) => void;
-  /** Import a workflow from a file and open it in a fresh session. */
-  importWorkflow: (title?: string) => void;
-  /** Import a workflow from a file into a specific workspace history bucket. */
-  importWorkflowToWorkspace: (workspaceId: string, title?: string) => void;
-  setAdapter: (adapter: string) => void;
-  /** Persist the Settings default run channel without rebinding the active session. */
-  setDefaultRunSelection: (selection: GatewaySelection) => void;
-  setGlobalRunSelection: (selection: GatewaySelection) => void;
-  setSessionRunSelection: (selection: GatewaySelection) => void;
-  /** Clear the composer model pin so it inherits the Settings-active provider. */
-  clearGlobalRunSelection: () => void;
-  runWorkflow: () => void;
-  resumeWorkflow: () => void;
-  stopWorkflow: () => void;
-  stopChat: () => void;
-  newWorkflow: () => void;
-  newSimpleWorkflow: () => void;
-  newCaptainWorkflow: () => void;
-  newSession: () => void;
-  selectSession: (sessionId: string, workspaceId?: string) => void;
-  deleteSession: (sessionId: string, workspaceId?: string) => void;
-  deleteWorkspaceHistory: (workspaceId: string) => void;
-  renameWorkflowSession: (
-    sessionId: string,
-    workspaceId: string | null,
-    name: string,
-  ) => Promise<void>;
-  setWorkflowFavoriteSession: (
-    sessionId: string,
-    workspaceId: string | null,
-    favorite: boolean,
-  ) => Promise<void>;
-  setWorkflowScheduledTaskSession: (
-    sessionId: string,
-    workspaceId: string | null,
-    scheduledTask: ScheduledTaskConfig | null,
-  ) => Promise<void>;
-  runScheduledTaskSession: (
-    sessionId: string,
-    workspaceId: string | null,
-    scheduledTask: ScheduledTaskConfig,
-  ) => Promise<void>;
-  sendPrompt: (
-    text: string,
-    options?: { forceGameExperts?: boolean; gameExpertIds?: string[] },
-  ) => boolean;
-  generateImagePrompt: (
-    text: string,
-    options?: { providerId?: ImageProviderId; model?: string },
-  ) => void;
-  generateMusicPrompt: (
-    text: string,
-    options?: { providerId?: MusicProviderId; model?: string },
-  ) => void;
-  generateThreeDPrompt: (
-    text: string,
-    options?: { providerId?: ThreeDProviderId; model?: string },
-  ) => void;
-  generateVideoPrompt: (
-    text: string,
-    options?: { providerId?: VideoProviderId; model?: string },
-  ) => void;
-  generateSpeechPrompt: (
-    text: string,
-    options?: { providerId?: SpeechProviderId; model?: string; voice?: string },
-  ) => void;
-  generateSpritePrompt: (
-    text: string,
-    options?: { providerId?: ImageProviderId; model?: string },
-  ) => void;
-  /**
-   * ComfyUI mode turn: ask the selected coding model to author a ComfyUI prompt
-   * graph and emit it as a ```comfyui fenced block, which the chat stream then
-   * renders as an embedded, expandable node graph. Wired to the
-   * /comfyui-mode-start command and sticky comfyMode in AIDock.
-   */
-  generateComfyPrompt: (text: string) => void;
-  /**
-   * UI mode turn: ask the selected coding model to design a game UI deliverable
-   * for the project's default UI channel (Project Settings > UI 渠道). Front-loads
-   * a UI-design instruction so the model produces interface specs/assets instead
-   * of editing the workflow blueprint. Wired to /ui-mode-start and sticky uiMode
-   * in AIDock.
-   */
-  generateUiPrompt: (text: string) => void;
-  /**
-   * UE Blueprint mode turn: route the request through the selected coding model
-   * with instructions to operate UE Blueprint assets via the editor plugin/MCP
-   * when available, never OpenWorkflows workflow IRGraph.
-   */
-  generateBlueprintPrompt: (text: string) => void;
-  /**
-   * Search the enabled online 3D model libraries (Project Settings > 在线模型库) for
-   * the given query and render thumbnails / previews / downloads into the active
-   * chat. Wired to the `/mesh-search` slash command in AIDock.
-   */
-  searchMeshLibraryPrompt: (text: string) => void;
-  runUltracodePrompt: (task: string) => void;
-  /**
-   * Append a local message to the current chat session and persist it. Used by
-   * app-side actions that produce a result without an AI turn (e.g. the
-   * /screenshot and /screenshot-gif export commands echoing the user's command
-   * and surfacing their saved path + an inline preview). Returns the message id.
-   */
-  appendChatNote: (
-    text: string,
-    role?: 'user' | 'assistant' | 'system',
-    options?: { localOnly?: boolean },
-  ) => string;
-  /** Delete one message from the active conversation and persist the transcript. */
-  deleteMessage: (messageId: string) => void;
-  /** Create a new chat session containing messages up to the chosen assistant reply. */
-  branchSessionFromMessage: (messageId: string) => void;
-  clearBlockedSendTip: () => void;
-  /**
-   * Submit the user's answer to an interactive node message (the AI-return dock
-   * widget). Marks the message answered and unblocks the waiting run node so it
-   * can continue with the user's choice/input. See core/interaction.ts.
-   */
-  answerInteraction: (messageId: string, answer: InteractionAnswer) => void;
-  /**
-   * Skip a pending interaction without answering it (the widget's "跳过"). Marks
-   * it cancelled and unblocks the waiting loop with a null answer — a node ends
-   * quietly; the AI editor proceeds with what it has. See core/interaction.ts.
-   */
-  dismissInteraction: (messageId: string) => void;
-  setComposer: (patch: Partial<ComposerSettings>) => void;
-  /**
-   * If the active session was started in "worktree" mode and has not begun yet
-   * (no messages), prepare an isolated working directory (git worktree or copy)
-   * and repoint the composer cwd at it. Idempotent and a no-op for 'local' mode,
-   * web (no backend), or once the conversation has started. Resolves before the
-   * caller sends the first message so the CLI runs in the isolated directory.
-   */
-  ensureSessionStartupWorkspace: () => Promise<void>;
-  setComposerDraft: (text: string) => void;
-  appendComposerDraft: (text: string) => void;
-  setWorkspace: (path: string) => void;
-  addWorkspaceFolder: (path: string) => void;
-  removeWorkspaceFolder: (path: string) => void;
-  removeWorkspace: (path: string) => void;
-  /**
-   * Apply a project's configured workspace folders to the active session's
-   * composer. Called after Project Settings → 概览 saves its folder list so the
-   * currently-open session immediately operates over the same multi-folder set
-   * (new sessions inherit it from workspace metadata). No-op when the given
-   * workspace is not the active one.
-   */
-  applyWorkspaceFolders: (workspaceId: string, folders: string[]) => void;
-
-  // Graph editing
-  addNode: (
-    type: NodeType,
-    params?: Record<string, unknown>,
-    parent?: string,
-  ) => string;
-  updateNodeParams: (id: string, patch: Record<string, unknown>) => void;
-  updateNodeGatewayOverride: (
-    id: string,
-    override: NodeGatewayOverride | null,
-  ) => void;
-  updateNodeLabel: (id: string, label: string) => void;
-  convertNodeToConsensus: (id: string, strategy: ConsensusStrategy) => void;
-  removeNode: (id: string) => void;
-  addEdge: (from: IREndpoint, to: IREndpoint, kind: PinKind) => string;
-  removeEdge: (id: string) => void;
-  setNodePosition: (id: string, x: number, y: number) => void;
-  autoArrangeWorkflow: () => void;
-
-  // Run / mode control
-  setMode: (mode: 'design' | 'running') => void;
-  setRunState: (id: string, state: NodeRunState) => void;
-  resetRunState: () => void;
-  setCanvasViewport: (viewport: CanvasViewport | null) => void;
-
-  // Whole-graph + persistence
-  applyGraphEdit: (ir: IRGraph) => void;
-  markSaved: (path?: string) => void;
-
-  // Session-type marker: flip the active session's isWorkflow flag to true.
-  // Locked — once true, it stays true (mirrors the SessionRecord contract in
-  // history-store-spec.md §4.3). Called from every action that touches the
-  // workflow blueprint so pure-chat sessions stay false.
-  markActiveSessionAsWorkflow: () => void;
-
-  // Prompt-library CRUD (persisted to localStorage)
-  addPromptItem: (
-    groupId: string,
-    label: string,
-    text: string,
-    locale?: Locale,
-  ) => void;
-  updatePromptItem: (
-    groupId: string,
-    itemId: string,
-    patch: Partial<PromptItem>,
-  ) => void;
-  updatePromptItemLocalized: (
-    groupId: string,
-    itemId: string,
-    patch: Partial<PromptItem>,
-    locale?: Locale,
-  ) => Promise<boolean>;
-  removePromptItem: (groupId: string, itemId: string) => void;
-  addPromptGroup: (label: string, locale?: Locale) => string;
-  updatePromptGroup: (groupId: string, label: string) => void;
-  updatePromptGroupLocalized: (
-    groupId: string,
-    label: string,
-    locale?: Locale,
-  ) => Promise<boolean>;
-  removePromptGroup: (groupId: string) => void;
-  resetPromptGroups: () => void;
-}
+export type {
+  BlockedSendTip,
+  StoreState,
+  WorkflowSessionKey,
+  WorkflowWriteSource,
+} from './storeState';
 
 export type WorkflowReadOnlyReason = 'running' | 'aiEditing';
 export type SessionLiveStatus = 'running' | 'waiting' | 'aiEditing' | null;
 
-type WorkflowWriteSource = 'user' | 'ai';
 type WorkflowSessionState = Pick<
   StoreState,
   'activeWorkspaceId' | 'activeSessionId'
@@ -820,7 +468,7 @@ type SessionLiveStatusState = Pick<
 > &
   Partial<Pick<StoreState, 'chattingSessions' | 'waitingInputSessions'>>;
 
-function activeWorkflowSessionKey(
+export function activeWorkflowSessionKey(
   state: WorkflowSessionState,
 ): WorkflowSessionKey {
   return {
@@ -854,7 +502,16 @@ function workspacePathForId(
   );
 }
 
-function projectMcpGuidanceForState(
+function settingsProfileForState(
+  state: Pick<StoreState, 'activeWorkspaceId' | 'composer' | 'workspaces'>,
+) {
+  const workspacePath =
+    trimmedPath(state.composer.workspace) ??
+    workspacePathForId(state.workspaces, state.activeWorkspaceId);
+  return { profileId: settingsProfileIdForWorkspacePath(workspacePath) };
+}
+
+export function projectMcpGuidanceForState(
   state: Pick<StoreState, 'workspaces'>,
   sessionKey: WorkflowSessionKey,
 ): string {
@@ -893,6 +550,31 @@ function projectMcpGuidanceForState(
     : '当用户问题涉及已配置工具能直接读取的运行时状态时，优先使用对应 MCP 工具；命令行、文件搜索和日志作为补充。';
 
   return `\n\n【全局 MCP】\n当前工作区已启用 MCP server，所有模型请求都应优先使用这些实时工具：\n${serverLines}\n${realtimeRule}\n若 MCP 工具不可用或连接失败，先说明原因，再退回本地文件/日志分析。`;
+}
+
+function projectEngineGuidanceForState(
+  state: Pick<StoreState, 'workspaces'>,
+  sessionKey: WorkflowSessionKey,
+): string {
+  if (!sessionKey.workspaceId) return '';
+  const workspace = state.workspaces.find(
+    (candidate) => candidate.id === sessionKey.workspaceId,
+  );
+  if (!workspace) return '';
+  const settings = projectSettingsFromMetadata(workspace.metadata);
+  const configuredEngine =
+    settings.engine !== 'auto' && settings.engine !== 'unknown'
+      ? projectEngineLabel(settings.engine)
+      : null;
+  const workspacePath = workspace.path?.trim();
+  const pathLine = workspacePath ? `\n工作区路径：${workspacePath}` : '';
+  const engineLine = configuredEngine
+    ? `当前项目引擎：${configuredEngine}（来自项目设置/自动检测结果）。`
+    : '当前项目引擎：未识别或自动模式。';
+  const rule = configuredEngine
+    ? `涉及游戏开发、图像转游戏、素材落地、代码/蓝图/组件拆解时，优先按 ${configuredEngine} 项目实现；除非用户明确要求，不要改用 Godot 或其它引擎。`
+    : '涉及游戏开发、图像转游戏、素材落地、代码/蓝图/组件拆解时，必须根据工作区文件标记和上下文自动判读具体引擎（例如 .uproject=Unreal，Packages/manifest.json+ProjectSettings=Unity，project.godot=Godot，project.json/assets=Cocos），不要默认使用 Godot。';
+  return `\n\n【项目引擎】\n${engineLine}${pathLine}\n${rule}`;
 }
 
 function composerWorkspaceForSessionKey(
@@ -1007,10 +689,6 @@ function hasSessionKey(
   return sessions.some((item) => sameSessionKey(item, key));
 }
 
-export function workflowSessionKeyId(sessionKey: WorkflowSessionKey): string {
-  return `${sessionKey.workspaceId ?? ''}::${sessionKey.sessionId ?? ''}`;
-}
-
 function composerDraftForSession(
   drafts: Record<string, string>,
   sessionKey: WorkflowSessionKey,
@@ -1018,7 +696,7 @@ function composerDraftForSession(
   return drafts[workflowSessionKeyId(sessionKey)] ?? '';
 }
 
-function composerDraftPatchForSession(
+export function composerDraftPatchForSession(
   state: ComposerDraftState,
   sessionKey: WorkflowSessionKey,
 ): Pick<StoreState, 'composerDraft' | 'composerDrafts'> {
@@ -1031,24 +709,6 @@ function composerDraftPatchForSession(
     composerDrafts,
     composerDraft: composerDraftForSession(composerDrafts, sessionKey),
   };
-}
-
-function personalInstructionsSelectionForState(
-  state: Pick<StoreState, 'workflow' | 'composer'>,
-): GatewaySelection {
-  return workflowDefaultGatewaySelection(state.workflow, state.composer.model);
-}
-
-function activePersonalInstructionsForState(
-  state: Pick<
-    StoreState,
-    'personalInstructionsByModel' | 'workflow' | 'composer'
-  >,
-): string {
-  return personalInstructionsForSelection(
-    state.personalInstructionsByModel,
-    personalInstructionsSelectionForState(state),
-  );
 }
 
 function sessionKeyPersistable(sessionKey: WorkflowSessionKey): boolean {
@@ -1086,12 +746,144 @@ function persistGlobalGatewaySelection(selection: GatewaySelection): GatewaySele
   return normalized;
 }
 
+function runtimeAdapterFromRemoteAdapter(adapter: unknown): GatewaySelection['adapter'] {
+  if (adapter === 'codex') return 'codex';
+  if (adapter === 'gemini') return 'gemini';
+  return 'claude-code';
+}
+
+function runtimeAdapterFromProviderKind(kind: unknown): GatewaySelection['adapter'] {
+  if (kind === 'codex') return 'codex';
+  if (kind === 'gemini') return 'gemini';
+  return 'claude-code';
+}
+
+function remoteWorkspaceModelForAdapter(
+  adapter: GatewaySelection['adapter'],
+  model: string | null | undefined,
+): string | undefined {
+  return remoteModelForAdapter(adapter === 'claude-code', model);
+}
+
+function remoteWorkspaceGatewaySelection(
+  workspacePath: string,
+  current: GatewaySelection,
+): GatewaySelection | null {
+  if (!isRemoteWorkspacePath(workspacePath)) return null;
+  const workspaceId = remoteWorkspaceIdFromPath(workspacePath);
+  const remote = parseRemoteProviderId(current.providerId);
+  const config = getRemoteWorkspace(workspaceId);
+  if (!config) return null;
+  const configAdapter = runtimeAdapterFromRemoteAdapter(config.adapter);
+  const configModel = remoteWorkspaceModelForAdapter(configAdapter, config.model);
+  if (remote?.workspaceId === workspaceId) {
+    const provider = listProviders().find((item) => item.id === current.providerId);
+    const adapter = provider
+      ? runtimeAdapterFromProviderKind(provider.kind)
+      : current.adapter || configAdapter;
+    const currentModel = remoteWorkspaceModelForAdapter(
+      adapter,
+      current.modelOverride?.trim() || current.modelClass?.trim(),
+    );
+    if (!configModel) {
+      if (currentModel) return current;
+      const providerModel =
+        remoteWorkspaceModelForAdapter(adapter, provider?.model) || 'default';
+      return normalizeGatewaySelection({
+        ...current,
+        adapter,
+        modelClass: providerModel,
+        modelOverride: undefined,
+        providerId: current.providerId,
+        channelId: current.channelId || 'default',
+      });
+    }
+    const currentOverride = current.modelOverride?.trim();
+    if (
+      currentModel?.toLowerCase() === configModel.toLowerCase() &&
+      currentOverride?.toLowerCase() === configModel.toLowerCase()
+    ) {
+      return current;
+    }
+    return normalizeGatewaySelection({
+      ...current,
+      adapter,
+      modelClass: configModel,
+      modelOverride: configModel,
+      providerId: current.providerId,
+      channelId: current.channelId || 'default',
+    });
+  }
+
+  const remoteProviders = listProviders().filter((provider) =>
+    remoteRunnerProviderMatchesWorkspace(provider, workspaceId),
+  );
+  // Bind only to an account that matches the project's configured agent. When
+  // no such account exists on the runner, fall through to that agent's system
+  // default rather than hijacking to a mismatched account (e.g. a Codex account
+  // when the project is configured for Claude).
+  const provider = remoteProviders.find(
+    (item) => runtimeAdapterFromProviderKind(item.kind) === configAdapter,
+  );
+  if (provider) {
+    const adapter = runtimeAdapterFromProviderKind(provider.kind);
+    // Re-derive the project model against the bound account's adapter family so
+    // a Claude-family default (e.g. claude-opus-4-8) never lands on Codex/Gemini.
+    const adapterConfigModel = remoteWorkspaceModelForAdapter(adapter, config.model);
+    const model =
+      adapterConfigModel ||
+      remoteWorkspaceModelForAdapter(adapter, provider.model) ||
+      'default';
+    return normalizeGatewaySelection({
+      adapter,
+      modelClass: model,
+      ...(adapterConfigModel ? { modelOverride: adapterConfigModel } : {}),
+      providerId: provider.id,
+      channelId: 'default',
+    });
+  }
+
+  const model = configModel || 'default';
+  return normalizeGatewaySelection({
+    adapter: configAdapter,
+    modelClass: model,
+    ...(configModel ? { modelOverride: configModel } : {}),
+    systemDefault: true,
+  });
+}
+
+/**
+ * 本地工作区不能使用 `remote-runner:` provider（那是某个远程项目专属的执行
+ * 通道）。从远程会话切回本地会话时，全局活动选择 / 旧会话快照里可能还残留着
+ * 远程 provider，导致底部渠道/大模型停在远程的、本地项目跑不了。
+ *
+ * 这里把指向远程 runner 的 selection 替换成一个干净的本地默认（优先沿用当前
+ * 适配器对应的本地 provider，否则退回系统默认）。非远程 selection 原样返回。
+ */
+function sanitizeLocalWorkspaceSelection(
+  selection: GatewaySelection,
+): GatewaySelection {
+  if (!parseRemoteProviderId(selection.providerId)) return selection;
+  const fallback =
+    getExplicitActiveGatewaySelection() ??
+    configuredCliGatewaySelection() ??
+    getDefaultGatewaySelection();
+  // 若全局活动选择本身也指向远程（同一次泄漏的来源），再退一层到 CLI/系统默认。
+  const clean = parseRemoteProviderId(fallback.providerId)
+    ? configuredCliGatewaySelection() ?? getDefaultGatewaySelection()
+    : fallback;
+  return normalizeGatewaySelection(clean);
+}
+
 function withNewSessionGatewayDefaults(workflow: IRGraph): IRGraph {
-  const selection = getExplicitActiveGatewaySelection() ?? configuredCliGatewaySelection();
+  const explicit = getExplicitActiveGatewaySelection();
+  const selection = explicit
+    ? sanitizeLocalWorkspaceSelection(explicit)
+    : configuredCliGatewaySelection();
   return selection ? withSessionGatewayDefaults(workflow, selection) : workflow;
 }
 
-function normalizeWorkspaceFolderList(
+export function normalizeWorkspaceFolderList(
   paths: unknown,
   primary?: string,
 ): string[] {
@@ -1101,7 +893,7 @@ function normalizeWorkspaceFolderList(
   );
 }
 
-function composerWorkspacePaths(composer: ComposerSettings): string[] {
+export function composerWorkspacePaths(composer: ComposerSettings): string[] {
   return uniqueWorkspaceHistory([
     composer.workspace,
     ...normalizeWorkspaceFolderList(
@@ -1111,7 +903,7 @@ function composerWorkspacePaths(composer: ComposerSettings): string[] {
   ]);
 }
 
-function composerCliWorkspaceOptions(composer: ComposerSettings): {
+export function composerCliWorkspaceOptions(composer: ComposerSettings): {
   cwd?: string;
   extraWorkspacePaths?: string[];
 } {
@@ -1135,7 +927,7 @@ function aiEditCliWorkspaceOptions(
   return fallback ? { ...options, cwd: fallback } : options;
 }
 
-function workspaceHistoryWithRecentPaths(
+export function workspaceHistoryWithRecentPaths(
   paths: readonly unknown[],
   history: readonly unknown[],
 ): string[] {
@@ -1145,7 +937,7 @@ function workspaceHistoryWithRecentPaths(
   );
 }
 
-function defaultSessionComposer(
+export function defaultSessionComposer(
   workspace?: string,
   folders?: readonly string[],
 ): ComposerSettings {
@@ -1165,7 +957,7 @@ function defaultSessionComposer(
  * CLI adapters) operate over the same multi-folder set the user configured in
  * Project Settings → 概览.
  */
-function workspaceFoldersFromMetadata(
+export function workspaceFoldersFromMetadata(
   metadata: WorkspaceSummary['metadata'],
 ): string[] {
   return projectSettingsFromMetadata(metadata).folders;
@@ -1185,7 +977,7 @@ function normalizeCacheTtlMinutes(value: unknown): number {
     : DEFAULT_CACHE_TTL_MINUTES;
 }
 
-function normalizeComposerSettings(value: Partial<ComposerSettings> | undefined): ComposerSettings {
+export function normalizeComposerSettings(value: Partial<ComposerSettings> | undefined): ComposerSettings {
   const source = value ?? {};
   const workspace = normalizeWorkspacePath(source.workspace ?? defaultComposer.workspace);
   return {
@@ -1200,6 +992,9 @@ function normalizeComposerSettings(value: Partial<ComposerSettings> | undefined)
       workspace,
     ),
     modelStrategy: source.modelStrategy ?? defaultComposer.modelStrategy,
+    gddMode: source.gddMode ?? defaultComposer.gddMode,
+    gddModeStartedAt:
+      source.gddModeStartedAt ?? defaultComposer.gddModeStartedAt,
     imageMode: source.imageMode ?? defaultComposer.imageMode,
     imageModeStartedAt:
       source.imageModeStartedAt ?? defaultComposer.imageModeStartedAt,
@@ -1221,9 +1016,15 @@ function normalizeComposerSettings(value: Partial<ComposerSettings> | undefined)
     comfyMode: source.comfyMode ?? defaultComposer.comfyMode,
     comfyModeStartedAt:
       source.comfyModeStartedAt ?? defaultComposer.comfyModeStartedAt,
+    worldMode: source.worldMode ?? defaultComposer.worldMode,
+    worldModeStartedAt:
+      source.worldModeStartedAt ?? defaultComposer.worldModeStartedAt,
     uiMode: source.uiMode ?? defaultComposer.uiMode,
     uiModeStartedAt:
       source.uiModeStartedAt ?? defaultComposer.uiModeStartedAt,
+    metahumanMode: source.metahumanMode ?? defaultComposer.metahumanMode,
+    metahumanModeStartedAt:
+      source.metahumanModeStartedAt ?? defaultComposer.metahumanModeStartedAt,
     blueprintMode: source.blueprintMode ?? defaultComposer.blueprintMode,
     blueprintModeStartedAt:
       source.blueprintModeStartedAt ?? defaultComposer.blueprintModeStartedAt,
@@ -1247,7 +1048,7 @@ function composerSnapshotFromState(
 let deferredComposerSave: PersistedComposer | null = null;
 let deferredComposerSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-function saveComposerSoon(state: PersistedComposer): void {
+export function saveComposerSoon(state: PersistedComposer): void {
   deferredComposerSave = state;
   if (deferredComposerSaveTimer) return;
   deferredComposerSaveTimer = setTimeout(() => {
@@ -1258,7 +1059,7 @@ function saveComposerSoon(state: PersistedComposer): void {
   }, 0);
 }
 
-function rememberSessionComposer(
+export function rememberSessionComposer(
   state: ComposerSessionState,
   nextBySession: Record<string, SessionComposerSettings> = state.composerBySession,
   snapshot: SessionComposerSettings = composerSnapshotFromState(state),
@@ -1271,7 +1072,7 @@ function rememberSessionComposer(
   };
 }
 
-function composerPatchForSession(
+export function composerPatchForSession(
   state: ComposerSessionState,
   sessionKey: WorkflowSessionKey,
   workflow: IRGraph,
@@ -1282,7 +1083,7 @@ function composerPatchForSession(
   const stored = sessionKeyPersistable(sessionKey)
     ? composerBySession[key]
     : undefined;
-  const snapshot =
+  const baseSnapshot =
     stored ??
     ({
       composer: fallbackComposer,
@@ -1291,7 +1092,31 @@ function composerPatchForSession(
         fallbackComposer.model,
       ),
     } satisfies SessionComposerSettings);
-  if (!stored && sessionKeyPersistable(sessionKey)) {
+  const remoteSelection = remoteWorkspaceGatewaySelection(
+    baseSnapshot.composer.workspace || fallbackComposer.workspace,
+    baseSnapshot.gatewaySelection,
+  );
+  // 本地工作区：清洗掉残留的远程 runner 选择，避免底部渠道/大模型停在远程的、
+  // 导致本地项目跑不了。同时把全局活动 pin 一并修复，让运行时解析与新建会话
+  // 不再继续泄漏远程 provider。
+  const localSelection = remoteSelection
+    ? null
+    : (() => {
+        const cleaned = sanitizeLocalWorkspaceSelection(
+          baseSnapshot.gatewaySelection,
+        );
+        if (cleaned === baseSnapshot.gatewaySelection) return null;
+        const activePin = getExplicitActiveGatewaySelection();
+        if (activePin && parseRemoteProviderId(activePin.providerId)) {
+          setActiveGatewaySelection(cleaned);
+        }
+        return cleaned;
+      })();
+  const effectiveSelection = remoteSelection ?? localSelection;
+  const snapshot = effectiveSelection
+    ? { ...baseSnapshot, gatewaySelection: effectiveSelection }
+    : baseSnapshot;
+  if ((!stored || effectiveSelection) && sessionKeyPersistable(sessionKey)) {
     composerBySession = { ...composerBySession, [key]: snapshot };
   }
   return {
@@ -1372,17 +1197,17 @@ export function workflowDeleteProtectionReason(
   );
 }
 
-const WORKSPACE_HISTORY_LIMIT = 8;
+export const WORKSPACE_HISTORY_LIMIT = 8;
 const CANVAS_VIEWPORT_PERSIST_DEBOUNCE_MS = 250;
 
 let historyNavigationVersion = 0;
 
-function beginHistoryNavigation(): number {
+export function beginHistoryNavigation(): number {
   historyNavigationVersion += 1;
   return historyNavigationVersion;
 }
 
-function isLatestHistoryNavigation(version: number): boolean {
+export function isLatestHistoryNavigation(version: number): boolean {
   return version === historyNavigationVersion;
 }
 
@@ -1391,83 +1216,6 @@ const canvasViewportPersistTimers = new Map<
   ReturnType<typeof setTimeout>
 >();
 const canvasViewportMemory = new Map<string, CanvasViewport | null>();
-
-/**
- * Per-type default label + params used by addNode. Mirrors the node catalogue
- * in the design doc; agent/control nodes carry their minimal editable params.
- */
-const NODE_DEFAULTS: Record<
-  NodeType,
-  { label: string; params: Record<string, unknown> }
-> = {
-  start: { label: 'Start', params: { userInputs: [] } },
-  end: { label: 'End', params: {} },
-  agent: { label: '描述你的步骤', params: {} },
-  parallel: { label: '并行', params: { branches: [] } },
-  pipeline: { label: '流水线', params: { items: 'args', stages: [] } },
-  phase: { label: '阶段', params: { title: '阶段' } },
-  branch: { label: '分支', params: { condition: 'true' } },
-  loop: { label: '循环', params: { condition: 'false' } },
-  workflow: { label: '子工作流', params: { name: 'sub' } },
-  log: { label: '日志', params: { message: '' } },
-  variable: { label: '变量', params: { value: null } },
-  codeblock: { label: '代码块', params: { code: '' } },
-  consensus: { label: '共识', params: { voters: [], strategy: 'multi-lens' } },
-  composite: { label: '复合', params: { inputs: [], outputs: [] } },
-};
-
-/**
- * Collect a node id plus every transitive descendant (children whose `parent`
- * chain leads back to it). Used by removeNode so deleting a branch/loop removes
- * its whole body rather than orphaning child nodes.
- */
-function collectSubtree(nodes: IRNode[], rootId: string): Set<string> {
-  const doomed = new Set<string>([rootId]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const n of nodes) {
-      if (n.parent && doomed.has(n.parent) && !doomed.has(n.id)) {
-        doomed.add(n.id);
-        grew = true;
-      }
-    }
-  }
-  return doomed;
-}
-
-function patchParams(
-  params: Record<string, unknown>,
-  patch: Record<string, unknown>,
-): Record<string, unknown> {
-  const next = { ...params };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) delete next[key];
-    else next[key] = value;
-  }
-  return next;
-}
-
-function promptTranslationGatewayOptions(state: StoreState): {
-  apiKey?: string;
-  baseUrl?: string;
-  model?: string;
-  adapter?: string;
-  selection?: GatewaySelection;
-} {
-  const selection = workflowDefaultGatewaySelection(
-    state.workflow,
-    state.composer.model,
-  );
-  const direct = resolveDirectGatewayRoute(selection);
-  return {
-    selection,
-    apiKey: (direct?.apiKey ?? readApiKey()) || undefined,
-    baseUrl: (direct?.baseUrl ?? readBaseUrl()) || undefined,
-    model: direct?.model ?? selection.modelClass,
-    adapter: direct?.adapter ?? selection.adapter,
-  };
-}
 
 // Mirror historyStore's id format so an optimistic session and its persisted
 // record share the same id (no swap / flicker on reconcile).
@@ -1490,11 +1238,11 @@ function makeSession(locale: Locale = DEFAULT_LOCALE): Session {
   };
 }
 
-function chatWorkflow(title: string | undefined, locale: Locale): IRGraph {
+export function chatWorkflow(title: string | undefined, locale: Locale): IRGraph {
   return withNewSessionGatewayDefaults(simpleBlueprint(title, locale));
 }
 
-function imageResultMarkdown(result: {
+export function imageResultMarkdown(result: {
   providerLabel: string;
   model: string;
   prompt: string;
@@ -1513,7 +1261,7 @@ function imageResultMarkdown(result: {
  * like `NO_READY_IMAGE_PROVIDER` or `IMAGE_PROVIDER_NOT_READY:<id>` that mean
  * nothing to a user; surface them as concrete next steps instead.
  */
-function friendlyImageGenerationError(message: string): string {
+export function friendlyImageGenerationError(message: string): string {
   if (message === 'IMAGE_GENERATION_DISABLED') {
     return '生图功能已关闭。请在 设置 > 生图 中打开“启用生图”开关。';
   }
@@ -1541,7 +1289,7 @@ function isImageProviderId(
   );
 }
 
-function musicResultMarkdown(result: {
+export function musicResultMarkdown(result: {
   providerLabel: string;
   model: string;
   prompt: string;
@@ -1554,7 +1302,7 @@ function musicResultMarkdown(result: {
   return `${routeLine}\n✓ 音乐生成完成\n\n提示词：${result.prompt}\n\n${audioLines}`;
 }
 
-function videoResultMarkdown(result: {
+export function videoResultMarkdown(result: {
   providerLabel: string;
   model: string;
   prompt: string;
@@ -1567,7 +1315,7 @@ function videoResultMarkdown(result: {
   return `${routeLine}\n✓ 视频生成完成\n\n提示词：${result.prompt}\n\n${videoLines}`;
 }
 
-function speechResultMarkdown(result: {
+export function speechResultMarkdown(result: {
   providerLabel: string;
   model: string;
   voice: string;
@@ -1582,7 +1330,7 @@ function speechResultMarkdown(result: {
   return `${routeLine}\n✓ 语音合成完成\n\n文本：${result.prompt}\n\n${audioLines}`;
 }
 
-function spriteResultMarkdown(result: {
+export function spriteResultMarkdown(result: {
   providerLabel: string;
   model: string;
   prompt: string;
@@ -1619,7 +1367,7 @@ function spriteResultMarkdown(result: {
     videoLines ? `视频：\n\n${videoLines}` : '',
     metadataLines ? `元数据：\n\n${metadataLines}` : '',
   ].filter(Boolean);
-  return `${routeLine}\n✓ Sprite 动画生成完成\n${metaLine}\n\n提示词：${result.prompt}\n\n${assets.join('\n\n')}`;
+  return `${routeLine}\n✓ Sprite raw sheet 生成完成\n${metaLine}\n后续可用于规范化、切帧、manifest 和质检。\n\n提示词：${result.prompt}\n\n${assets.join('\n\n')}`;
 }
 
 function modelAssetHref(src: string): string {
@@ -1632,7 +1380,7 @@ function modelAssetHref(src: string): string {
   return src;
 }
 
-function threeDResultMarkdown(result: {
+export function threeDResultMarkdown(result: {
   providerLabel: string;
   model: string;
   prompt: string;
@@ -1700,6 +1448,49 @@ function threeDResultMarkdown(result: {
   return `${routeLine}\n✓ 3D 模型生成完成${riggingLine}\n\n提示词：${result.prompt}${downloadBlock}\n\n${assetLines}`;
 }
 
+export function worldModelResultMarkdown(result: {
+  providerLabel: string;
+  model: string;
+  prompt: string;
+  specBody: string;
+  assets: string[];
+}): string {
+  const routeLine = `⚙ 路由：${result.providerLabel} · 模型：${result.model}`;
+  const assetLines = result.assets
+    .map((src, index) => `[打开世界资源 ${index + 1}](${modelAssetHref(src)})`)
+    .join('\n\n');
+  const assetsBlock = assetLines ? `\n\n${assetLines}` : '';
+  return `${routeLine}\n✓ 世界模型生成完成\n\n提示词：${result.prompt}${assetsBlock}\n\n\`\`\`worldmodel\n${result.specBody}\n\`\`\``;
+}
+
+export function friendlyWorldModelGenerationError(message: string): string {
+  if (message === 'WORLD_MODEL_GENERATION_DISABLED') {
+    return '世界模型功能已关闭。请在 设置 > 世界模型 中打开“启用世界模型”开关。';
+  }
+  if (message === 'NO_READY_WORLD_MODEL_PROVIDER') {
+    return '尚未配置可用的世界模型 Provider。请在 设置 > 世界模型 中选择渠道，并填写对应的 API Key / Base URL。';
+  }
+  if (message.startsWith('WORLD_MODEL_PROVIDER_NOT_READY:')) {
+    const providerId = message.slice('WORLD_MODEL_PROVIDER_NOT_READY:'.length);
+    const settings = loadWorldModelGenerationSettings();
+    const label = isWorldModelProviderId(providerId, settings)
+      ? worldModelProviderById(providerId, settings).label
+      : providerId;
+    return `世界模型 Provider「${label}」尚未配置完整（缺少 API Key 或 Base URL，或该渠道暂无公开 API）。请在 设置 > 世界模型 中补全后重试。`;
+  }
+  return message;
+}
+
+function isWorldModelProviderId(
+  value: unknown,
+  settings = loadWorldModelGenerationSettings(),
+): value is WorldModelProviderId {
+  return (
+    typeof value === 'string' &&
+    worldModelProviders(settings).some((provider) => provider.id === value)
+  );
+}
+
 function threeDAssetFileName(src: string, index: number): string {
   const clean = src.trim().split(/[?#]/, 1)[0] ?? '';
   const ext =
@@ -1708,7 +1499,7 @@ function threeDAssetFileName(src: string, index: number): string {
   return `3d-model-${index + 1}.${ext}`;
 }
 
-async function downloadThreeDAssets(
+export async function downloadThreeDAssets(
   assets: string[],
   cwd?: string,
   context?: {
@@ -1746,7 +1537,7 @@ async function downloadThreeDAssets(
   return { downloaded, downloadErrors };
 }
 
-function meshSearchResultMarkdown(
+export function meshSearchResultMarkdown(
   result: MeshSearchResult,
   downloaded: Map<string, string>,
   settings: MeshLibraryAccountSettings,
@@ -1810,7 +1601,7 @@ function meshSearchResultMarkdown(
   }
   if (result.items.length === 0 && result.linkOuts.length === 0) {
     if (settings.enabledIds.length === 0) {
-      lines.push('\n没有启用任何在线模型库。请在项目设置 > 在线模型库中启用并配置账号。');
+      lines.push('\n没有启用任何在线模型库。请在设置 > 在线模型库中启用并配置账号。');
     } else {
       lines.push('\n未找到匹配的在线模型结果。可以换成更通用的关键词再试，例如 `cartoon bear`、`low poly bear` 或 `teddy bear`。');
     }
@@ -1818,7 +1609,7 @@ function meshSearchResultMarkdown(
   return lines.join('\n');
 }
 
-async function downloadMeshSearchAssets(
+export async function downloadMeshSearchAssets(
   result: MeshSearchResult,
   settings: ReturnType<typeof loadMeshLibrarySettings>,
   cwd?: string,
@@ -1885,7 +1676,7 @@ function generatedAssetExtension(kind: AssetKind): string {
   }
 }
 
-function registerPendingGeneratedAsset(input: {
+export function registerPendingGeneratedAsset(input: {
   kind: AssetKind;
   origin: AssetOrigin;
   provider?: string;
@@ -1912,7 +1703,7 @@ function registerPendingGeneratedAsset(input: {
   });
 }
 
-function linkMessageManagedAssets(
+export function linkMessageManagedAssets(
   message: Message,
   sessionKey: WorkflowSessionKey,
 ): void {
@@ -1920,7 +1711,7 @@ function linkMessageManagedAssets(
   // downloaded, modified). Asset paths the user types are not AI-handled
   // assets, so skip non-assistant messages.
   if (message.role !== 'assistant') return;
-  if (!message.text.includes('.freeultracode')) return;
+  if (!message.text.includes('.ultragamestudio')) return;
   linkManagedAssetsFromMessageText({
     text: message.text,
     sessionId: sessionKey.sessionId,
@@ -1929,7 +1720,7 @@ function linkMessageManagedAssets(
   });
 }
 
-function threeDFailureHint(message: string): string {
+export function threeDFailureHint(message: string): string {
   if (
     message === 'NO_READY_THREE_D_PROVIDER' ||
     message === 'THREE_D_GENERATION_DISABLED' ||
@@ -1958,7 +1749,7 @@ function isVisibleChatSessionSummary(summary: SessionSummary): boolean {
   return !summary.isWorkflow || summary.simple === true;
 }
 
-function visibleChatSessionSummaries(
+export function visibleChatSessionSummaries(
   sessions: SessionSummary[],
 ): SessionSummary[] {
   return sessions.filter(isVisibleChatSessionSummary);
@@ -1991,7 +1782,7 @@ function normalizeSchedulePart(value: unknown, max: number): number | null {
   return value;
 }
 
-function normalizeScheduledTask(
+export function normalizeScheduledTask(
   value: unknown,
 ): ScheduledTaskConfig | undefined {
   if (!value || typeof value !== 'object') return undefined;
@@ -2032,7 +1823,7 @@ function normalizeScheduledTask(
   };
 }
 
-function sessionFromSummary(summary: SessionSummary): Session {
+export function sessionFromSummary(summary: SessionSummary): Session {
   const runStatus = historySessionRunStatus(summary.runStatus);
   const scheduledTask = normalizeScheduledTask(summary.scheduledTask);
   return {
@@ -2051,7 +1842,7 @@ function sessionFromSummary(summary: SessionSummary): Session {
   };
 }
 
-function summaryFromRecord(record: SessionRecord): SessionSummary {
+export function summaryFromRecord(record: SessionRecord): SessionSummary {
   const last = record.messages[record.messages.length - 1]?.text?.trim();
   const runStatus = record.meta?.runStatus;
   const scheduledTask = normalizeScheduledTask(record.meta?.scheduledTask);
@@ -2071,11 +1862,11 @@ function summaryFromRecord(record: SessionRecord): SessionSummary {
   };
 }
 
-function sessionFromRecord(record: SessionRecord): Session {
+export function sessionFromRecord(record: SessionRecord): Session {
   return sessionFromSummary(summaryFromRecord(record));
 }
 
-async function loadSessionTree(
+export async function loadSessionTree(
   workspaces: WorkspaceSummary[],
 ): Promise<Record<string, Session[]>> {
   const pairs = await Promise.all(
@@ -2102,7 +1893,7 @@ function sessionsForWorkspaceState(
   );
 }
 
-function sessionForKey(
+export function sessionForKey(
   state: Pick<StoreState, 'sessions' | 'sessionTree'>,
   sessionKey: WorkflowSessionKey,
 ): Session | undefined {
@@ -2183,7 +1974,7 @@ function canvasViewportFromMeta(meta?: SessionMeta): CanvasViewport | null {
   );
 }
 
-function canvasViewportForSession(
+export function canvasViewportForSession(
   workspaceId: string,
   sessionId: string,
   meta?: SessionMeta,
@@ -2287,7 +2078,7 @@ function syncSessionRunStatus(
   useStore.setState((state) => updateSessionRunStatus(state, sessionKey, runStatus) ?? state);
 }
 
-function syncAndPersistSessionRunStatus(
+export function syncAndPersistSessionRunStatus(
   sessionKey: WorkflowSessionKey,
   status: IRRunStatus | undefined,
 ): void {
@@ -2418,125 +2209,9 @@ async function persistActiveWorkflowSnapshot(
   }
 }
 
-function runOutputsFromMeta(meta?: SessionMeta): Record<string, string> {
-  const raw = meta?.runOutputs;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  return Object.fromEntries(
-    Object.entries(raw).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string',
-    ),
-  );
-}
-
-function isRunStatus(value: unknown): value is IRRunStatus {
-  return (
-    value === 'idle' ||
-    value === 'running' ||
-    value === 'success' ||
-    value === 'error' ||
-    value === 'interrupted'
-  );
-}
-
-function persistedStatusForDisplay(status: IRRunStatus): NodeRunState {
-  // A reopened workflow cannot still be executing inside this UI session.
-  return status === 'running' ? 'interrupted' : status;
-}
-
-function runOutputsFromSnapshot(
-  snapshot?: IRRunSnapshot,
-): Record<string, string> {
-  const raw = snapshot?.outputs;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  return Object.fromEntries(
-    Object.entries(raw).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string',
-    ),
-  );
-}
-
-function runSnapshotFromMeta(meta?: SessionMeta): IRRunSnapshot | null {
-  if (!meta) return null;
-  const hasRunData =
-    !!meta.runStatus ||
-    !!meta.runState ||
-    !!meta.runOutputs ||
-    typeof meta.failedNodeId === 'string' ||
-    !!meta.runError;
-  if (!hasRunData) return null;
-  return {
-    status: isRunStatus(meta.runStatus) ? meta.runStatus : 'idle',
-    nodeStates: meta.runState,
-    outputs: runOutputsFromMeta(meta),
-    failedNodeId:
-      typeof meta.failedNodeId === 'string' ? meta.failedNodeId : null,
-    error: meta.runError ?? null,
-  };
-}
-
-function runProgressFromSnapshot(
-  workflow: IRGraph,
-  snapshot?: IRRunSnapshot | null,
-): Pick<StoreState, 'runState' | 'runOutputs' | 'lastRunFailedNodeId'> {
-  if (!snapshot) return emptyRunProgress();
-
-  const nodeIds = new Set(workflow.nodes.map((node) => node.id));
-  const runOutputs = Object.fromEntries(
-    Object.entries(runOutputsFromSnapshot(snapshot)).filter(([nodeId]) =>
-      nodeIds.has(nodeId),
-    ),
-  );
-  const runState: Record<string, NodeRunState> = {};
-
-  for (const nodeId of Object.keys(runOutputs)) {
-    runState[nodeId] = 'success';
-  }
-
-  const rawNodeStates = snapshot.nodeStates;
-  if (
-    rawNodeStates &&
-    typeof rawNodeStates === 'object' &&
-    !Array.isArray(rawNodeStates)
-  ) {
-    for (const [nodeId, status] of Object.entries(rawNodeStates)) {
-      if (!nodeIds.has(nodeId) || !isRunStatus(status) || status === 'idle') {
-        continue;
-      }
-      runState[nodeId] = persistedStatusForDisplay(status);
-    }
-  }
-
-  const preferredFailedNodeId =
-    typeof snapshot.failedNodeId === 'string' &&
-    nodeIds.has(snapshot.failedNodeId)
-      ? snapshot.failedNodeId
-      : null;
-  const lastRunFailedNodeId =
-    preferredFailedNodeId ??
-    Object.entries(runState).find(
-      ([, status]) =>
-        status === 'error' ||
-        status === 'interrupted' ||
-        status === 'running',
-    )?.[0] ??
-    null;
-
-  if (lastRunFailedNodeId && runState[lastRunFailedNodeId] == null) {
-    runState[lastRunFailedNodeId] =
-      snapshot.status === 'interrupted' || snapshot.status === 'running'
-        ? 'interrupted'
-        : 'error';
-  }
-
-  return { runState, runOutputs, lastRunFailedNodeId };
-}
-
-function emptyRunProgress(): Pick<
-  StoreState,
-  'runState' | 'runOutputs' | 'lastRunFailedNodeId'
-> {
-  return { runState: {}, runOutputs: {}, lastRunFailedNodeId: null };
-}
+// [M3] The pure run-snapshot <-> session-meta mappers moved to ./runSnapshot.
+// They are imported above and re-exported below so existing import sites
+// (historyActions, workflowEditorSlice, tests) keep resolving them from here.
 
 function emptyRunMeta(): Partial<SessionMeta> {
   return {
@@ -2595,30 +2270,8 @@ function applyWorkflowEdit(
   return committed;
 }
 
-function workflowWithoutRunSnapshot(workflow: IRGraph): IRGraph {
-  if (!workflow.meta.run) return workflow;
-  const meta = { ...workflow.meta };
-  delete meta.run;
-  return { ...workflow, meta };
-}
-
-function workflowWithRunSnapshot(
-  workflow: IRGraph,
-  snapshot: IRRunSnapshot,
-): IRGraph {
-  const hasState = snapshot.nodeStates && Object.keys(snapshot.nodeStates).length > 0;
-  const hasOutputs = snapshot.outputs && Object.keys(snapshot.outputs).length > 0;
-  if (
-    snapshot.status === 'idle' &&
-    !hasState &&
-    !hasOutputs &&
-    !snapshot.failedNodeId &&
-    !snapshot.error
-  ) {
-    return workflowWithoutRunSnapshot(workflow);
-  }
-  return { ...workflow, meta: { ...workflow.meta, run: snapshot } };
-}
+// [M3] workflowWithoutRunSnapshot / workflowWithRunSnapshot moved to
+// ./runSnapshot (imported + re-exported below).
 
 function commitGraphEdit(
   ir: IRGraph,
@@ -2640,74 +2293,9 @@ function commitGraphEdit(
   }, emptyRunMeta(), sessionKey);
 }
 
-function runSnapshotFromState(
-  state: StoreState,
-  status?: IRRunStatus,
-  error: Record<string, unknown> | null = null,
-): IRRunSnapshot {
-  const nodeStates = Object.fromEntries(
-    Object.entries(state.runState).filter(([, nodeStatus]) => nodeStatus !== 'idle'),
-  );
-  const outputs = Object.fromEntries(
-    Object.entries(state.runOutputs).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string',
-    ),
-  );
-  const inferredStatus =
-    state.mode === 'running'
-      ? 'running'
-      : Object.values(state.runState).some((nodeStatus) => nodeStatus === 'error')
-        ? 'error'
-        : Object.values(state.runState).some(
-              (nodeStatus) => nodeStatus === 'interrupted',
-            )
-          ? 'interrupted'
-          : Object.keys(nodeStates).length > 0
-            ? 'success'
-            : 'idle';
-  return {
-    status: status ?? inferredStatus,
-    nodeStates,
-    outputs,
-    failedNodeId: state.lastRunFailedNodeId,
-    error,
-    route: workflowDefaultGatewaySelection(
-      state.workflow,
-      state.composer.model,
-    ),
-    updatedAt: Date.now(),
-  };
-}
-
-function runMetaFromSnapshot(snapshot: IRRunSnapshot): Partial<SessionMeta> {
-  return {
-    runStatus: snapshot.status,
-    runState: snapshot.nodeStates ?? {},
-    runOutputs: snapshot.outputs ?? {},
-    failedNodeId: snapshot.failedNodeId ?? null,
-    runError: snapshot.error ?? null,
-  };
-}
-
-function restoreWorkflowRunSnapshot(
-  workflow: IRGraph,
-  meta?: SessionMeta,
-): IRGraph {
-  const migrated = normalizeWorkflowNodeNumbers(
-    migrateWorkflowGateway(workflow, defaultComposer.model),
-  );
-  const source = runSnapshotFromMeta(meta) ?? migrated.meta.run ?? null;
-  if (!source) return workflowWithoutRunSnapshot(migrated);
-  const progress = runProgressFromSnapshot(migrated, source);
-  return workflowWithRunSnapshot(migrated, {
-    status: source.status === 'running' ? 'interrupted' : source.status,
-    nodeStates: progress.runState,
-    outputs: progress.runOutputs,
-    failedNodeId: progress.lastRunFailedNodeId,
-    error: source.error ?? null,
-    updatedAt: source.updatedAt ?? Date.now(),
-  });
-}
+// [M3] runSnapshotFromState / runMetaFromSnapshot / restoreWorkflowRunSnapshot
+// moved to ./runSnapshot (imported + re-exported below). runSnapshotFromState
+// now takes a state slice; useStore passes the full state, which satisfies it.
 
 async function persistWorkflowRunSnapshot(
   workflow: IRGraph,
@@ -2856,7 +2444,7 @@ function pruneAiEditSourcesForDeletion(
   }
 }
 
-function applyPromptTitle(
+export function applyPromptTitle(
   state: StoreState,
   text: string,
   createdAt: number,
@@ -3282,7 +2870,7 @@ async function createNewWorkflowSession(
   }
 }
 
-interface FreeUltraCodeSessionOptions {
+interface UltraGameStudioSessionOptions {
   workspaceId?: string | null;
   forceNewSession?: boolean;
 }
@@ -3290,7 +2878,7 @@ interface FreeUltraCodeSessionOptions {
 async function openWorkflowInSession(
   ir: IRGraph,
   path?: string,
-  options: FreeUltraCodeSessionOptions = {},
+  options: UltraGameStudioSessionOptions = {},
 ): Promise<void> {
   const state = useStore.getState();
   const workflow = restoreWorkflowRunSnapshot(
@@ -3957,147 +3545,6 @@ async function renameWorkflowHistorySession(
   }
 }
 
-async function setWorkflowFavoriteHistorySession(
-  sessionId: string,
-  workspaceId: string | null,
-  favorite: boolean,
-): Promise<void> {
-  const state = useStore.getState();
-  if (!workspaceId || !state.historyReady) {
-    const localSessions = workspaceId
-      ? state.sessionTree[workspaceId] ?? state.sessions
-      : state.sessions;
-    const target = localSessions.find((session) =>
-      sessionMatchesTarget(session, sessionId, workspaceId),
-    );
-    if (!target) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    useStore.setState((s) => {
-      const update = (session: Session): Session =>
-        sessionMatchesTarget(session, sessionId, workspaceId)
-          ? { ...session, favorite }
-          : session;
-      return {
-        sessions: s.sessions.map(update),
-        sessionTree: workspaceId
-          ? {
-              ...s.sessionTree,
-              [workspaceId]: (s.sessionTree[workspaceId] ?? s.sessions).map(
-                update,
-              ),
-            }
-          : s.sessionTree,
-      };
-    });
-    return;
-  }
-
-  const record = await historyStore.getSession(workspaceId, sessionId);
-  if (!record) {
-    throw new Error(`Session not found: ${workspaceId}/${sessionId}`);
-  }
-
-  const updated = await historyStore.updateSession(workspaceId, sessionId, {
-    meta: { favorite },
-    preserveUpdatedAt: true,
-  });
-  const updatedSession = sessionFromRecord(updated);
-
-  useStore.setState((s) => {
-    const update = (session: Session): Session =>
-      sessionMatchesTarget(session, sessionId, workspaceId)
-        ? updatedSession
-        : session;
-    return {
-      sessions: s.sessions.map(update),
-      sessionTree: s.sessionTree[workspaceId]
-        ? {
-            ...s.sessionTree,
-            [workspaceId]: s.sessionTree[workspaceId].map(update),
-          }
-        : s.sessionTree,
-    };
-  });
-}
-
-async function setWorkflowScheduledTaskHistorySession(
-  sessionId: string,
-  workspaceId: string | null,
-  scheduledTask: ScheduledTaskConfig | null,
-): Promise<void> {
-  const normalizedTask = scheduledTask
-    ? normalizeScheduledTask(scheduledTask)
-    : undefined;
-  if (scheduledTask && !normalizedTask) {
-    throw new Error('Invalid scheduled task config');
-  }
-
-  const state = useStore.getState();
-  if (!workspaceId || !state.historyReady) {
-    const localSessions = workspaceId
-      ? state.sessionTree[workspaceId] ?? state.sessions
-      : state.sessions;
-    const target = localSessions.find((session) =>
-      sessionMatchesTarget(session, sessionId, workspaceId),
-    );
-    if (!target) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    useStore.setState((s) => {
-      const update = (session: Session): Session => {
-        if (!sessionMatchesTarget(session, sessionId, workspaceId)) {
-          return session;
-        }
-        return normalizedTask
-          ? { ...session, scheduledTask: normalizedTask }
-          : { ...session, scheduledTask: undefined };
-      };
-      return {
-        sessions: s.sessions.map(update),
-        sessionTree: workspaceId
-          ? {
-              ...s.sessionTree,
-              [workspaceId]: (s.sessionTree[workspaceId] ?? s.sessions).map(
-                update,
-              ),
-            }
-          : s.sessionTree,
-      };
-    });
-    return;
-  }
-
-  const record = await historyStore.getSession(workspaceId, sessionId);
-  if (!record) {
-    throw new Error(`Session not found: ${workspaceId}/${sessionId}`);
-  }
-
-  const updated = await historyStore.updateSession(workspaceId, sessionId, {
-    meta: { scheduledTask: normalizedTask ?? null },
-    preserveUpdatedAt: true,
-  });
-  const updatedSession = sessionFromRecord(updated);
-
-  useStore.setState((s) => {
-    const update = (session: Session): Session =>
-      sessionMatchesTarget(session, sessionId, workspaceId)
-        ? updatedSession
-        : session;
-    return {
-      sessions: s.sessions.map(update),
-      sessionTree: s.sessionTree[workspaceId]
-        ? {
-            ...s.sessionTree,
-            [workspaceId]: s.sessionTree[workspaceId].map(update),
-          }
-        : s.sessionTree,
-    };
-  });
-}
-
 function scheduledTaskAlertMessage(
   title: string,
   scheduledTask: ScheduledTaskConfig,
@@ -4166,239 +3613,6 @@ async function runScheduledTaskHistorySession(
   current.runWorkflow();
 }
 
-async function activateWorkspacePath(path: string): Promise<void> {
-  const trimmed = normalizeWorkspacePath(path);
-  if (!trimmed) return;
-  const navigationVersion = beginHistoryNavigation();
-  const state = useStore.getState();
-  if (!state.historyReady) return;
-
-  const workspace = await historyStore.resolveWorkspaceByPath(trimmed);
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
-  let sessions = visibleChatSessionSummaries(
-    await historyStore.listSessions(workspace.id),
-  );
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
-  let active = sessions[0];
-  if (!active) {
-    const record = await historyStore.createSession({
-      workspaceId: workspace.id,
-      isWorkflow: false,
-      messages: [],
-    });
-    if (!isLatestHistoryNavigation(navigationVersion)) return;
-    active = summaryFromRecord(record);
-    sessions = [summaryFromRecord(record), ...sessions];
-  }
-
-  const workspaces = await historyStore.listWorkspaces();
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
-  const sessionTree = await loadSessionTree(workspaces);
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
-  const activeRecord = active
-    ? await historyStore.getSession(workspace.id, active.id)
-    : null;
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
-  const activeRecordIsSimpleChat =
-    activeRecord?.workflow?.meta?.simple === true;
-  const workflow =
-    activeRecordIsSimpleChat && activeRecord?.workflow
-      ? restoreWorkflowRunSnapshot(activeRecord.workflow, activeRecord.meta)
-      : chatWorkflow(activeRecord?.title, state.locale);
-  const runProgress = activeRecordIsSimpleChat
-    ? runProgressFromSnapshot(workflow, workflow.meta.run ?? null)
-    : emptyRunProgress();
-  const canvasViewport = canvasViewportForSession(
-    workspace.id,
-    active?.id ?? '',
-    activeRecord?.meta,
-  );
-  useStore.setState((s) => {
-    if (!isLatestHistoryNavigation(navigationVersion)) return s;
-    const sessionKey = {
-      workspaceId: workspace.id,
-      sessionId: active?.id ?? null,
-    };
-    const composerPatch = composerPatchForSession(
-      s,
-      sessionKey,
-      workflow,
-      defaultSessionComposer(
-        trimmed,
-        workspaceFoldersFromMetadata(workspace.metadata),
-      ),
-    );
-    const workspaceHistory = workspaceHistoryWithRecent(
-      trimmed,
-      s.workspaceHistory,
-      WORKSPACE_HISTORY_LIMIT,
-    );
-    saveComposerSoon({
-      composer: composerPatch.composer,
-      composerBySession: composerPatch.composerBySession,
-      workspaceHistory,
-    });
-    return {
-      workspaces,
-      activeWorkspaceId: workspace.id,
-      selectedWorkspaceId: workspace.id,
-      sessions: sessions.map((item) => sessionFromSummary(item)),
-      sessionTree,
-      activeSessionId: active?.id ?? null,
-      messages: activeRecord?.messages ?? [],
-      workflow: composerPatch.workflow,
-      composer: composerPatch.composer,
-      composerBySession: composerPatch.composerBySession,
-      workspaceHistory,
-      ...runProgress,
-      canvasViewport: activeRecordIsSimpleChat ? canvasViewport : null,
-      mode: 'design',
-      ...composerDraftPatchForSession(s, sessionKey),
-    };
-  });
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
-  const current = useStore.getState();
-  if (
-    current.activeWorkspaceId !== workspace.id ||
-    current.activeSessionId !== (active?.id ?? null)
-  ) {
-    return;
-  }
-  await historyStore.patchConfig({
-    lastActiveWorkspaceId: workspace.id,
-    lastActiveSessionId: active?.id,
-  });
-}
-
-async function initHistoryFromDisk(): Promise<void> {
-  if (historyInitStarted) return;
-  historyInitStarted = true;
-  try {
-    await historyStore.ready();
-    const rootPath = await historyStore.rootPath();
-    const config = await historyStore.getConfig();
-    let workspaces = await historyStore.listWorkspaces();
-
-    const persisted = loadComposer();
-    const persistedPath = persisted?.composer.workspace?.trim();
-    const configuredWorkspace = config.lastActiveWorkspaceId
-      ? await historyStore.getWorkspace(config.lastActiveWorkspaceId)
-      : null;
-    // Prefer `config.lastActiveWorkspaceId` — it is the authoritative record of
-    // the last workspace the user navigated to (written to disk atomically by
-    // activateWorkspacePath/navigate on every switch). The composer's persisted
-    // `workspace` path is a secondary, debounced localStorage value that tracks
-    // the composer cwd and can lag or desync from the genuinely-last-active
-    // workspace, so it is only a fallback when no config record exists.
-    let workspace =
-      configuredWorkspace ??
-      (persistedPath
-        ? await historyStore.resolveWorkspaceByPath(persistedPath)
-        : null);
-    if (!workspace && workspaces[0]) {
-      workspace = await historyStore.getWorkspace(workspaces[0].id);
-    }
-    if (!workspace) {
-      workspace = await historyStore.resolveWorkspaceByPath('');
-    }
-
-    workspaces = await historyStore.listWorkspaces();
-    let sessions = visibleChatSessionSummaries(
-      await historyStore.listSessions(workspace.id),
-    );
-    let active =
-      sessions.find((s) => s.id === config.lastActiveSessionId) ??
-      sessions.find((s) => s.id === workspace.lastActiveSessionId) ??
-      sessions[0];
-    if (!active) {
-      const created = await historyStore.createSession({
-        workspaceId: workspace.id,
-        isWorkflow: false,
-        messages: [],
-      });
-      active = summaryFromRecord(created);
-      sessions = [summaryFromRecord(created), ...sessions];
-      workspaces = await historyStore.listWorkspaces();
-    }
-    const sessionTree = await loadSessionTree(workspaces);
-    const activeRecord = active
-      ? await historyStore.getSession(workspace.id, active.id)
-      : null;
-    const currentState = useStore.getState();
-    const activeRecordIsSimpleChat =
-      activeRecord?.workflow?.meta?.simple === true;
-    const workflow =
-      activeRecordIsSimpleChat && activeRecord?.workflow
-        ? restoreWorkflowRunSnapshot(activeRecord.workflow, activeRecord.meta)
-        : chatWorkflow(activeRecord?.title, currentState.locale);
-    const runProgress = activeRecordIsSimpleChat
-      ? runProgressFromSnapshot(workflow, workflow.meta.run ?? null)
-      : emptyRunProgress();
-    const canvasViewport = canvasViewportForSession(
-      workspace.id,
-      active?.id ?? '',
-      activeRecord?.meta,
-    );
-
-    useStore.setState((s) => {
-      const sessionKey = {
-        workspaceId: workspace.id,
-        sessionId: active?.id ?? null,
-      };
-      const composerPatch = composerPatchForSession(
-        s,
-        sessionKey,
-        workflow,
-        {
-          ...s.composer,
-          workspace: workspace.path || s.composer.workspace,
-          workspaceFolders: workspaceFoldersFromMetadata(workspace.metadata),
-        },
-      );
-      return {
-        historyReady: true,
-        historyError: null,
-        historyRootPath: rootPath,
-        workspaces,
-        activeWorkspaceId: workspace.id,
-        selectedWorkspaceId: workspace.id,
-        sessions: sessions.map((item) => sessionFromSummary(item)),
-        sessionTree,
-        activeSessionId: active?.id ?? null,
-        messages: activeRecord?.messages ?? [],
-        workflow: composerPatch.workflow,
-        composer: composerPatch.composer,
-        composerBySession: composerPatch.composerBySession,
-        ...runProgress,
-        canvasViewport: activeRecordIsSimpleChat ? canvasViewport : null,
-        mode: 'design',
-        ...composerDraftPatchForSession(s, sessionKey),
-      };
-    });
-    void maybeRunCcSwitchAutoImportOnFirstRun();
-    await historyStore.patchConfig({
-      schemaVersion: HISTORY_SCHEMA_VERSION,
-      lastActiveWorkspaceId: workspace.id,
-      lastActiveSessionId: active?.id,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[history-init] failed to load history', err);
-    useStore.setState({
-      historyReady: true,
-      historyError: message || 'Unknown history initialization error',
-      historyRootPath: null,
-      workspaces: [],
-      activeWorkspaceId: null,
-      selectedWorkspaceId: null,
-      sessions: [],
-      sessionTree: {},
-      activeSessionId: null,
-      messages: [],
-    });
-  }
-}
-
 /**
  * Pure helper: return the updated `sessions` array with the active session's
  * `isWorkflow` flipped to true, or the original array when nothing changes
@@ -4426,7 +3640,7 @@ function workflowWithName(workflow: IRGraph, name: string): IRGraph {
   return { ...workflow, meta: { ...workflow.meta, name } };
 }
 
-function sessionMatchesTarget(
+export function sessionMatchesTarget(
   session: Session,
   sessionId: string,
   workspaceId: string | null,
@@ -4500,9 +3714,6 @@ const seedComposer: ComposerSettings = (() => {
   return valid ? withStrategy : { ...withStrategy, model: defaultComposer.model };
 })();
 const seedLocale = loadLocale();
-const seedPromptAutoTranslate = loadPromptAutoTranslate();
-const seedGameExpertSettings = loadGameExpertSettings();
-const seedAppearance = loadAppearance();
 
 // Cold-start directly into the plain chat surface. Hidden workflow snapshots
 // remain on disk, but they are no longer restored into the user-facing UI.
@@ -4510,22 +3721,7 @@ const seedWorkflow = migrateWorkflowGateway(
   simpleBlueprint(undefined, seedLocale),
   defaultComposer.model,
 );
-const seedPersonalInstructionsSelection = workflowDefaultGatewaySelection(
-  seedWorkflow,
-  seedComposer.model,
-);
-const seedPersonalInstructionsSelections = [
-  seedPersonalInstructionsSelection,
-  ...listGatewayRunOptions().map((option) => option.selection),
-];
-const seedPersonalInstructionsByModel = loadPersonalInstructionsByModel(
-  seedPersonalInstructionsSelection,
-  seedPersonalInstructionsSelections,
-);
-const seedPersonalInstructions = personalInstructionsForSelection(
-  seedPersonalInstructionsByModel,
-  seedPersonalInstructionsSelection,
-);
+const seedSettings = loadSettingsSliceSeeds(seedWorkflow, seedComposer, seedLocale);
 const seedWorkflowState = restoreWorkflowRunSnapshot(seedWorkflow);
 const seedRunProgress = runProgressFromSnapshot(
   seedWorkflowState,
@@ -4577,22 +3773,25 @@ function seedPromptGroups(): PromptGroup[] {
   return merged;
 }
 const seedPromptGroupsValue = seedPromptGroups();
-let historyInitStarted = false;
 
 export const useStore = create<StoreState>((set, get) => ({
-  // Seed graph: restored autosave, or a fresh default blueprint.
-  workflow: seedWorkflowState,
-  selectedNodeId: null,
-  graphPath: [],
-
-  // Editor lifecycle: start in design mode, no run state, clean, unsaved.
-  mode: 'design',
-  runState: seedRunProgress.runState,
-  runOutputs: seedRunProgress.runOutputs,
-  lastRunFailedNodeId: seedRunProgress.lastRunFailedNodeId,
-  canvasViewport: null,
-  dirty: false,
-  currentFilePath: null,
+  ...createWorkflowEditorSlice(
+    set,
+    {
+      applyWorkflowEdit,
+      canWriteWorkflow,
+      emptyRunProgress,
+      markActiveHistorySessionWorkflow,
+      workflowWithoutRunSnapshot,
+    },
+    {
+      workflow: seedWorkflowState,
+      mode: 'design',
+      runState: seedRunProgress.runState,
+      runOutputs: seedRunProgress.runOutputs,
+      lastRunFailedNodeId: seedRunProgress.lastRunFailedNodeId,
+    },
+  ),
 
   // AI: idle.
   aiStreaming: false,
@@ -4610,12 +3809,7 @@ export const useStore = create<StoreState>((set, get) => ({
   // Restore the user-edited prompt library if present (merging in any newly-
   // shipped default groups), else the full defaults. See seedPromptGroups().
   promptGroups: seedPromptGroupsValue,
-  locale: seedLocale,
-  promptAutoTranslate: seedPromptAutoTranslate,
-  personalInstructionsByModel: seedPersonalInstructionsByModel,
-  personalInstructions: seedPersonalInstructions,
-  gameExpertSettings: seedGameExpertSettings,
-  appearance: seedAppearance,
+  ...createSettingsSlice(set, get, seedSettings),
 
   // Composer settings seeded from the sample option lists, overlaid with any
   // persisted selections.
@@ -4643,126 +3837,8 @@ export const useStore = create<StoreState>((set, get) => ({
   runningWorkspaceId: null,
 
   initHistory: () => {
-    void initHistoryFromDisk();
+    initHistorySlice();
   },
-
-  setLocale: (locale) => {
-    set({ locale });
-    saveLocale(locale);
-  },
-
-  setPromptAutoTranslate: (enabled) => {
-    set({ promptAutoTranslate: enabled });
-    savePromptAutoTranslate(enabled);
-  },
-  setPersonalInstructions: (instructions, selection) => {
-    set((state) => {
-      const targetSelection = selection
-        ? normalizeGatewaySelection(selection)
-        : personalInstructionsSelectionForState(state);
-      const personalInstructionsByModel = withPersonalInstructionsForSelection(
-        state.personalInstructionsByModel,
-        targetSelection,
-        instructions,
-      );
-      savePersonalInstructionsByModel(personalInstructionsByModel);
-      return {
-        personalInstructionsByModel,
-        personalInstructions: activePersonalInstructionsForState({
-          ...state,
-          personalInstructionsByModel,
-        }),
-      };
-    });
-  },
-
-  setGameExpertSettings: (patch) => {
-    set((state) => {
-      const gameExpertSettings = normalizeGameExpertSettings({
-        ...state.gameExpertSettings,
-        ...patch,
-      });
-      saveGameExpertSettings(gameExpertSettings);
-      return { gameExpertSettings };
-    });
-  },
-
-  setStylePresetId: (stylePresetId) => {
-    const appearance: AppearanceSettings = normalizeAppearanceSettings({
-      ...get().appearance,
-      stylePresetId,
-      streamSchemeId: streamSchemeForStylePresetId(stylePresetId),
-    });
-    set({ appearance });
-    saveAppearance(appearance);
-    applyAppearance(appearance);
-  },
-
-  setStreamSchemeId: (streamSchemeId) => {
-    const current = get().appearance;
-    const appearance: AppearanceSettings = normalizeAppearanceSettings({
-      ...current,
-      stylePresetId: isBuiltinStylePresetId(streamSchemeId)
-        ? streamSchemeId
-        : current.stylePresetId,
-      streamSchemeId,
-    });
-    set({ appearance });
-    saveAppearance(appearance);
-    applyAppearance(appearance);
-  },
-
-  setFontFamilyId: (fontFamilyId) => {
-    const appearance: AppearanceSettings = normalizeAppearanceSettings({
-      ...get().appearance,
-      fontFamilyId,
-    });
-    set({ appearance });
-    saveAppearance(appearance);
-    applyAppearance(appearance);
-  },
-
-  setFontSizePx: (fontSizePx) => {
-    const appearance: AppearanceSettings = normalizeAppearanceSettings({
-      ...get().appearance,
-      fontSizePx,
-    });
-    set({ appearance });
-    saveAppearance(appearance);
-    applyAppearance(appearance);
-  },
-
-  selectNode: (id) => set({ selectedNodeId: id }),
-
-  // Composite drill-down navigation. These only touch the UI-transient
-  // graphPath + selection; they never read or mutate `workflow`.
-  enterComposite: (nodeId) =>
-    set((state) => {
-      const node = state.workflow.nodes.find((n) => n.id === nodeId);
-      if (!node) return state;
-      const label = node.label?.trim() || node.id;
-      return {
-        graphPath: [...state.graphPath, { nodeId, label }],
-        selectedNodeId: null,
-      };
-    }),
-  exitComposite: () =>
-    set((state) =>
-      state.graphPath.length === 0
-        ? state
-        : { graphPath: state.graphPath.slice(0, -1), selectedNodeId: null },
-    ),
-  popToGraph: (depth) =>
-    set((state) => {
-      const clamped = Math.max(0, Math.min(depth, state.graphPath.length));
-      if (clamped === state.graphPath.length) {
-        return { selectedNodeId: null };
-      }
-      return {
-        graphPath: state.graphPath.slice(0, clamped),
-        selectedNodeId: null,
-      };
-    }),
 
   setWorkflow: (ir) => {
     const workflow = restoreWorkflowRunSnapshot(
@@ -4783,7 +3859,7 @@ export const useStore = create<StoreState>((set, get) => ({
     void openWorkflowInSession(ir, path).catch(() => {});
   },
 
-  // Export the current workflow IR to a user-chosen .fuc.json file. The run
+  // Export the current workflow IR to a user-chosen .ugs.json file. The run
   // snapshot is stripped (see persist.ts) so the file is a clean, shareable
   // blueprint. Export does not touch currentFilePath — it's a "save a copy".
   exportWorkflow: (title) => {
@@ -5041,205 +4117,13 @@ export const useStore = create<StoreState>((set, get) => ({
   // In all cases the reply is a short Chinese explanation optionally followed by
   // a fenced ```json IRGraph; the JSON is hidden from the stream, parsed, and
   // applied to the blueprint. Pure questions (no fence) leave the graph as-is.
-  runUltracodePrompt: (task) => {
+  runStudioPrompt: (task) => {
     const trimmed = task.trim();
     if (!trimmed) return;
-    const parsed = parseUltracodePrompt(trimmed);
-    const request =
-      parsed.request ||
-      (parsed.options.resume ? '续跑 /ultracode 任务' : trimmed);
-    const modeLabel = ultracodeModeLabel(parsed.options);
-    const state = useStore.getState();
-    if (state.mode === 'running') return;
-    const sessionKey = activeWorkflowSessionKey(state);
-    if (hasSessionKey(state.chattingSessions, sessionKey)) return;
-    if (state.blockedSendTip) set({ blockedSendTip: null });
-    const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-    const changesBaselineReady = ensureSessionChangeBaselineForKey(
-      state,
-      sessionKey,
-      workspaceRootPath,
+    get().appendChatNote(
+      '已关闭 /studio 动态多智能体编排。请直接描述编程、文档或分析需求，默认由当前编程模型单模型总控处理；素材生成、引擎识别、文件操作和验证仍由 UltraGameStudio 的专用能力承接。',
+      'system',
     );
-
-    const now = Date.now();
-    const userMsg: Message = {
-      id: shortId('m'),
-      role: 'user',
-      text: `/ultracode ${trimmed}`,
-      createdAt: now,
-    };
-    linkMessageManagedAssets(userMsg, sessionKey);
-    const assistantId = shortId('m');
-    const assistantMsg: Message = {
-      id: assistantId,
-      role: 'assistant',
-      text:
-        modeLabel === 'planner-only'
-          ? `⟳ /ultracode 正在生成动态 harness 计划…`
-          : `⟳ /ultracode 正在生成动态 harness 并执行…`,
-      routeLabel: '/ultracode',
-      createdAt: now + 1,
-    };
-    const promptUpdate = applyPromptTitle(state, request, now);
-    const chKey = chatTurnKey(runKey(sessionKey.workspaceId, sessionKey.sessionId), userMsg.id);
-    const ch: AiEditChannel = {
-      key: chKey,
-      sessionKey: runKey(sessionKey.workspaceId, sessionKey.sessionId),
-      workspaceId: sessionKey.workspaceId,
-      sessionId: sessionKey.sessionId,
-      workspaceRootPath,
-      workflow: promptUpdate.workflow,
-      messages: [...state.messages, userMsg, assistantMsg],
-      cliRunIds: new Set<string>(),
-      abortController: new AbortController(),
-      gatewaySelection: workflowDefaultGatewaySelection(
-        promptUpdate.workflow,
-        state.composer.model,
-      ),
-      workflowSession: false,
-      chat: true,
-      ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-    };
-
-    const replaceAssistant = (
-      text: string,
-      persist = false,
-      runProgress?: UltracodeRunProgress,
-    ) => {
-      if (!aiEditRegistered(ch)) return;
-      ch.messages = ch.messages.map((msg) =>
-        msg.id === assistantId
-          ? {
-              ...msg,
-              text,
-              routeLabel: '/ultracode',
-              ...(runProgress ? { runProgress } : {}),
-            }
-          : msg,
-      );
-      aiEditCommitMessages(ch, persist);
-    };
-
-    addAiEditChannel(ch);
-    if (aiEditViewActive(ch)) {
-      set({
-        messages: ch.messages,
-        sessions: promptUpdate.sessions,
-        sessionTree: promptUpdate.sessionTree,
-        workflow: ch.workflow,
-      });
-    }
-    updateAiEditSessionSummary(ch);
-    syncAndPersistSessionRunStatus(sessionKey, 'running');
-    if (ch.workspaceId && ch.sessionId) {
-      void historyStore
-        .updateSession(ch.workspaceId, ch.sessionId, {
-          messages: ch.messages,
-          meta: { runStatus: 'running' },
-        })
-        .catch(() => {});
-    }
-
-    void (async () => {
-      const startedAt = Date.now();
-      const runId = parsed.options.runId || makeCliRunId();
-      ch.cliRunIds.add(runId);
-      let live = '';
-      // Live run-progress snapshot, folded from the CLI's <<FUC_PROGRESS>>
-      // sentinels (decoded out of the streamed stderr) so the GUI can render a
-      // run-progress card above the log text. Seeded with the wall-clock start.
-      let progress: UltracodeRunProgress = { ...emptyProgress(), startedAt };
-      let concurrencyForDisplay = parsed.options.concurrency ?? runConcurrency();
-      const ultracodeWorkspacePaths = composerWorkspacePaths(state.composer);
-      const workspaceSummary =
-        ultracodeWorkspacePaths.length > 0
-          ? `工作区: ${ultracodeWorkspacePaths[0]}${
-              ultracodeWorkspacePaths.length > 1
-                ? ` +${ultracodeWorkspacePaths.length - 1}`
-                : ''
-            }`
-          : '工作区: 默认';
-      const composeLiveText = () =>
-        [
-          `⟳ /ultracode 执行中…`,
-          `runId: ${runId}`,
-          workspaceSummary,
-          `模式: ${modeLabel}`,
-          `并发: ${concurrencyForDisplay}`,
-          '',
-          live.trim(),
-        ].join('\n');
-      try {
-        await changesBaselineReady;
-        const gatewaySelection = ch.gatewaySelection;
-        if (gatewaySelection && isFreeChannelSelection(gatewaySelection)) {
-          await ensureFreeProxy(freeProxyOptionsForSelection(gatewaySelection));
-        }
-        const concurrency = parsed.options.concurrency ?? runConcurrency();
-        concurrencyForDisplay = concurrency;
-        const result = await runUltracode(request, {
-          ...aiEditCliWorkspaceOptions(ch, state.composer),
-          adapter: gatewaySelection?.adapter,
-          model:
-            gatewaySelection?.modelOverride ||
-            gatewaySelection?.modelClass,
-          provider: gatewaySelection?.providerId,
-          concurrency,
-          maxRetries: parsed.options.maxRetries ?? runMaxRetries(),
-          maxAgentCalls: parsed.options.maxAgentCalls,
-          maxRounds: parsed.options.maxRounds,
-          timeoutSeconds: parsed.options.timeoutSeconds,
-          runId,
-          resume: parsed.options.resume,
-          plannerOnly: parsed.options.plannerOnly,
-          fromHarness: parsed.options.fromHarness,
-          trace: parsed.options.trace,
-          interactive: parsed.options.interactive,
-          onProgress: (chunk) => {
-            // Pull structured progress sentinels out of the chunk; the cleaned
-            // remainder (the human-readable log lines) stays in the stream. A
-            // sentinel-only stderr line leaves a dangling "[stderr] " prefix —
-            // drop those orphan tokens so the log doesn't sprout blank rows.
-            const { text: cleaned, events } = decodeProgressEvents(chunk);
-            const visible = cleaned.replace(
-              /\n[ \t]*\[(?:stderr|stdout)\][ \t]*(?=\n|$)/g,
-              '',
-            );
-            live = (live + visible).slice(-5000);
-            if (events.length > 0) progress = reduceProgress(progress, events);
-            replaceAssistant(composeLiveText(), false, progress);
-          },
-        });
-        if (!aiEditRegistered(ch)) return;
-        progress = {
-          ...progress,
-          phase: ultracodeAccepted(result) ? 'complete' : 'error',
-          endedAt: Date.now(),
-        };
-        replaceAssistant(
-          `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(Date.now() - startedAt)}\n${summarizeUltracodeResult(result)}`,
-          true,
-          progress,
-        );
-        syncAndPersistSessionRunStatus(
-          sessionKey,
-          ultracodeAccepted(result) ? 'success' : 'error',
-        );
-      } catch (err) {
-        if (!aiEditRegistered(ch)) return;
-        const msg = (err as Error)?.message ?? String(err);
-        progress = { ...progress, phase: 'error', endedAt: Date.now() };
-        replaceAssistant(
-          `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(Date.now() - startedAt)} · 失败\n✗ /ultracode 调用失败: ${msg}`,
-          true,
-          progress,
-        );
-        syncAndPersistSessionRunStatus(sessionKey, 'error');
-      } finally {
-        ch.cliRunIds.delete(runId);
-        removeAiEditChannel(ch);
-      }
-    })();
   },
 
   generateImagePrompt: (text, options = {}) => {
@@ -5264,6 +4148,20 @@ export const useStore = create<StoreState>((set, get) => ({
 
   generateSpritePrompt: (text, options = {}) => {
     startSpriteGenerationTurn(text, options);
+  },
+
+  generateGddPrompt: (text, options = {}) => {
+    const prompt = stripGddModeCommand(text);
+    const userPrompt =
+      prompt ||
+      (options.finalize
+        ? '冻结当前 GDD 草稿，提取资产/场景/玩法合约，并按差异落地资产和代码。'
+        : '');
+    if (!userPrompt) return;
+    const systemPrompt = options.finalize
+      ? gddModeFinalizePromptSystem()
+      : gddModePromptSystem();
+    void get().sendPrompt(`${systemPrompt}\n\n用户需求：\n${userPrompt}`);
   },
 
   generateComfyPrompt: (text) => {
@@ -5292,14 +4190,21 @@ export const useStore = create<StoreState>((set, get) => ({
     })();
   },
 
+  generateWorldPrompt: (text) => {
+    startWorldModelGenerationTurn(text);
+  },
+
   generateUiPrompt: (text) => {
     const prompt = stripUiModeCommand(text);
     if (!prompt) return;
+    const settingsProfile = settingsProfileForState(get());
     // Route through the normal coding-model turn, but front-load a game-UI
     // design instruction tied to the project's default UI channel so the model
     // produces interface specs / deliverables instead of editing the workflow
     // blueprint. Reuses all channel/persistence logic.
-    void get().sendPrompt(`${uiDesignPromptSystem()}\n\n用户需求：\n${prompt}`);
+    void get().sendPrompt(
+      `${uiDesignPromptSystem(settingsProfile)}\n\n用户需求：\n${prompt}`,
+    );
   },
 
   generateBlueprintPrompt: (text) => {
@@ -5309,6 +4214,12 @@ export const useStore = create<StoreState>((set, get) => ({
     void get().sendPrompt(
       `${blueprintModePromptSystem(modeArgs)}\n\n用户需求：\n${prompt}`,
     );
+  },
+
+  generateMetaHumanPrompt: (text) => {
+    const prompt = stripMetaHumanModeCommand(text);
+    if (!prompt) return;
+    void get().sendPrompt(`${metaHumanModePromptSystem()}\n\n用户需求：\n${prompt}`);
   },
 
   searchMeshLibraryPrompt: (text) => {
@@ -5321,6 +4232,13 @@ export const useStore = create<StoreState>((set, get) => ({
       role,
       text,
       createdAt: Date.now(),
+      ...(options?.interaction
+        ? {
+            interaction: options.interaction,
+            interactionStatus: 'pending' as const,
+          }
+        : {}),
+      ...(options?.appAction ? { appAction: options.appAction } : {}),
       ...(options?.localOnly ? { localOnly: true } : {}),
     };
     set((state) => ({ messages: [...state.messages, msg] }));
@@ -5502,10 +4420,24 @@ export const useStore = create<StoreState>((set, get) => ({
     // conversation. The graph stays a single node.
     const directRoute = resolveDirectGatewayRoute(gatewaySelection);
     const inTauri = isTauri();
+    const projectEngineGuidance = projectEngineGuidanceForState(
+      state,
+      aiEditingSession,
+    );
     const projectMcpGuidance = projectMcpGuidanceForState(state, aiEditingSession);
     const preferCliForProjectMcp = inTauri && !!projectMcpGuidance;
     const useApi = !!directRoute && !preferCliForProjectMcp;
     const useCli = (!useApi && inTauri) || preferCliForProjectMcp;
+    const selectedRemoteWorkspaceConfig =
+      simpleMode && workspaceRootPath && isRemoteWorkspacePath(workspaceRootPath)
+        ? getRemoteWorkspace(remoteWorkspaceIdFromPath(workspaceRootPath))
+        : null;
+    const remoteProvider = parseRemoteProviderId(gatewaySelection.providerId);
+    const selectedRemoteProviderMatchesWorkspace =
+      !!remoteProvider &&
+      !!workspaceRootPath &&
+      isRemoteWorkspacePath(workspaceRootPath) &&
+      remoteProvider.workspaceId === remoteWorkspaceIdFromPath(workspaceRootPath);
 
     const pushAssistant = (txt: string, routeLabel?: string) => {
       const msg: Message = {
@@ -5550,7 +4482,11 @@ ${previousReply.slice(0, 4000)}
 不得创建或修改本地文件，不得等待用户批准。`;
 
     // No API key and no desktop CLI: local keyword fallback.
-    if (!useApi && !useCli) {
+    if (
+      !useApi &&
+      !useCli &&
+      !selectedRemoteWorkspaceConfig
+    ) {
       if (simpleMode) {
         // Simple mode is a direct model chat — there's no local fallback.
         pushAssistant(
@@ -5567,6 +4503,18 @@ ${previousReply.slice(0, 4000)}
       // 非简单模式 + 无后端：仅提示，不再做关键词改图。
       pushAssistant(
         `当前环境无法调用所选运行时。请在桌面版中使用本地 CLI，或切回 Claude Code 并配置 API key。`,
+      );
+      removeAiEditChannel(ch);
+      return true;
+    }
+
+    if (remoteProvider && !selectedRemoteProviderMatchesWorkspace) {
+      pushAssistant(
+        '当前远程 Runner 渠道只适用于它绑定的云端项目。请切回对应云端项目，或切换为本地/系统默认渠道。',
+      );
+      syncAndPersistSessionRunStatus(
+        { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+        'error',
       );
       removeAiEditChannel(ch);
       return true;
@@ -5766,16 +4714,6 @@ ${previousReply.slice(0, 4000)}
     ): Promise<string> => {
       await changesBaselineReady;
       const policy = timeoutPolicyForSelection(cli.selection, prompt);
-      // Session cache TTL (minutes) is a per-session keep-alive knob chosen in
-      // the composer before the conversation starts. It maps onto the CLI
-      // idle/keep-alive timeout: a larger TTL keeps the session context alive
-      // longer between turns. Never drop below the model-tier-derived minimum.
-      const cacheTtlSeconds =
-        normalizeCacheTtlMinutes(state.composer.cacheTtlMinutes) * 60;
-      const idleTimeoutSeconds = Math.max(
-        policy.idleTimeoutSeconds,
-        cacheTtlSeconds,
-      );
       const startedAt = Date.now();
       let firstProgressAt: number | undefined;
       const runId = opts.runId ?? makeCliRunId();
@@ -5788,7 +4726,7 @@ ${previousReply.slice(0, 4000)}
         const text = await aiEditViaCli(prompt, cli.adapter, {
           ...opts,
           timeoutSeconds: policy.timeoutSeconds,
-          idleTimeoutSeconds,
+          idleTimeoutSeconds: policy.idleTimeoutSeconds,
           runId,
           onUsage: (raw) => {
             realUsage = mergeUsageReports(realUsage, usageReportFromCliUsage(raw));
@@ -6012,10 +4950,27 @@ ${previousReply.slice(0, 4000)}
       ),
       gatewaySelection.adapter,
     );
+    const settingsProfile = settingsProfileForState(state);
+    const imageSettings = loadImageGenerationSettings(settingsProfile);
     const gameAssetChannels = {
-      image: preferredReadyImageProviderId() != null,
-      music: preferredReadyMusicProviderId() != null,
-      threeD: preferredReadyThreeDProviderId() != null,
+      image: preferredReadyImageProviderId(imageSettings) != null,
+      music:
+        preferredReadyMusicProviderId(loadMusicGenerationSettings(settingsProfile)) !=
+        null,
+      threeD:
+        preferredReadyThreeDProviderId(loadThreeDGenerationSettings(settingsProfile)) !=
+        null,
+      video:
+        preferredReadyVideoProviderId(loadVideoGenerationSettings(settingsProfile)) !=
+        null,
+      speech:
+        preferredReadySpeechProviderId(loadSpeechGenerationSettings(settingsProfile)) !=
+        null,
+      sprite: preferredReadySpriteProviderId(imageSettings) != null,
+      ui: (() => {
+        const settings = loadUiDesignChannelSettings(settingsProfile);
+        return uiDesignChannelReady(settings.preferredChannelId, settings);
+      })(),
     };
     // Capability awareness for EVERY path (blueprint + simple chat): tell the
     // model which built-in generation channels are configured + ready so it
@@ -6025,14 +4980,14 @@ ${previousReply.slice(0, 4000)}
       image: gameAssetChannels.image,
       music: gameAssetChannels.music,
       threeD: gameAssetChannels.threeD,
-      video: preferredReadyVideoProviderId() != null,
-      speech: preferredReadySpeechProviderId() != null,
-      sprite: preferredReadySpriteProviderId() != null,
+      video: gameAssetChannels.video,
+      speech: gameAssetChannels.speech,
+      sprite: gameAssetChannels.sprite,
     });
-    // Explicit-only routing (方案 A 之上的收紧)：游戏专家 / 制作人总控不再从
+    // Explicit-only routing (方案 A 之上的收紧)：游戏专家 / 制作人视角不再从
     // 聊天文本自动触发，只有用户通过 /game（或分层路径）显式调用时才注入。
     // - 指定了具体专家(分层路径命中) → 直接用专家融合，固定为这些专家。
-    // - 仅 /game 整体调用 → 完整/多阶段需求走制作人总控，其余走专家融合。
+    // - 仅 /game 整体调用 → 完整/多阶段需求走制作人视角计划，其余走专家融合。
     const hasPinnedExperts = pinnedGameExpertIds.length > 0;
     const gameExpertBlock = !forceGameExperts
       ? ''
@@ -6055,6 +5010,7 @@ ${previousReply.slice(0, 4000)}
       personalBlock +
       gameExpertBlock +
       assetCapabilityBlock +
+      projectEngineGuidance +
       projectMcpGuidance;
     const clarifyingSystem =
       `${unifiedBase}\n\n${INTERACTION_PROTOCOL}\n` +
@@ -6270,6 +5226,26 @@ ${previousReply.slice(0, 4000)}
     // into the chat bubble, and append the input to the lone start node so the
     // node mirrors the conversation. The graph never grows past one node.
     if (simpleMode) {
+      if (workspaceRootPath && selectedRemoteWorkspaceConfig) {
+        startRemoteChatTurn({
+          ch,
+          prompt: trimmed,
+          workspacePath: workspaceRootPath,
+          locale: state.locale,
+          projectEngineGuidance,
+          personalBlock,
+          gameExpertBlock,
+          aiEditCommitMessages,
+          commitAiChannelBlueprint,
+          appendStartUserInputs,
+          syncAndPersistSessionRunStatus,
+          formatClock,
+          formatDuration,
+          removeAiEditChannel,
+        });
+        return true;
+      }
+
       // Serialize turns for this chat session so a follow-up sent mid-stream
       // ("插话") queues behind the in-flight turn and then runs with --resume
       // (warm context) instead of colliding on the same native --session-id.
@@ -6278,12 +5254,27 @@ ${previousReply.slice(0, 4000)}
         const simpleAssetCapabilityBlock = shouldUseAssetCapabilityBlockForPrompt(trimmed)
           ? assetCapabilityBlock
           : '';
+        // Frozen memory snapshot: read ONCE here at the start of the turn and
+        // baked into the system prompt. Mid-session memory writes only touch
+        // disk; they refresh on the next turn's snapshot so the native-CLI
+        // prefix cache stays stable. See lib/memoryStore.ts CONTRACT.
+        const workspaceMemoryId = ch.workspaceId || undefined;
+        const memoryConfig = loadMemoryConfig();
+        const memorySnapshot = memoryConfig.snapshotEnabled
+          ? await renderMemorySnapshot(workspaceMemoryId).catch(() => '')
+          : '';
         const chatSystem = [
           SIMPLE_CHAT_SYSTEM,
           languageAdaptationPrompt(state.locale),
           personalBlock,
+          memorySnapshot,
+          memoryConfig.writeEnabled ? MEMORY_WRITE_INSTRUCTION : '',
+          // Recall needs a workspace to scope the history search; only offer it
+          // when this session belongs to one and recall is enabled.
+          ch.workspaceId && memoryConfig.recallEnabled ? RECALL_INSTRUCTION : '',
           gameExpertBlock,
           simpleAssetCapabilityBlock,
+          projectEngineGuidance,
           useCli ? projectMcpGuidance : '',
         ].join('');
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
@@ -6348,7 +5339,7 @@ ${previousReply.slice(0, 4000)}
           // asking can't spin forever.
           let continuation = '';
           let finalAnswer = '';
-          // 「会话文件」列表只能从消息文本里的 <<FUC_TOOL>> 哨兵解析出本会话
+          // 「会话文件」列表只能从消息文本里的 <<UGS_TOOL>> 哨兵解析出本会话
           // AI 读/改过的文件。CLI 回合最终化时用的是不含哨兵的纯净答复
           // （result/acc），会把流式期间出现过的工具事件抹掉，导致文件先显示
           // 后消失、且下一轮扫不到历史活动。这里把每个回合流式收集到的哨兵
@@ -6407,10 +5398,19 @@ ${previousReply.slice(0, 4000)}
               try {
                 answer = await callNativeCli(promptBody, nativeSession, nativeResume);
               } catch (err) {
+                // Two recoverable native-session failures share one cure: drop the
+                // bad id, mint a fresh one, and re-send the transcript as cold
+                // context.
+                //   - "No conversation found …" — the resume target vanished
+                //     (only meaningful when we were resuming).
+                //   - "Session ID … is already in use" — the id is registered AND
+                //     locked from a prior turn that never exited cleanly; this can
+                //     hit the FIRST turn too (a create collision), so it is not
+                //     gated on nativeResume.
                 if (
                   nativeSession &&
-                  nativeResume &&
-                  isMissingClaudeConversationError(err)
+                  ((nativeResume && isMissingClaudeConversationError(err)) ||
+                    isSessionAlreadyInUseError(err))
                 ) {
                   forgetChatNativeSession(nativeSession);
                   nativeSession = chatNativeSessionFor(ch, cli);
@@ -6453,6 +5453,45 @@ ${previousReply.slice(0, 4000)}
               });
               answer = full || returned;
             }
+            // History recall: if the model asked to search past conversations,
+            // run the search, strip the block, feed the formatted hits back as
+            // a continuation, and loop again (bounded by MAX_INTERACTION_ROUNDS).
+            const recallWorkspaceId = ch.workspaceId;
+            const recall =
+              recallWorkspaceId && memoryConfig.recallEnabled ? parseRecall(answer) : null;
+            if (recall && recallWorkspaceId) {
+              const preface = stripRecall(answer);
+              setActive(
+                withAiTiming(routedBody(routeLine, preface || '⟳ 检索历史会话…')),
+                true,
+              );
+              const reader: SessionReader = {
+                listSessions: (wid) =>
+                  historyStore.listSessions(wid).then((rows) =>
+                    rows.map((r) => ({
+                      sessionId: r.sessionId ?? r.id,
+                      title: r.title,
+                      updatedAt:
+                        typeof r.updatedAt === 'number'
+                          ? r.updatedAt
+                          : Date.parse(String(r.updatedAt)) || 0,
+                    })),
+                  ),
+                getSession: (wid, sid) =>
+                  historyStore
+                    .getSession(wid, sid)
+                    .then((rec) => (rec ? { messages: rec.messages } : null)),
+              };
+              const hits = await searchSessions(
+                reader,
+                recallWorkspaceId,
+                recall.query,
+                { limit: Math.min(recall.limit ?? 5, 8), excludeSessionId: ch.sessionId ?? undefined },
+              ).catch(() => []);
+              newBubble(withAiTiming('⟳ 生成中…'));
+              continuation = `历史会话检索结果（query: ${recall.query}）：\n${formatRecallHits(hits)}\n\n请基于以上检索结果继续回答用户。`;
+              continue;
+            }
             const req = parseInteraction(answer);
             if (!req) {
               finalAnswer = answer;
@@ -6476,9 +5515,63 @@ ${previousReply.slice(0, 4000)}
             continuation = formatAnswerForPrompt(req, userAnswer);
           }
           const turnMessageId = activeId;
+          // Defensive: if a recall block survived into the final answer (e.g.
+          // the round budget ran out before it was processed), strip it so the
+          // protocol JSON never reaches the user.
+          finalAnswer = stripRecall(finalAnswer);
+          // Long-term memory: parse any <<UGS_MEMORY>> block(s) the model
+          // emitted this turn, strip them from the visible prose, and apply
+          // them to disk in the background. The write lands on the NEXT turn's
+          // frozen snapshot — it does not touch this turn's prompt/cache.
+          const memoryWrites = memoryConfig.writeEnabled
+            ? parseMemoryWrites(finalAnswer)
+            : [];
+          if (memoryWrites.length) {
+            finalAnswer = stripMemoryWrites(finalAnswer);
+            void applyMemoryWrites(memoryWrites, workspaceMemoryId).catch(() => {});
+          } else if (memoryConfig.writeEnabled) {
+            // Strip any block we won't apply so protocol JSON never shows.
+            finalAnswer = stripMemoryWrites(finalAnswer);
+          }
+          // Background self-review (stage 5): when enabled and rate-limit/signal
+          // gates pass, fork a cheap fire-and-forget model call that replays the
+          // transcript and proposes durable memory. Spends model quota, so it is
+          // OFF by default and bounded by shouldRunReview().
+          {
+            const reviewWsKey = ch.workspaceId || '';
+            const transcriptMsgs = [
+              ...priorMessages.map((m) => ({ role: m.role, text: m.text })),
+              { role: 'user' as const, text: trimmed },
+              { role: 'assistant' as const, text: finalAnswer },
+            ];
+            if (
+              shouldRunReview(
+                memoryConfig,
+                getLastReviewAt(reviewWsKey),
+                transcriptMsgs.length,
+              )
+            ) {
+              setLastReviewAt(reviewWsKey);
+              void (async () => {
+                try {
+                  const transcript = buildReviewTranscript(transcriptMsgs);
+                  const out = await completeDirectWithSpeed({
+                    system: REVIEW_SYSTEM,
+                    userContent: buildReviewUserPrompt(transcript),
+                  });
+                  const proposals = parseMemoryWrites(out);
+                  if (proposals.length) {
+                    await applyMemoryWrites(proposals, workspaceMemoryId);
+                  }
+                } catch {
+                  /* review is best-effort; never disturb the chat turn */
+                }
+              })();
+            }
+          }
           // Re-attach the tool sentinels captured while streaming so the answer
           // bubble keeps its tool cards AND the session-files list keeps the
-          // files this turn touched (it parses <<FUC_TOOL>> sentinels from the
+          // files this turn touched (it parses <<UGS_TOOL>> sentinels from the
           // persisted message text). Without this, the clean CLI reply replaces
           // the streamed text and every read/edited file vanishes from the list.
           const finalProse = finalAnswer.trim() || '（模型没有返回内容）';
@@ -6803,42 +5896,7 @@ ${previousReply.slice(0, 4000)}
       return { composer, composerBySession };
     }),
 
-  ensureSessionStartupWorkspace: async () => {
-    const state = useStore.getState();
-    // Worktree isolation is a session-open-time action: only meaningful before
-    // the conversation starts (no messages) and only in 'worktree' mode. Mirror
-    // the cacheTtl lock so an already-started session is never re-pointed.
-    if (state.composer.startupMode !== 'worktree') return;
-    if (state.messages.length > 0) return;
-    if (!isTauri()) return;
-    const { cwd } = composerCliWorkspaceOptions(state.composer);
-    const root = cwd?.trim();
-    if (!root) return;
-    // A stable session id keeps the preparation idempotent across retries.
-    const sessionKey = activeWorkflowSessionKey(state);
-    const sessionId = sessionKey.sessionId ?? state.activeSessionId ?? 'session';
-    try {
-      const isolated = await prepareIsolatedWorkspace(root, sessionId);
-      const isolatedPath = isolated.path?.trim();
-      if (!isolatedPath || isolatedPath === root) return;
-      // Re-check the lock: a turn may have started while we awaited the backend.
-      const latest = useStore.getState();
-      if (latest.messages.length > 0) return;
-      if (latest.composer.startupMode !== 'worktree') return;
-      // Repoint only this session's composer cwd at the isolated directory —
-      // never switch the active workspace or add a sidebar entry. Keep the
-      // primary folder isolated while preserving any extra workspace folders.
-      useStore.getState().setComposer({
-        workspace: isolatedPath,
-        workspaceFolders: latest.composer.workspaceFolders.filter(
-          (folder) => folder !== root,
-        ),
-      });
-    } catch {
-      // No backend / git failure: fall back to running in the original
-      // workspace rather than blocking the send.
-    }
-  },
+  ensureSessionStartupWorkspace: () => ensureSessionStartupWorkspaceSlice(),
 
   setComposerDraft: (text) =>
     set((state) => {
@@ -6880,402 +5938,17 @@ ${previousReply.slice(0, 4000)}
     });
   },
 
-  // Set the active workspace and record it in the most-recent-first history
-  // (deduped, capped). Empty paths are ignored.
-  setWorkspace: (path) => {
-    const trimmed = normalizeWorkspacePath(path);
-    if (!trimmed) return;
-    if (isActiveAiEditingSession(useStore.getState())) return;
-    set((state) => {
-      const composer = normalizeComposerSettings({
-        ...state.composer,
-        workspace: trimmed,
-        workspaceFolders: state.composer.workspaceFolders,
-      });
-      const workspaceHistory = workspaceHistoryWithRecentPaths(
-        composerWorkspacePaths(composer),
-        state.workspaceHistory,
-      );
-      const snapshot: SessionComposerSettings = {
-        composer,
-        gatewaySelection: workflowDefaultGatewaySelection(
-          state.workflow,
-          composer.model,
-        ),
-      };
-      const composerBySession = rememberSessionComposer(
-        { ...state, composer },
-        state.composerBySession,
-        snapshot,
-      );
-      saveComposerSoon({ composer, composerBySession, workspaceHistory });
-      return { composer, composerBySession, workspaceHistory };
-    });
-    void activateWorkspacePath(trimmed);
-  },
+  setWorkspace: (path) => setWorkspaceSlice(path),
 
-  // Add a session-only workspace folder. The first folder becomes the primary
-  // cwd; later folders are passed to CLI adapters as extra allowed directories.
-  addWorkspaceFolder: (path) => {
-    const trimmed = normalizeWorkspacePath(path);
-    if (!trimmed) return;
-    const current = useStore.getState();
-    if (isActiveAiEditingSession(current)) return;
-    const shouldActivate = !normalizeWorkspacePath(current.composer.workspace);
-    set((state) => {
-      const composer = shouldActivate
-        ? normalizeComposerSettings({
-            ...state.composer,
-            workspace: trimmed,
-            workspaceFolders: [],
-          })
-        : normalizeComposerSettings({
-            ...state.composer,
-            workspaceFolders: [trimmed, ...state.composer.workspaceFolders],
-          });
-      const workspaceHistory = workspaceHistoryWithRecentPaths(
-        composerWorkspacePaths(composer),
-        state.workspaceHistory,
-      );
-      const snapshot: SessionComposerSettings = {
-        composer,
-        gatewaySelection: workflowDefaultGatewaySelection(
-          state.workflow,
-          composer.model,
-        ),
-      };
-      const composerBySession = rememberSessionComposer(
-        { ...state, composer },
-        state.composerBySession,
-        snapshot,
-      );
-      saveComposerSoon({ composer, composerBySession, workspaceHistory });
-      return { composer, composerBySession, workspaceHistory };
-    });
-    if (shouldActivate) void activateWorkspacePath(trimmed);
-  },
+  addWorkspaceFolder: (path) => addWorkspaceFolderSlice(path),
 
-  removeWorkspaceFolder: (path) => {
-    const key = workspacePathKey(path);
-    if (!key) return;
-    if (isActiveAiEditingSession(useStore.getState())) return;
-    set((state) => {
-      const primaryKey = workspacePathKey(state.composer.workspace);
-      const currentExtras = normalizeWorkspaceFolderList(
-        state.composer.workspaceFolders,
-        state.composer.workspace,
-      );
-      let workspace = state.composer.workspace;
-      let workspaceFolders = currentExtras.filter(
-        (item) => workspacePathKey(item) !== key,
-      );
-      if (primaryKey === key) {
-        workspace = workspaceFolders[0] ?? '';
-        workspaceFolders = workspaceFolders.slice(1);
-      }
-      const composer = normalizeComposerSettings({
-        ...state.composer,
-        workspace,
-        workspaceFolders,
-      });
-      const snapshot: SessionComposerSettings = {
-        composer,
-        gatewaySelection: workflowDefaultGatewaySelection(
-          state.workflow,
-          composer.model,
-        ),
-      };
-      const composerBySession = rememberSessionComposer(
-        { ...state, composer },
-        state.composerBySession,
-        snapshot,
-      );
-      saveComposerSoon({
-        composer,
-        composerBySession,
-        workspaceHistory: state.workspaceHistory,
-      });
-      return { composer, composerBySession };
-    });
-  },
+  removeWorkspaceFolder: (path) => removeWorkspaceFolderSlice(path),
 
-  // Remove a folder from the workspace history. If it was the active
-  // workspace, the active selection is cleared (falls back to "no folder").
-  removeWorkspace: (path) => {
-    const key = workspacePathKey(path);
-    if (!key) return;
-    if (isActiveAiEditingSession(useStore.getState())) return;
-    set((state) => {
-      const workspaceHistory = state.workspaceHistory.filter(
-        (p) => workspacePathKey(p) !== key,
-      );
-      if (workspaceHistory.length === state.workspaceHistory.length) {
-        return state;
-      }
-      const removingActive = workspacePathKey(state.composer.workspace) === key;
-      const currentExtras = normalizeWorkspaceFolderList(
-        state.composer.workspaceFolders,
-        state.composer.workspace,
-      ).filter((item) => workspacePathKey(item) !== key);
-      if (!removingActive && currentExtras.length === state.composer.workspaceFolders.length) {
-        saveComposerSoon({
-          composer: state.composer,
-          composerBySession: state.composerBySession,
-          workspaceHistory,
-        });
-        return { workspaceHistory };
-      }
-      const composer = normalizeComposerSettings({
-        ...state.composer,
-        workspace: removingActive ? currentExtras[0] ?? '' : state.composer.workspace,
-        workspaceFolders: removingActive ? currentExtras.slice(1) : currentExtras,
-      });
-      const snapshot: SessionComposerSettings = {
-        composer,
-        gatewaySelection: workflowDefaultGatewaySelection(
-          state.workflow,
-          composer.model,
-        ),
-      };
-      const composerBySession = rememberSessionComposer(
-        { ...state, composer },
-        state.composerBySession,
-        snapshot,
-      );
-      saveComposerSoon({ composer, composerBySession, workspaceHistory });
-      return { composer, composerBySession, workspaceHistory };
-    });
-  },
+  removeWorkspace: (path) => removeWorkspaceSlice(path),
 
-  applyWorkspaceFolders: (workspaceId, folders) => {
-    if (isActiveAiEditingSession(useStore.getState())) return;
-    set((state) => {
-      if (!workspaceId || state.activeWorkspaceId !== workspaceId) return state;
-      const workspace = state.workspaces.find((ws) => ws.id === workspaceId);
-      const primary = normalizeWorkspacePath(
-        state.composer.workspace || workspace?.path || '',
-      );
-      const composer = normalizeComposerSettings({
-        ...state.composer,
-        workspace: primary,
-        workspaceFolders: folders,
-      });
-      const snapshot: SessionComposerSettings = {
-        composer,
-        gatewaySelection: workflowDefaultGatewaySelection(
-          state.workflow,
-          composer.model,
-        ),
-      };
-      const composerBySession = rememberSessionComposer(
-        { ...state, composer },
-        state.composerBySession,
-        snapshot,
-      );
-      saveComposerSoon({
-        composer,
-        composerBySession,
-        workspaceHistory: state.workspaceHistory,
-      });
-      return { composer, composerBySession };
-    });
-  },
+  applyWorkspaceFolders: (workspaceId, folders) =>
+    applyWorkspaceFoldersSlice(workspaceId, folders),
 
-  // ── Graph editing ──────────────────────────────────────────────────────
-
-  addNode: (type, params, parent) => {
-    const id = shortId('n');
-    const committed = applyWorkflowEdit('user', (state) => {
-      const defaults = NODE_DEFAULTS[type];
-      // Default the parent to the composite subgraph currently being viewed, so
-      // nodes created while drilled in are owned by that composite. An explicit
-      // `parent` arg (e.g. type-change preserving branch/loop nesting) wins.
-      const effectiveParent = parent ?? selectActiveScopeId(state);
-      const node: IRNode = {
-        id,
-        type,
-        ...(effectiveParent ? { parent: effectiveParent } : {}),
-        label: defaults.label,
-        params: { ...defaults.params, ...(params ?? {}) },
-      };
-      // [dynamic-only refactor] autoLayoutGraph(蓝图布局)已停用；蓝图编辑动作在
-      // 纯聊天 GUI 下不可达，这里直接追加节点不做自动布局。
-      const nextWorkflow = {
-        ...state.workflow,
-        nodes: [...state.workflow.nodes, node],
-      };
-      return {
-        workflow: workflowWithoutRunSnapshot(nextWorkflow),
-        dirty: true,
-        ...emptyRunProgress(),
-      };
-    });
-    return committed ? id : '';
-  },
-
-  updateNodeParams: (id, patch) => {
-    applyWorkflowEdit('user', (state) => ({
-      workflow: workflowWithoutRunSnapshot({
-        ...state.workflow,
-        nodes: state.workflow.nodes.map((n) =>
-          n.id === id ? { ...n, params: patchParams(n.params, patch) } : n,
-        ),
-      }),
-      dirty: true,
-      ...emptyRunProgress(),
-    }));
-  },
-
-  updateNodeGatewayOverride: (id, override) => {
-    applyWorkflowEdit('user', (state) => ({
-      workflow: workflowWithoutRunSnapshot({
-        ...state.workflow,
-        nodes: state.workflow.nodes.map((n) => {
-          if (n.id !== id) return n;
-          return {
-            ...n,
-            params: nodeParamsWithGatewayOverride(n.params ?? {}, override),
-          };
-        }),
-      }),
-      dirty: true,
-      ...emptyRunProgress(),
-    }));
-  },
-
-  updateNodeLabel: (id, label) => {
-    applyWorkflowEdit('user', (state) => ({
-      workflow: workflowWithoutRunSnapshot({
-        ...state.workflow,
-        nodes: state.workflow.nodes.map((n) =>
-          n.id === id ? { ...n, label } : n,
-        ),
-      }),
-      dirty: true,
-      ...emptyRunProgress(),
-    }));
-  },
-
-  convertNodeToConsensus: (id, strategy) => {
-    applyWorkflowEdit('user', (state) => {
-      let converted = false;
-      const nodes = state.workflow.nodes.map((n) => {
-        if (n.id !== id || n.type !== 'agent') return n;
-        converted = true;
-        const target = String(n.params.prompt ?? n.label ?? '');
-        return {
-          ...n,
-          type: 'consensus' as const,
-          params: {
-            ...n.params,
-            voters: defaultConsensusLenses(target),
-            strategy,
-          },
-        };
-      });
-      if (!converted) return null;
-      return {
-        workflow: workflowWithoutRunSnapshot({
-          ...state.workflow,
-          nodes,
-        }),
-        selectedNodeId: id,
-        dirty: true,
-        ...emptyRunProgress(),
-      };
-    });
-  },
-
-  // Remove a node and, when it is a container (branch/loop), all of its
-  // transitive descendants — plus every edge touching any removed node.
-  removeNode: (id) => {
-    applyWorkflowEdit('user', (state) => {
-      const doomed = collectSubtree(state.workflow.nodes, id);
-      const layout = { ...(state.workflow.layout ?? {}) };
-      for (const d of doomed) delete layout[d];
-      return {
-        workflow: workflowWithoutRunSnapshot({
-          ...state.workflow,
-          nodes: state.workflow.nodes.filter((n) => !doomed.has(n.id)),
-          edges: state.workflow.edges.filter(
-            (e) => !doomed.has(e.from.node) && !doomed.has(e.to.node),
-          ),
-          layout,
-        }),
-        selectedNodeId: doomed.has(state.selectedNodeId ?? '')
-          ? null
-          : state.selectedNodeId,
-        dirty: true,
-        ...emptyRunProgress(),
-      };
-    });
-  },
-
-  addEdge: (from, to, kind) => {
-    const id = kind === DATA ? shortId('d') : shortId('e');
-    const committed = applyWorkflowEdit('user', (state) => {
-      // Dedupe: identical from/to/kind edges are ignored.
-      const exists = state.workflow.edges.some(
-        (e) =>
-          e.kind === kind &&
-          e.from.node === from.node &&
-          e.from.port === from.port &&
-          e.to.node === to.node &&
-          e.to.port === to.port,
-      );
-      if (exists) return null;
-      return {
-        workflow: workflowWithoutRunSnapshot({
-          ...state.workflow,
-          edges: [...state.workflow.edges, { id, from, to, kind }],
-        }),
-        dirty: true,
-        ...emptyRunProgress(),
-      };
-    });
-    return committed ? id : '';
-  },
-
-  removeEdge: (id) => {
-    applyWorkflowEdit('user', (state) => {
-      const edges = state.workflow.edges.filter((e) => e.id !== id);
-      if (edges.length === state.workflow.edges.length) return null;
-      return {
-        workflow: workflowWithoutRunSnapshot({
-          ...state.workflow,
-          edges,
-        }),
-        dirty: true,
-        ...emptyRunProgress(),
-      };
-    });
-  },
-
-  // Layout-only write. Deliberately does not set dirty: drags are frequent and
-  // position is flushed to persistence via markSaved.
-  setNodePosition: (id, x, y) => {
-    let committed = false;
-    set((state) => {
-      if (!canWriteWorkflow(state)) return state;
-      committed = true;
-      return {
-        workflow: {
-          ...state.workflow,
-          layout: { ...(state.workflow.layout ?? {}), [id]: { x, y } },
-        },
-      };
-    });
-    if (committed) void markActiveHistorySessionWorkflow();
-  },
-
-  // Re-layer every node into a clean topological layout along the exec spine.
-  // Layout-only (preserves run state) but dirties so positions persist. Reuses
-  // the existing layered engine; stripping the prior layout forces a full
-  // re-arrange rather than honoring stale coordinates.
-  autoArrangeWorkflow: () => {
-    // [dynamic-only refactor] 画布自动布局已停用（autoLayoutGraph 模块 exclude）。
-    /* disabled: blueprint canvas auto-layout removed */
-  },
 
   // ── Run / mode control ─────────────────────────────────────────────────
 
@@ -7358,234 +6031,27 @@ ${previousReply.slice(0, 4000)}
   // savePromptGroups(next), and commits it to the store. Edits therefore survive
   // a reload (loadPromptGroups seeds the store on init).
 
-  addPromptItem: (groupId, label, text, locale = useStore.getState().locale) =>
-    set((state) => {
-      const next = state.promptGroups.map((g) =>
-        g.id === groupId
-          ? {
-              ...g,
-              items: [
-                ...g.items,
-                withPromptItemLocale(
-                  { id: shortId('pi'), label, text },
-                  locale,
-                  { label, text },
-                ),
-              ],
-            }
-          : g,
-      );
-      savePromptGroups(next);
-      return { promptGroups: next };
-    }),
+  addPromptItem: (groupId, label, text, locale) =>
+    addPromptItem(groupId, label, text, locale),
 
   updatePromptItem: (groupId, itemId, patch) =>
-    set((state) => {
-      const locale = state.locale;
-      const next = state.promptGroups.map((g) =>
-        g.id === groupId
-          ? {
-              ...g,
-              items: g.items.map((it) =>
-                it.id === itemId
-                  ? withPromptItemLocale(it, locale, {
-                      label:
-                        typeof patch.label === 'string'
-                          ? patch.label
-                          : localizePromptItem(it, locale).label,
-                      text:
-                        typeof patch.text === 'string'
-                          ? patch.text
-                          : localizePromptItem(it, locale).text,
-                    })
-                  : it,
-              ),
-            }
-          : g,
-      );
-      savePromptGroups(next);
-      return { promptGroups: next };
-    }),
+    updatePromptItem(groupId, itemId, patch),
 
-  updatePromptItemLocalized: async (groupId, itemId, patch, locale) => {
-    const state = useStore.getState();
-    const sourceLocale = locale ?? state.locale;
-    const group = state.promptGroups.find((g) => g.id === groupId);
-    const item = group?.items.find((it) => it.id === itemId);
-    if (!group || !item) return false;
+  updatePromptItemLocalized: (groupId, itemId, patch, locale) =>
+    updatePromptItemLocalized(groupId, itemId, patch, locale),
 
-    const current = localizePromptItem(item, sourceLocale);
-    const sourceValue = {
-      label: typeof patch.label === 'string' ? patch.label : current.label,
-      text: typeof patch.text === 'string' ? patch.text : current.text,
-    };
+  removePromptItem: (groupId, itemId) => removePromptItem(groupId, itemId),
 
-    let next = state.promptGroups.map((g) =>
-      g.id === groupId
-        ? {
-            ...g,
-            items: g.items.map((it) =>
-              it.id === itemId
-                ? withPromptItemLocale(it, sourceLocale, sourceValue)
-                : it,
-            ),
-          }
-        : g,
-    );
-    savePromptGroups(next);
-    set({ promptGroups: next });
+  addPromptGroup: (label, locale) => addPromptGroup(label, locale),
 
-    if (!state.promptAutoTranslate) return false;
+  updatePromptGroup: (groupId, label) => updatePromptGroup(groupId, label),
 
-    const targetLocales = SUPPORTED_LOCALES.filter(
-      (value): value is Locale => value !== sourceLocale,
-    );
-    try {
-      const translated = await translatePromptFields(
-        sourceValue,
-        sourceLocale,
-        targetLocales,
-        promptTranslationGatewayOptions(state),
-      );
-      const translatedLocales = Object.entries(translated) as [
-        Locale,
-        { label: string; text: string },
-      ][];
-      if (translatedLocales.length > 0) {
-        next = useStore.getState().promptGroups.map((g) =>
-          g.id === groupId
-            ? {
-                ...g,
-                items: g.items.map((it) =>
-                  it.id === itemId
-                    ? translatedLocales.reduce(
-                        (acc, [localeKey, value]) =>
-                          withPromptItemLocale(acc, localeKey, value),
-                        it,
-                      )
-                    : it,
-                ),
-              }
-            : g,
-        );
-        savePromptGroups(next);
-        set({ promptGroups: next });
-      }
-      return translatedLocales.length > 0;
-    } catch {
-      return false;
-    }
-  },
+  updatePromptGroupLocalized: (groupId, label, locale) =>
+    updatePromptGroupLocalized(groupId, label, locale),
 
-  removePromptItem: (groupId, itemId) =>
-    set((state) => {
-      const next = state.promptGroups.map((g) =>
-        g.id === groupId
-          ? { ...g, items: g.items.filter((it) => it.id !== itemId) }
-          : g,
-      );
-      savePromptGroups(next);
-      return { promptGroups: next };
-    }),
+  removePromptGroup: (groupId) => removePromptGroup(groupId),
 
-  addPromptGroup: (label, locale = useStore.getState().locale) => {
-    const id = shortId('pg');
-    set((state) => {
-      const next = [
-        ...state.promptGroups,
-        withPromptGroupLocale({ id, label, items: [] }, locale, { label }),
-      ];
-      savePromptGroups(next);
-      return { promptGroups: next };
-    });
-    return id;
-  },
-
-  updatePromptGroup: (groupId, label) =>
-    set((state) => {
-      const locale = state.locale;
-      const next = state.promptGroups.map((g) =>
-        g.id === groupId
-          ? withPromptGroupLocale(g, locale, {
-              label:
-                typeof label === 'string'
-                  ? label
-                  : localizePromptGroup(g, locale).label,
-            })
-          : g,
-      );
-      savePromptGroups(next);
-      return { promptGroups: next };
-    }),
-
-  updatePromptGroupLocalized: async (groupId, label, locale) => {
-    const state = useStore.getState();
-    const sourceLocale = locale ?? state.locale;
-    const group = state.promptGroups.find((g) => g.id === groupId);
-    if (!group) return false;
-
-    const current = localizePromptGroup(group, sourceLocale);
-    const sourceLabel = typeof label === 'string' ? label : current.label;
-
-    let next = state.promptGroups.map((g) =>
-      g.id === groupId
-        ? withPromptGroupLocale(g, sourceLocale, { label: sourceLabel })
-        : g,
-    );
-    savePromptGroups(next);
-    set({ promptGroups: next });
-
-    if (!state.promptAutoTranslate) return false;
-
-    const targetLocales = SUPPORTED_LOCALES.filter(
-      (value): value is Locale => value !== sourceLocale,
-    );
-    try {
-      const translated = await translatePromptFields(
-        { label: sourceLabel },
-        sourceLocale,
-        targetLocales,
-        promptTranslationGatewayOptions(state),
-      );
-      const translatedLocales = Object.entries(translated) as [
-        Locale,
-        { label?: string; text?: string },
-      ][];
-      if (translatedLocales.length > 0) {
-        next = useStore.getState().promptGroups.map((g) =>
-          g.id === groupId
-            ? translatedLocales.reduce(
-                (acc, [localeKey, value]) =>
-                  withPromptGroupLocale(acc, localeKey, {
-                    label: value.label || sourceLabel,
-                  }),
-                g,
-              )
-            : g,
-        );
-        savePromptGroups(next);
-        set({ promptGroups: next });
-      }
-      return translatedLocales.length > 0;
-    } catch {
-      return false;
-    }
-  },
-
-  removePromptGroup: (groupId) =>
-    set((state) => {
-      const next = state.promptGroups.filter((g) => g.id !== groupId);
-      savePromptGroups(next);
-      return { promptGroups: next };
-    }),
-
-  resetPromptGroups: () =>
-    set(() => {
-      const next = samplePromptGroups;
-      savePromptGroups(next);
-      savePromptGroupsVersion(PROMPT_DEFAULTS_VERSION);
-      return { promptGroups: next };
-    }),
+  resetPromptGroups: () => resetPromptGroups(),
 }));
 
 setSessionNotificationClickHandler(({ workspaceId, sessionId }) => {
@@ -7597,15 +6063,6 @@ setSessionNotificationClickHandler(({ workspaceId, sessionId }) => {
 /* Run execution helpers                                                      */
 /* -------------------------------------------------------------------------- */
 
-interface RunConfig {
-  cwd?: string;
-  extraWorkspacePaths?: string[];
-  permission?: string;
-  model?: string;
-  cliCommand?: string;
-  gatewaySelection?: GatewaySelection;
-}
-
 function formatRunWorkspaceSuffix(config: RunConfig): string {
   const paths = uniqueWorkspaceHistory([
     config.cwd,
@@ -7615,73 +6072,7 @@ function formatRunWorkspaceSuffix(config: RunConfig): string {
   return ` · 工作区 ${paths[0]}${paths.length > 1 ? ` +${paths.length - 1}` : ''}`;
 }
 
-/**
- * A run is bound to the session that started it — NOT to whatever session the
- * user is currently viewing. This channel is that run's single source of truth:
- * the run loop reads/writes the shadow state here, and `channelCommit` mirrors it
- * into the live store ONLY while the owning session is the active view, and
- * persists it to the owning session regardless. That decoupling is what lets a
- * run keep executing in the background after the user switches to another
- * session (and resume seamlessly when they switch back). Multiple sessions may
- * have their own channels so independent workflow blueprints can run together.
- */
-interface RunChannel {
-  key: string;
-  workspaceId: string | null;
-  sessionId: string | null;
-  cancelled: boolean;
-  workflow: IRGraph;
-  config: RunConfig;
-  cliRunIds: Set<string>;
-  messages: Message[];
-  runState: Record<string, NodeRunState>;
-  runOutputs: Record<string, string>;
-  failedNodeId: string | null;
-  error: Record<string, unknown> | null;
-  /**
-   * Per-node content hashes from this run (runtime `computeNodeHashes`). Captured
-   * when the run finishes and persisted in the run snapshot, so the next
-   * "continue" reuses a cached node output only when its hash still matches —
-   * editing the graph re-runs the affected subgraph. Absent until the run ends.
-   */
-  nodeHashes?: Record<string, string>;
-}
-const activeRuns = new Map<string, RunChannel>();
 
-interface AiEditChannel {
-  key: string;
-  sessionKey: string;
-  workspaceId: string | null;
-  sessionId: string | null;
-  /** Filesystem root used for this turn's session-change snapshot. */
-  workspaceRootPath?: string | null;
-  workflow: IRGraph;
-  messages: Message[];
-  cliRunIds: Set<string>;
-  abortController: AbortController;
-  /** Gateway/model snapshot captured when this AI turn started. */
-  gatewaySelection?: GatewaySelection;
-  /** Whether this channel belongs to a history session that should store IRGraph. */
-  workflowSession: boolean;
-  /**
-   * True for simple-workflow chat turns. Such turns reuse the AI-edit channel
-   * plumbing (message persistence, background completion, userInputs commit) but
-   * are NOT "blueprint editing": they surface as `chattingSessions` rather than
-   * `aiEditingSessions`, so they don't lock the (nonexistent) canvas as
-   * read-only. See sendPrompt's simpleMode branch.
-   */
-  chat?: boolean;
-  /** Message ids created by this chat turn; used to merge concurrent replies. */
-  ownedMessageIds?: Set<string>;
-}
-const activeAiEdits = new Map<string, AiEditChannel>();
-const aiEditSnapshots = new Map<string, AiEditChannel>();
-
-interface ChatNativeSession {
-  sessionId: string;
-  started: boolean;
-  coveredMessageCount: number;
-}
 
 const chatNativeSessions = new Map<string, ChatNativeSession>();
 
@@ -7781,98 +6172,17 @@ function isMissingClaudeConversationError(err: unknown): boolean {
   return /No conversation found with session ID/i.test(message);
 }
 
-function runKey(workspaceId: string | null, sessionId: string | null): string {
-  return workflowSessionKeyId({ workspaceId, sessionId });
-}
-
-function chatTurnKey(sessionKey: string, messageId: string): string {
-  return `${sessionKey}::chat::${messageId}`;
-}
-
-function getRunChannel(workspaceId: string | null, sessionId: string | null): RunChannel | null {
-  return activeRuns.get(runKey(workspaceId, sessionId)) ?? null;
-}
-
-function getRunChannelByKey(key: string): RunChannel | null {
-  return activeRuns.get(key) ?? null;
-}
-
-function getAiEditChannelByKey(key: string): AiEditChannel | null {
-  return activeAiEdits.get(key) ?? null;
-}
-
-function getAiEditChannel(
-  workspaceId: string | null,
-  sessionId: string | null,
-): AiEditChannel | null {
-  const key = runKey(workspaceId, sessionId);
-  return (
-    activeAiEdits.get(key) ??
-    getAiEditChannelsForSession(workspaceId, sessionId).find((ch) => !ch.chat) ??
-    null
-  );
-}
-
-function getAiEditSnapshot(
-  workspaceId: string | null,
-  sessionId: string | null,
-): AiEditChannel | null {
-  const key = runKey(workspaceId, sessionId);
-  const exact = aiEditSnapshots.get(key);
-  if (exact) return exact;
-  const snapshots = getAiEditSnapshotsForSession(workspaceId, sessionId);
-  return snapshots[snapshots.length - 1] ?? null;
-}
-
 /**
- * Best message-source for restoring the AI-return view when switching back into
- * a session. Prefers the LIVE channel (so we get the freshest in-flight text —
- * snapshots can lag a single chunk behind), then any chat channel for the
- * session (chat channels are deliberately excluded from getAiEditChannel because
- * they don't lock the workflow), and finally the snapshot map. Returning the
- * snapshot last means a session whose stream finished a while ago (channel
- * removed but snapshot retained) still restores its final messages.
+ * Claude rejects a launch with "Session ID … is already in use" when the
+ * `--session-id` (create) or `--resume` target is already registered AND locked
+ * on disk — usually because a prior turn for this chat registered the id but its
+ * process never exited cleanly (timeout / cancel / relay outage), so the lock is
+ * still held. Recovery: drop the stuck id and mint a fresh one, re-sending the
+ * transcript as cold context (mirrors the missing-conversation fallback).
  */
-function getAiEditViewSource(
-  workspaceId: string | null,
-  sessionId: string | null,
-): AiEditChannel | null {
-  const channels = getAiEditChannelsForSession(workspaceId, sessionId);
-  if (channels.length > 0) {
-    // Prefer blueprint-edit (non-chat); fall back to the most recently added chat
-    // channel, which carries the live streaming bubble for a simple-workflow turn.
-    return (
-      channels.find((ch) => !ch.chat) ??
-      channels[channels.length - 1]
-    );
-  }
-  return getAiEditSnapshot(workspaceId, sessionId);
-}
-
-function channelMatchesSession(
-  ch: Pick<AiEditChannel, 'sessionKey' | 'workspaceId' | 'sessionId'>,
-  workspaceId: string | null,
-  sessionId: string | null,
-): boolean {
-  return ch.sessionKey === runKey(workspaceId, sessionId);
-}
-
-function getAiEditChannelsForSession(
-  workspaceId: string | null,
-  sessionId: string | null,
-): AiEditChannel[] {
-  return [...activeAiEdits.values()].filter((ch) =>
-    channelMatchesSession(ch, workspaceId, sessionId),
-  );
-}
-
-function getAiEditChatChannels(
-  workspaceId: string | null,
-  sessionId: string | null,
-): AiEditChannel[] {
-  return getAiEditChannelsForSession(workspaceId, sessionId).filter(
-    (ch) => ch.chat,
-  );
+function isSessionAlreadyInUseError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  return /session ID .* is already in use/i.test(message);
 }
 
 // Currently unused (no caller wired up yet); kept commented to preserve intent.
@@ -7914,23 +6224,6 @@ function appendPromptToActiveSimpleChat(
   }
 
   return 'none';
-}
-
-function getAiEditSnapshotsForSession(
-  workspaceId: string | null,
-  sessionId: string | null,
-): AiEditChannel[] {
-  return [...aiEditSnapshots.values()].filter((ch) =>
-    channelMatchesSession(ch, workspaceId, sessionId),
-  );
-}
-
-function activeRunChannels(): RunChannel[] {
-  return [...activeRuns.values()].filter((ch) => !ch.cancelled);
-}
-
-function activeAiEditChannels(): AiEditChannel[] {
-  return [...activeAiEdits.values()];
 }
 
 function runningProgressFromChannel(ch: RunChannel): RunProgressSummary {
@@ -7997,28 +6290,24 @@ function uniqueAiEditSessions(channels: AiEditChannel[]): WorkflowSessionKey[] {
   return out;
 }
 
-function aiEditRegistered(ch: AiEditChannel | null): ch is AiEditChannel {
-  return !!ch && activeAiEdits.get(ch.key) === ch;
-}
-
 function aiEditActive(ch: AiEditChannel | null): boolean {
   return aiEditRegistered(ch);
 }
 
-function aiEditViewActive(ch: AiEditChannel | null): boolean {
+export function aiEditViewActive(ch: AiEditChannel | null): boolean {
   if (!ch) return false;
   if (!ch.sessionId) return true;
   const s = useStore.getState();
   return s.activeSessionId === ch.sessionId && s.activeWorkspaceId === ch.workspaceId;
 }
 
-function addAiEditChannel(ch: AiEditChannel): void {
+export function addAiEditChannel(ch: AiEditChannel): void {
   activeAiEdits.set(ch.key, ch);
   rememberAiEditSnapshot(ch);
   syncAiEditingSessions();
 }
 
-function removeAiEditChannel(ch: AiEditChannel | null): void {
+export function removeAiEditChannel(ch: AiEditChannel | null): void {
   if (!aiEditRegistered(ch)) return;
   const sessionKey = { workspaceId: ch.workspaceId, sessionId: ch.sessionId };
   const rootPath = ch.workspaceRootPath;
@@ -8062,2145 +6351,6 @@ function stopActiveChat(): void {
   for (const item of channels) {
     removeAiEditChannel(item);
   }
-}
-
-const IMAGE_PROMPT_SYSTEM = `你是专业的"生图提示词工程师"。用户会给出一句关于想要生成的图片的描述或想法，你要把它扩写成一段高质量、可直接喂给文生图模型的提示词。
-要求：
-- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
-- 补全画面主体、风格、构图、光线、色调、镜头/视角、画质等关键要素，使画面具体而协调。
-- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
-- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
-- 只描述要画什么，不要写"请生成/帮我画"之类的指令性措辞。`;
-
-const MUSIC_PROMPT_SYSTEM = `你是专业的"音乐生成提示词工程师"。用户会给出一句关于想要生成的音乐、歌曲、BGM 或音频的描述，你要把它扩写成一段高质量、可直接喂给音乐生成模型的提示词。
-要求：
-- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
-- 补全音乐类型、情绪、速度、乐器、编曲层次、段落结构、混音质感、是否有人声/歌词等关键要素。
-- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
-- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
-- 不要要求模仿现役艺人、受版权歌曲或具体受保护歌词；用可授权的风格描述替代。
-- 只描述要生成什么音乐，不要写"请生成/帮我写"之类的指令性措辞。`;
-
-const THREE_D_PROMPT_SYSTEM = `你是专业的"3D模型生成提示词工程师"。用户会给出一句关于想要生成的 3D 模型、游戏资产、道具、角色或产品模型的描述，你要把它扩写成一段高质量、可直接喂给文生 3D 模型的提示词。
-要求：
-- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
-- 补全主体形体、比例、轮廓、结构细节、材质、PBR 贴图、拓扑/面数倾向、可用视角和导出目标等关键要素。
-- 让模型聚焦单个可用 3D 资产；避免复杂背景、场景叙事、摄影机语言和纯 2D 画面描述。
-- 骨骼/动画只用于能自然绑定的角色、生物、可动机器人或机械臂；石头、家具、武器、建筑、产品等静态资产不要写骨骼或动画。
-- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
-- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
-- 只描述要生成什么 3D 模型，不要写"请生成/帮我建模"之类的指令性措辞。`;
-
-const VIDEO_PROMPT_SYSTEM = `你是专业的"视频生成提示词工程师"。用户会给出一句关于想要生成的视频、短片、镜头或动画的描述，你要把它扩写成一段高质量、可直接喂给文生视频模型的提示词。
-要求：
-- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
-- 补全画面主体、动作、镜头运动（推拉摇移）、景别、构图、光线、色调、风格、节奏和时长意图等关键要素，让镜头连贯可拍。
-- 让模型聚焦一个连贯的镜头或短片；避免一次塞入互相冲突的多个场景。
-- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
-- 不要要求模仿在世真人、受版权角色或受保护影片；用可授权的风格描述替代。
-- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
-- 只描述要生成什么视频，不要写"请生成/帮我拍"之类的指令性措辞。`;
-
-const SPRITE_PROMPT_SYSTEM = `你是专业的"Sprite 动画提示词工程师"。用户会给出一句关于想要生成的 sprite、spritesheet、像素角色、技能特效或动作帧的描述，你要把它扩写成一段高质量、可直接喂给 sprite 动画生成模型的提示词。
-要求：
-- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
-- 补全主体、视角、动作、风格、帧数意图、循环方式、raw spritesheet 背景、裁切、安全边距、角色一致性和导出用途。
-- 优先生成单个主体；除非用户明确要求，不要多角色、复杂背景、文字、UI 或相机移动。
-- 动画需求要说明动作阶段，例如 idle/walk/run/attack/jump/hit/death 或 VFX loop，并强调主体大小、朝向和中心位置稳定。
-- Sprite sheet 要强调 exact grid、solid chroma key background、clean silhouette、consistent proportions、even frame spacing、game-ready sprite sheet。
-- 如果目标是可抠底 Sprite，优先使用纯 #FF00FF raw 背景；不要要求模型直接画透明背景、格线、边框、文字或标签。
-- 同一张 sheet 只包含一个动作；walk/run/attack/death 等不同动作要拆成不同 sheet。
-- 强调所有帧主体尺度一致、锚点稳定、留安全边距、不贴边，方便后处理切帧、对齐、质检。
-- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
-- 不要要求模仿在世真人、受版权角色或受保护 IP；用可授权的风格描述替代。
-- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。`;
-
-function spritePromptSystem(): string {
-  const settings = loadSpriteGenerationSettings();
-  const grid = spriteSheetGridForSettings(settings);
-  return `${SPRITE_PROMPT_SYSTEM}
-
-当前 Sprite Forge 兼容约束：
-- 默认 sheet 网格：${grid.rows} 行 x ${grid.columns} 列，共 ${grid.cells} 帧。
-- 默认单帧尺寸：${settings.defaultFrameSize}px；主体 fit scale：${settings.fitScale}。
-- raw sheet 背景：${settings.removeBackground ? settings.chromaKey : 'transparent-or-clean'}；后处理会按该背景抠底。
-- 帧锚点：${settings.frameAnchor}；主体保留模式：${settings.componentMode}；${settings.rejectEdgeTouch ? '拒绝贴边帧' : '允许贴边帧'}。`;
-}
-
-// ComfyUI authoring instruction. Unlike the image/music/3D prompt refiners
-// (which produce a plain prompt string), this asks the coding model to emit a
-// full ComfyUI prompt-graph as a ```comfyui fenced block, which the chat stream
-// renders as an embedded, expandable node graph (ComfyGraphBlock).
-const COMFY_PROMPT_SYSTEM = `你是 ComfyUI 工作流工程师。用户会描述想要生成的图片或想要的工作流，你要输出一个可直接提交给本地 ComfyUI 服务器(POST /prompt)的 prompt graph。
-严格要求：
-- 只输出一个 \`\`\`comfyui 代码块，块内是合法 JSON；代码块之外不要写任何解释、标题或多余文字。
-- JSON 结构为 ComfyUI 的 prompt 格式：顶层是 {"<节点id>": {"class_type": "<节点类型>", "inputs": {...}}} 的扁平映射。
-- 节点之间的连线用 inputs 里的 ["<来源节点id>", <输出序号>] 表示;字面量(数字/字符串/布尔)直接写值。
-- 只使用 ComfyUI 标准节点(如 CheckpointLoaderSimple、CLIPTextEncode、KSampler、EmptyLatentImage、VAEDecode、SaveImage 等),不要编造不存在的节点类型。
-- 至少包含一条到 SaveImage(或等价输出节点)的完整通路,保证能真正出图。
-- 可选地为每个节点加 "_meta": {"title": "..."} 以便阅读。
-- JSON 内的文本提示词与用户输入语言保持一致。`;
-
-/** Strip the /ui-mode-start|/ui-mode-end command prefix from a chat line. */
-function stripUiModeCommand(text: string): string {
-  return text
-    .trim()
-    .replace(/^\/ui(?:-mode-(?:start|end))?\s*/iu, '')
-    .trim();
-}
-
-// Game-UI design instruction for /ui-mode. Front-loaded before the coding-model
-// turn so the model produces interface design specs and deliverables tailored to
-// the project's configured default UI channel (Project Settings > UI 渠道),
-// instead of editing the workflow blueprint.
-function uiDesignPromptSystem(): string {
-  const settings = loadUiDesignChannelSettings();
-  const channel = uiDesignChannelById(settings.preferredChannelId);
-  const exportFormat = uiDesignChannelExportFormat(channel.id, settings);
-  return `你是资深游戏 UI/UX 设计师。用户会描述想要的游戏界面，你要围绕当前项目选定的默认 UI 渠道「${channel.label}」产出可交付的界面设计方案。
-要求：
-- 紧扣「${channel.label}」这个设计工具/协作平台的能力来组织产物，默认导出格式为 ${exportFormat}。
-- 给出清晰的界面结构：布局与分区、控件清单与状态、信息层级、交互流程、配色与字体规范、栅格与间距。
-- 按游戏 UI 习惯覆盖 HUD、菜单、弹窗、按钮状态、图标规范等必要部分；说明可复用组件与设计系统约定。
-- 如需资产，给出文件命名、切图尺寸/分辨率与导出清单；适配多分辨率时说明缩放策略。
-- 与用户输入语言保持一致；只产出界面设计内容，不要修改工作流蓝图。`;
-}
-
-/** Strip the /blueprint-mode-start|/blueprint-mode-end command prefix from a chat line. */
-function stripBlueprintModeCommand(text: string): string {
-  return text
-    .trim()
-    .replace(/^\/blueprint-mode-(?:start|end)\s*/iu, '')
-    .trim();
-}
-
-function blueprintModePromptSystem(modeArgs: string | null | undefined): string {
-  const args = modeArgs?.trim();
-  const argsLine = args
-    ? `\n当前 /blueprint-mode-start 参数：${args}`
-    : '';
-  return `你现在处于 UE 蓝图模式。目标是帮助用户创建、修改、验证 Unreal Engine Blueprint 资产，不是 OpenWorkflows workflow 蓝图。
-要求：
-- 优先检查当前工作区是否是 UE 项目、BlueprintMode 插件是否已安装；如未安装，按项目设置里的安装逻辑从 GitHub 下载插件，或给出最短可执行步骤。
-- 如果可通过 UE 编辑器插件、MCP、Remote Control、Python 或本地命令实际完成，就直接完成；只在确实缺少目标蓝图名、父类、创建确认等关键信息时使用交互协议询问。
-- 蓝图不存在时，先提示用户确认是否创建；确认后默认按 Actor 蓝图创建，除非用户指定 Character、Pawn、GameMode、Widget、Function Library 等父类。
-- 输出或执行内容围绕 BlueprintMode 操作：target、context、checkpoint、BlueprintOp 计划、spawn node、connect pin、set property、compile、verify、commit/discard。
-- 不要生成 OpenWorkflows IRGraph，不要输出 workflow 蓝图 JSON，不要把需求改写成普通素材生成任务。
-- 回答使用简体中文，结论先行。${argsLine}`;
-}
-
-type GenerationPromptMode = 'image' | 'music' | 'threeD' | 'video' | 'sprite' | 'speech';
-
-function generationModeStartedAt(
-  composer: ComposerSettings,
-  mode: GenerationPromptMode,
-): number | null {
-  const value =
-    mode === 'image'
-      ? composer.imageModeStartedAt
-      : mode === 'music'
-        ? composer.musicModeStartedAt
-        : mode === 'threeD'
-          ? composer.threeDModeStartedAt
-          : mode === 'video'
-            ? composer.videoModeStartedAt
-            : mode === 'speech'
-              ? composer.speechModeStartedAt
-              : composer.spriteModeStartedAt;
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function generationModeActive(
-  composer: ComposerSettings,
-  mode: GenerationPromptMode,
-): boolean {
-  return mode === 'image'
-    ? composer.imageMode
-    : mode === 'music'
-      ? composer.musicMode
-      : mode === 'threeD'
-        ? composer.threeDMode
-        : mode === 'video'
-          ? composer.videoMode
-          : mode === 'speech'
-            ? composer.speechMode
-            : composer.spriteMode;
-}
-
-function generationModeEnteredText(mode: GenerationPromptMode, text: string): boolean {
-  if (mode === 'image') return /已进入生图模式|image mode on/i.test(text);
-  if (mode === 'music') return /已进入音乐模式|music mode on/i.test(text);
-  if (mode === 'video') return /已进入视频模式|video mode on/i.test(text);
-  if (mode === 'speech') return /已进入语音模式|speech mode on/i.test(text);
-  if (mode === 'sprite') return /已进入\s*Sprite\s*模式|sprite mode on/i.test(text);
-  return /已进入\s*Mesh\s*模式|mesh mode on/i.test(text);
-}
-
-function generationModeExitedText(mode: GenerationPromptMode, text: string): boolean {
-  if (mode === 'image') return /已退出生图模式|image mode off/i.test(text);
-  if (mode === 'music') return /已退出音乐模式|music mode off/i.test(text);
-  if (mode === 'video') return /已退出视频模式|video mode off/i.test(text);
-  if (mode === 'speech') return /已退出语音模式|speech mode off/i.test(text);
-  if (mode === 'sprite') return /已退出\s*Sprite\s*模式|sprite mode off/i.test(text);
-  return /已退出\s*Mesh\s*模式|mesh mode off/i.test(text);
-}
-
-function inferGenerationModeStartedAt(
-  messages: readonly Message[],
-  mode: GenerationPromptMode,
-): number | null {
-  let startedAt: number | null = null;
-  for (const message of messages) {
-    if (message.role !== 'system') continue;
-    if (generationModeEnteredText(mode, message.text)) {
-      startedAt = message.createdAt;
-    } else if (generationModeExitedText(mode, message.text)) {
-      startedAt = null;
-    }
-  }
-  return startedAt;
-}
-
-function stripGenerationCommand(
-  mode: GenerationPromptMode,
-  text: string,
-): string {
-  if (mode === 'image') return stripImageCommand(text);
-  if (mode === 'music') return stripMusicCommand(text);
-  if (mode === 'video') return stripVideoCommand(text);
-  if (mode === 'speech') return stripSpeechCommand(text);
-  if (mode === 'sprite') return stripSpriteCommand(text);
-  return stripThreeDCommand(text);
-}
-
-function normalizeGenerationTurn(
-  mode: GenerationPromptMode,
-  text: string,
-): string {
-  return stripGenerationCommand(mode, text)
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function modeContextPrompt(
-  state: Pick<StoreState, 'composer' | 'messages'>,
-  mode: GenerationPromptMode,
-  currentPrompt: string,
-): string {
-  const current = normalizeGenerationTurn(mode, currentPrompt);
-  if (!generationModeActive(state.composer, mode)) {
-    return current;
-  }
-  const startedAt =
-    generationModeStartedAt(state.composer, mode) ??
-    inferGenerationModeStartedAt(state.messages, mode) ??
-    0;
-
-  const priorTurns = state.messages
-    .filter(
-      (message) =>
-        message.role === 'user' &&
-        message.createdAt >= startedAt &&
-        message.text.trim(),
-    )
-    .map((message) => normalizeGenerationTurn(mode, message.text))
-    .filter(Boolean);
-  const turns =
-    priorTurns[priorTurns.length - 1] === current
-      ? priorTurns
-      : [...priorTurns, current];
-  if (turns.length <= 1) return current;
-
-  return [
-    '本次生成模式内的连续需求如下，请合并成当前这一次的最终生成需求。',
-    '规则：后面的补充优先；除非最新输入明确换主体，否则保留前文主体和约束。',
-    ...turns.map((turn, index) => `${index + 1}. ${turn}`),
-  ].join('\n');
-}
-
-/** Strip code fences / labels / surrounding quotes the model may wrap around the prompt. */
-function cleanGeneratedImagePrompt(raw: string): string {
-  let text = raw.trim();
-  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
-  if (fence) text = fence[1].trim();
-  text = text.replace(/^(?:生图提示词|提示词|prompt)\s*[:：]\s*/iu, '').trim();
-  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
-  if (quoted) text = quoted[1].trim();
-  return text;
-}
-
-function cleanGeneratedMusicPrompt(raw: string): string {
-  let text = raw.trim();
-  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
-  if (fence) text = fence[1].trim();
-  text = text
-    .replace(/^(?:音乐提示词|作曲提示词|提示词|prompt)\s*[:：]\s*/iu, '')
-    .trim();
-  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
-  if (quoted) text = quoted[1].trim();
-  return text;
-}
-
-function cleanGeneratedThreeDPrompt(raw: string): string {
-  let text = raw.trim();
-  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
-  if (fence) text = fence[1].trim();
-  text = text
-    .replace(/^(?:3d\s*模型提示词|三维模型提示词|建模提示词|提示词|prompt)\s*[:：]\s*/iu, '')
-    .trim();
-  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
-  if (quoted) text = quoted[1].trim();
-  return text;
-}
-
-function cleanGeneratedVideoPrompt(raw: string): string {
-  let text = raw.trim();
-  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
-  if (fence) text = fence[1].trim();
-  text = text
-    .replace(/^(?:视频提示词|分镜提示词|镜头提示词|提示词|prompt)\s*[:：]\s*/iu, '')
-    .trim();
-  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
-  if (quoted) text = quoted[1].trim();
-  return text;
-}
-
-function cleanGeneratedSpritePrompt(raw: string): string {
-  let text = raw.trim();
-  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
-  if (fence) text = fence[1].trim();
-  text = text
-    .replace(/^(?:sprite\s*提示词|精灵图提示词|序列帧提示词|提示词|prompt)\s*[:：]\s*/iu, '')
-    .trim();
-  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
-  if (quoted) text = quoted[1].trim();
-  return text;
-}
-
-/**
- * Step 1 of the fixed two-step image flow: send the user's description to the
- * selected coding/text model and have it author a high-quality image-generation
- * prompt. Returns null when no text-model backend is reachable (e.g. browser
- * without an API key) so the caller can fall back to the raw user text. Honors
- * the channel's abort signal (direct) and cliRunIds (CLI) so 停止 cancels it.
- */
-async function refineImagePromptViaModel(
-  ch: AiEditChannel,
-  userText: string,
-  codingSelection: GatewaySelection,
-  permission: string,
-  onProgress: (live: string) => void,
-): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
-  const userContent = `请把下面的图片需求改写成一段高质量的生图提示词：\n\n${userText}`;
-  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
-    workspaceId: ch.workspaceId,
-    sessionId: ch.sessionId,
-  });
-  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
-  const system = `${IMAGE_PROMPT_SYSTEM}${projectMcpGuidance}`;
-  const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct && !preferCliForProjectMcp) {
-    let full = '';
-    const text = await completeGatewayText({
-      route: direct,
-      system,
-      userContent,
-      maxTokens: 1024,
-      signal: ch.abortController.signal,
-      usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-      permission,
-      cwd: ch.workspaceRootPath ?? undefined,
-      onDelta: (chunk) => {
-        full += chunk;
-        onProgress(full);
-      },
-    });
-    return {
-      prompt: cleanGeneratedImagePrompt(full || text),
-      routeLine: gatewayRouteLine(direct),
-      routeHeader: gatewayRouteHeader(direct),
-    };
-  }
-  if (isTauri()) {
-    if (isFreeChannelSelection(codingSelection)) {
-      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
-    }
-    const cli = await resolveCliGatewayRoute(codingSelection);
-    const runId = makeCliRunId();
-    ch.cliRunIds.add(runId);
-    try {
-      let live = '';
-      const text = await aiEditViaCli(
-        `${system}\n\n${userContent}`,
-        cli.adapter,
-        {
-          permission,
-          model: cli.model,
-          cliCommand: cli.cliCommand,
-          env: cli.env,
-          cwd: ch.workspaceRootPath ?? undefined,
-          runId,
-          onProgress: (chunk) => {
-            live += chunk;
-            onProgress(live);
-          },
-        },
-      );
-      return {
-        prompt: cleanGeneratedImagePrompt(text || live),
-        routeLine: gatewayRouteLine(cli),
-        routeHeader: gatewayRouteHeader(cli),
-      };
-    } finally {
-      ch.cliRunIds.delete(runId);
-    }
-  }
-  return null;
-}
-
-async function refineMusicPromptViaModel(
-  ch: AiEditChannel,
-  userText: string,
-  codingSelection: GatewaySelection,
-  permission: string,
-  onProgress: (live: string) => void,
-): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
-  const userContent = `请把下面的音乐需求改写成一段高质量的音乐生成提示词：\n\n${userText}`;
-  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
-    workspaceId: ch.workspaceId,
-    sessionId: ch.sessionId,
-  });
-  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
-  const system = `${MUSIC_PROMPT_SYSTEM}${projectMcpGuidance}`;
-  const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct && !preferCliForProjectMcp) {
-    let full = '';
-    const text = await completeGatewayText({
-      route: direct,
-      system,
-      userContent,
-      maxTokens: 1024,
-      signal: ch.abortController.signal,
-      usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-      permission,
-      cwd: ch.workspaceRootPath ?? undefined,
-      onDelta: (chunk) => {
-        full += chunk;
-        onProgress(full);
-      },
-    });
-    return {
-      prompt: cleanGeneratedMusicPrompt(full || text),
-      routeLine: gatewayRouteLine(direct),
-      routeHeader: gatewayRouteHeader(direct),
-    };
-  }
-  if (isTauri()) {
-    if (isFreeChannelSelection(codingSelection)) {
-      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
-    }
-    const cli = await resolveCliGatewayRoute(codingSelection);
-    const runId = makeCliRunId();
-    ch.cliRunIds.add(runId);
-    try {
-      let live = '';
-      const text = await aiEditViaCli(
-        `${system}\n\n${userContent}`,
-        cli.adapter,
-        {
-          permission,
-          model: cli.model,
-          cliCommand: cli.cliCommand,
-          env: cli.env,
-          cwd: ch.workspaceRootPath ?? undefined,
-          runId,
-          onProgress: (chunk) => {
-            live += chunk;
-            onProgress(live);
-          },
-        },
-      );
-      return {
-        prompt: cleanGeneratedMusicPrompt(text || live),
-        routeLine: gatewayRouteLine(cli),
-        routeHeader: gatewayRouteHeader(cli),
-      };
-    } finally {
-      ch.cliRunIds.delete(runId);
-    }
-  }
-  return null;
-}
-
-async function refineThreeDPromptViaModel(
-  ch: AiEditChannel,
-  userText: string,
-  codingSelection: GatewaySelection,
-  permission: string,
-  onProgress: (live: string) => void,
-): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
-  const userContent = `请把下面的 3D 模型需求改写成一段高质量的文生 3D 提示词。
-${threeDRiggingPromptGuidance(userText)}
-
-原始需求：
-${userText}`;
-  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
-    workspaceId: ch.workspaceId,
-    sessionId: ch.sessionId,
-  });
-  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
-  const system = `${THREE_D_PROMPT_SYSTEM}${projectMcpGuidance}`;
-  const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct && !preferCliForProjectMcp) {
-    let full = '';
-    const text = await completeGatewayText({
-      route: direct,
-      system,
-      userContent,
-      maxTokens: 1024,
-      signal: ch.abortController.signal,
-      usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-      permission,
-      cwd: ch.workspaceRootPath ?? undefined,
-      onDelta: (chunk) => {
-        full += chunk;
-        onProgress(full);
-      },
-    });
-    return {
-      prompt: cleanGeneratedThreeDPrompt(full || text),
-      routeLine: gatewayRouteLine(direct),
-      routeHeader: gatewayRouteHeader(direct),
-    };
-  }
-  if (isTauri()) {
-    if (isFreeChannelSelection(codingSelection)) {
-      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
-    }
-    const cli = await resolveCliGatewayRoute(codingSelection);
-    const runId = makeCliRunId();
-    ch.cliRunIds.add(runId);
-    try {
-      let live = '';
-      const text = await aiEditViaCli(
-        `${system}\n\n${userContent}`,
-        cli.adapter,
-        {
-          permission,
-          model: cli.model,
-          cliCommand: cli.cliCommand,
-          env: cli.env,
-          cwd: ch.workspaceRootPath ?? undefined,
-          runId,
-          onProgress: (chunk) => {
-            live += chunk;
-            onProgress(live);
-          },
-        },
-      );
-      return {
-        prompt: cleanGeneratedThreeDPrompt(text || live),
-        routeLine: gatewayRouteLine(cli),
-        routeHeader: gatewayRouteHeader(cli),
-      };
-    } finally {
-      ch.cliRunIds.delete(runId);
-    }
-  }
-  return null;
-}
-
-async function refineVideoPromptViaModel(
-  ch: AiEditChannel,
-  userText: string,
-  codingSelection: GatewaySelection,
-  permission: string,
-  onProgress: (live: string) => void,
-): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
-  const userContent = `请把下面的视频需求改写成一段高质量的文生视频提示词：\n\n${userText}`;
-  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
-    workspaceId: ch.workspaceId,
-    sessionId: ch.sessionId,
-  });
-  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
-  const system = `${VIDEO_PROMPT_SYSTEM}${projectMcpGuidance}`;
-  const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct && !preferCliForProjectMcp) {
-    let full = '';
-    const text = await completeGatewayText({
-      route: direct,
-      system,
-      userContent,
-      maxTokens: 1024,
-      signal: ch.abortController.signal,
-      usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-      permission,
-      cwd: ch.workspaceRootPath ?? undefined,
-      onDelta: (chunk) => {
-        full += chunk;
-        onProgress(full);
-      },
-    });
-    return {
-      prompt: cleanGeneratedVideoPrompt(full || text),
-      routeLine: gatewayRouteLine(direct),
-      routeHeader: gatewayRouteHeader(direct),
-    };
-  }
-  if (isTauri()) {
-    if (isFreeChannelSelection(codingSelection)) {
-      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
-    }
-    const cli = await resolveCliGatewayRoute(codingSelection);
-    const runId = makeCliRunId();
-    ch.cliRunIds.add(runId);
-    try {
-      let live = '';
-      const text = await aiEditViaCli(
-        `${system}\n\n${userContent}`,
-        cli.adapter,
-        {
-          permission,
-          model: cli.model,
-          cliCommand: cli.cliCommand,
-          env: cli.env,
-          cwd: ch.workspaceRootPath ?? undefined,
-          runId,
-          onProgress: (chunk) => {
-            live += chunk;
-            onProgress(live);
-          },
-        },
-      );
-      return {
-        prompt: cleanGeneratedVideoPrompt(text || live),
-        routeLine: gatewayRouteLine(cli),
-        routeHeader: gatewayRouteHeader(cli),
-      };
-    } finally {
-      ch.cliRunIds.delete(runId);
-    }
-  }
-  return null;
-}
-
-async function refineSpritePromptViaModel(
-  ch: AiEditChannel,
-  userText: string,
-  codingSelection: GatewaySelection,
-  permission: string,
-  onProgress: (live: string) => void,
-): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
-  const userContent = `请把下面的 Sprite / spritesheet 动画需求改写成一段高质量的生成提示词：\n\n${userText}`;
-  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
-    workspaceId: ch.workspaceId,
-    sessionId: ch.sessionId,
-  });
-  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
-  const system = `${spritePromptSystem()}${projectMcpGuidance}`;
-  const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct && !preferCliForProjectMcp) {
-    let full = '';
-    const text = await completeGatewayText({
-      route: direct,
-      system,
-      userContent,
-      maxTokens: 1024,
-      signal: ch.abortController.signal,
-      usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-      permission,
-      cwd: ch.workspaceRootPath ?? undefined,
-      onDelta: (chunk) => {
-        full += chunk;
-        onProgress(full);
-      },
-    });
-    return {
-      prompt: cleanGeneratedSpritePrompt(full || text),
-      routeLine: gatewayRouteLine(direct),
-      routeHeader: gatewayRouteHeader(direct),
-    };
-  }
-  if (isTauri()) {
-    if (isFreeChannelSelection(codingSelection)) {
-      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
-    }
-    const cli = await resolveCliGatewayRoute(codingSelection);
-    const runId = makeCliRunId();
-    ch.cliRunIds.add(runId);
-    try {
-      let live = '';
-      const text = await aiEditViaCli(
-        `${system}\n\n${userContent}`,
-        cli.adapter,
-        {
-          permission,
-          model: cli.model,
-          cliCommand: cli.cliCommand,
-          env: cli.env,
-          cwd: ch.workspaceRootPath ?? undefined,
-          runId,
-          onProgress: (chunk) => {
-            live += chunk;
-            onProgress(live);
-          },
-        },
-      );
-      return {
-        prompt: cleanGeneratedSpritePrompt(text || live),
-        routeLine: gatewayRouteLine(cli),
-        routeHeader: gatewayRouteHeader(cli),
-      };
-    } finally {
-      ch.cliRunIds.delete(runId);
-    }
-  }
-  return null;
-}
-
-function startImageGenerationTurn(
-  text: string,
-  options: { providerId?: ImageProviderId; model?: string } = {},
-): void {
-  const prompt = stripImageCommand(text);
-  if (!prompt) return;
-  const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
-  const generationPrompt = modeContextPrompt(state, 'image', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadImageGenerationSettings();
-  // Pre-flight: surface a visible, actionable note instead of silently doing
-  // nothing when the channel can't run. A silent return is exactly the "image
-  // mode was on but nothing happened" symptom users hit.
-  if (!settings.enabled) {
-    useStore
-      .getState()
-      .appendChatNote(
-        `✗ ${friendlyImageGenerationError('IMAGE_GENERATION_DISABLED')}`,
-        'system',
-      );
-    return;
-  }
-  const providerId = options.providerId ?? preferredReadyImageProviderId(settings);
-  if (!providerId) {
-    useStore
-      .getState()
-      .appendChatNote(
-        `✗ ${friendlyImageGenerationError('NO_READY_IMAGE_PROVIDER')}`,
-        'system',
-      );
-    return;
-  }
-  if (!imageProviderReady(providerId, settings)) {
-    useStore
-      .getState()
-      .appendChatNote(
-        `✗ ${friendlyImageGenerationError(`IMAGE_PROVIDER_NOT_READY:${providerId}`)}`,
-        'system',
-      );
-    return;
-  }
-  // The coding/text model that authors the image prompt (step 1) is the channel
-  // the composer currently has selected — image mode only swaps the image
-  // provider selectors, not composer.model. Permission mirrors the composer so a
-  // CLI run behaves like the rest of the app.
-  const codingSelection = workflowDefaultGatewaySelection(
-    state.workflow,
-    state.composer.model,
-  );
-  const codingPermission = state.composer.permission || 'full';
-
-  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
-
-  const now = Date.now();
-  const providerLabel = providerId
-    ? imageProviderById(providerId, settings).label
-    : 'Image generation';
-  const model = providerId
-    ? options.model?.trim() ||
-      settings.providerModels[providerId]?.trim() ||
-      imageProviderById(providerId, settings).defaultModel
-    : options.model?.trim() || '';
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: now,
-  };
-  linkMessageManagedAssets(userMsg, sessionKey);
-  const assistantId = shortId('m');
-  const assistantMsg: Message = {
-    id: assistantId,
-    role: 'assistant',
-    text: `⚙ 出图：${providerLabel}${model ? ` · 模型：${model}` : ''}\n① 正在让模型撰写生图提示词…`,
-    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-    createdAt: now + 1,
-  };
-  const promptUpdate = applyPromptTitle(state, prompt, now);
-  const activeSession = sessionForKey(state, sessionKey);
-  const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
-  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
-  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-  const ch: AiEditChannel = {
-    key: chatTurnKey(chSessionKey, userMsg.id),
-    sessionKey: chSessionKey,
-    workspaceId: sessionKey.workspaceId,
-    sessionId: sessionKey.sessionId,
-    workspaceRootPath,
-    workflow: promptUpdate.workflow,
-    messages: [...baseMessages, userMsg, assistantMsg],
-    cliRunIds: new Set<string>(),
-    abortController: new AbortController(),
-    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
-    chat: true,
-    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-  };
-
-  const setAssistant = (textValue: string, persist: boolean) => {
-    if (!aiEditRegistered(ch)) return;
-    ch.messages = ch.messages.map((message) =>
-      message.id === assistantId
-        ? {
-            ...message,
-            text: textValue,
-            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-          }
-        : message,
-    );
-    aiEditCommitMessages(ch, persist);
-  };
-
-  addAiEditChannel(ch);
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      sessions: promptUpdate.sessions,
-      sessionTree: promptUpdate.sessionTree,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-  syncAndPersistSessionRunStatus(sessionKey, 'running');
-
-  void (async () => {
-    const startedAt = Date.now();
-    const elapsed = () =>
-      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
-        Date.now() - startedAt,
-      )}`;
-    let pendingAssetId: string | null = null;
-    try {
-      // ── Step ① — ask the selected coding/text model to author the image
-      // prompt. When no text-model backend is reachable (browser without an API
-      // key, tests) refineImagePromptViaModel returns null and we fall back to
-      // the raw user text so image generation still works end to end.
-      let imagePrompt = generationPrompt;
-      let refineHeader = '';
-      try {
-        const refined = await refineImagePromptViaModel(
-          ch,
-          generationPrompt,
-          codingSelection,
-          codingPermission,
-          (live) => {
-            if (!aiEditRegistered(ch)) return;
-            setAssistant(
-              `${elapsed()}\n① 撰写生图提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
-              false,
-            );
-          },
-        );
-        if (refined && refined.prompt) {
-          imagePrompt = refined.prompt;
-          refineHeader = refined.routeHeader;
-        }
-      } catch (err) {
-        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
-        // Prompt authoring failed (model error/timeout). Degrade to the raw
-        // user text rather than failing the whole turn.
-        imagePrompt = generationPrompt;
-      }
-      if (!aiEditRegistered(ch)) return;
-
-      // ── Step ② — feed the authored prompt to the image model. `text:false`
-      // skips stripImageCommand inside generateImage (already a clean prompt).
-      const promptModelLine = refineHeader
-        ? `✎ 提示词模型：${refineHeader}\n`
-        : '';
-      pendingAssetId = registerPendingGeneratedAsset({
-        kind: 'image',
-        origin: imageProviderById(providerId, settings).local ? 'local' : 'remote',
-        provider: providerLabel,
-        model,
-        prompt: imagePrompt,
-        sessionId: ch.sessionId,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        titlePrefix: 'image',
-      });
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}② 已生成提示词，正在出图…\n\n生图提示词：${imagePrompt}`,
-        false,
-      );
-      const result = await generateImage(
-        {
-          prompt: imagePrompt,
-          providerId: options.providerId,
-          model: options.model,
-          signal: ch.abortController.signal,
-        },
-        settings,
-      );
-      const body = imageResultMarkdown(result);
-      setAssistant(`${elapsed()}\n${promptModelLine}${body}`, true);
-      const capturePendingAssetId = pendingAssetId;
-      pendingAssetId = null;
-      void captureGeneratedAssets({
-        kind: 'image',
-        sources: result.images,
-        origin: imageProviderById(result.providerId, settings).local ? 'local' : 'remote',
-        provider: result.providerLabel,
-        model: result.model,
-        prompt: result.prompt,
-        sessionId: ch.sessionId ?? undefined,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        cwd: ch.workspaceRootPath ?? undefined,
-        titlePrefix: 'image',
-        pendingAssetId: capturePendingAssetId ?? undefined,
-      });
-      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-      syncAndPersistSessionRunStatus(sessionKey, 'success');
-    } catch (err) {
-      if (!aiEditRegistered(ch)) return;
-      if (ch.abortController.signal.aborted) return;
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      const msg = friendlyImageGenerationError(rawMsg);
-      if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
-      setAssistant(
-        `${elapsed()} · 失败\n✗ 图片生成失败: ${msg}\n\n请在设置 > 生图中配置可用的图片 Provider，或切换到本地 ComfyUI。`,
-        true,
-      );
-      syncAndPersistSessionRunStatus(sessionKey, 'error');
-    } finally {
-      removeAiEditChannel(ch);
-    }
-  })();
-}
-
-function startMusicGenerationTurn(
-  text: string,
-  options: { providerId?: MusicProviderId; model?: string } = {},
-): void {
-  const prompt = stripMusicCommand(text);
-  if (!prompt) return;
-  const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
-  const generationPrompt = modeContextPrompt(state, 'music', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadMusicGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadyMusicProviderId(settings);
-  const codingSelection = workflowDefaultGatewaySelection(
-    state.workflow,
-    state.composer.model,
-  );
-  const codingPermission = state.composer.permission || 'full';
-
-  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
-
-  const now = Date.now();
-  const providerLabel = providerId
-    ? musicProviderById(providerId).label
-    : 'Music generation';
-  const provider = providerId ? musicProviderById(providerId) : null;
-  const model = providerId
-    ? options.model?.trim() || musicProviderModel(providerId, settings)
-    : options.model?.trim() || '';
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: now,
-  };
-  linkMessageManagedAssets(userMsg, sessionKey);
-  const assistantId = shortId('m');
-  const assistantMsg: Message = {
-    id: assistantId,
-    role: 'assistant',
-    text: `⚙ 作曲：${providerLabel}${model ? ` · 模型：${model}` : ''}\n① 正在让模型撰写音乐提示词…`,
-    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-    createdAt: now + 1,
-  };
-  const promptUpdate = applyPromptTitle(state, prompt, now);
-  const activeSession = sessionForKey(state, sessionKey);
-  const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
-  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
-  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-  const ch: AiEditChannel = {
-    key: chatTurnKey(chSessionKey, userMsg.id),
-    sessionKey: chSessionKey,
-    workspaceId: sessionKey.workspaceId,
-    sessionId: sessionKey.sessionId,
-    workspaceRootPath,
-    workflow: promptUpdate.workflow,
-    messages: [...baseMessages, userMsg, assistantMsg],
-    cliRunIds: new Set<string>(),
-    abortController: new AbortController(),
-    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
-    chat: true,
-    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-  };
-
-  const setAssistant = (textValue: string, persist: boolean) => {
-    if (!aiEditRegistered(ch)) return;
-    ch.messages = ch.messages.map((message) =>
-      message.id === assistantId
-        ? {
-            ...message,
-            text: textValue,
-            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-          }
-        : message,
-    );
-    aiEditCommitMessages(ch, persist);
-  };
-
-  addAiEditChannel(ch);
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      sessions: promptUpdate.sessions,
-      sessionTree: promptUpdate.sessionTree,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-  syncAndPersistSessionRunStatus(sessionKey, 'running');
-
-  void (async () => {
-    const startedAt = Date.now();
-    const elapsed = () =>
-      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
-        Date.now() - startedAt,
-      )}`;
-    let pendingAssetId: string | null = null;
-    try {
-      let musicPrompt = generationPrompt;
-      let refineHeader = '';
-      try {
-        const refined = await refineMusicPromptViaModel(
-          ch,
-          generationPrompt,
-          codingSelection,
-          codingPermission,
-          (live) => {
-            if (!aiEditRegistered(ch)) return;
-            setAssistant(
-              `${elapsed()}\n① 撰写音乐提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
-              false,
-            );
-          },
-        );
-        if (refined && refined.prompt) {
-          musicPrompt = refined.prompt;
-          refineHeader = refined.routeHeader;
-        }
-      } catch (err) {
-        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
-        musicPrompt = generationPrompt;
-      }
-      if (!aiEditRegistered(ch)) return;
-      const promptModelLine = refineHeader
-        ? `✎ 提示词模型：${refineHeader}\n`
-        : '';
-      pendingAssetId = registerPendingGeneratedAsset({
-        kind: 'music',
-        origin: provider?.local ? 'local' : 'remote',
-        provider: providerLabel,
-        model,
-        prompt: musicPrompt,
-        sessionId: ch.sessionId,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        titlePrefix: 'music',
-      });
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}② 已生成提示词，正在调用${
-          provider?.local ? '本地音乐模型' : '音乐 API'
-        }…\n\n音乐提示词：${musicPrompt}`,
-        false,
-      );
-      const result = await generateMusic(
-        {
-          prompt: musicPrompt,
-          providerId: options.providerId,
-          model: options.model,
-          targetDurationSeconds:
-            musicDurationSecondsFromPrompt(musicPrompt) ?? undefined,
-          signal: ch.abortController.signal,
-        },
-        settings,
-      );
-      setAssistant(`${elapsed()}\n${promptModelLine}${musicResultMarkdown(result)}`, true);
-      const capturePendingAssetId = pendingAssetId;
-      pendingAssetId = null;
-      void captureGeneratedAssets({
-        kind: 'music',
-        sources: result.audios,
-        origin: musicProviderById(result.providerId).local ? 'local' : 'remote',
-        provider: result.providerLabel,
-        model: result.model,
-        prompt: result.prompt,
-        sessionId: ch.sessionId ?? undefined,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        cwd: ch.workspaceRootPath ?? undefined,
-        titlePrefix: 'music',
-        pendingAssetId: capturePendingAssetId ?? undefined,
-      });
-      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-      syncAndPersistSessionRunStatus(sessionKey, 'success');
-    } catch (err) {
-      if (!aiEditRegistered(ch)) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
-      setAssistant(
-        `${elapsed()} · 失败\n✗ 音乐生成失败: ${msg}\n\n请在设置 > 音乐渠道中配置可用的商用或免费 Provider。`,
-        true,
-      );
-      syncAndPersistSessionRunStatus(sessionKey, 'error');
-    } finally {
-      removeAiEditChannel(ch);
-    }
-  })();
-}
-
-function startThreeDGenerationTurn(
-  text: string,
-  options: { providerId?: ThreeDProviderId; model?: string } = {},
-): void {
-  const prompt = stripThreeDCommand(text);
-  if (!prompt) return;
-  const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
-  const generationPrompt = modeContextPrompt(state, 'threeD', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadThreeDGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadyThreeDProviderId(settings);
-  const codingSelection = workflowDefaultGatewaySelection(
-    state.workflow,
-    state.composer.model,
-  );
-  const codingPermission = state.composer.permission || 'full';
-
-  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
-
-  const now = Date.now();
-  const providerLabel = providerId
-    ? threeDProviderById(providerId, settings).label
-    : '3D generation';
-  const provider = providerId ? threeDProviderById(providerId, settings) : null;
-  const model = providerId
-    ? options.model?.trim() || threeDProviderModel(providerId, settings)
-    : options.model?.trim() || '';
-  const rigging = assessThreeDRigging(generationPrompt);
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: now,
-  };
-  linkMessageManagedAssets(userMsg, sessionKey);
-  const assistantId = shortId('m');
-  const assistantMsg: Message = {
-    id: assistantId,
-    role: 'assistant',
-    text: `⚙ 3D：${providerLabel}${model ? ` · 模型：${model}` : ''}\n骨骼：${
-      rigging.enabled
-        ? `可绑骨资产，默认预览 ${rigging.defaultAnimations.join('、')}${
-            rigging.requestedAnimations.length
-              ? `，额外动作 ${rigging.requestedAnimations.join('、')}${
-                  rigging.needsAnimationSearch ? ' 需匹配动画库' : ''
-                }`
-              : ''
-          }`
-        : '静态资产，跳过'
-    }\n① 正在让模型撰写 3D 提示词…`,
-    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-    createdAt: now + 1,
-  };
-  const promptUpdate = applyPromptTitle(state, prompt, now);
-  const activeSession = sessionForKey(state, sessionKey);
-  const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
-  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
-  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-  const ch: AiEditChannel = {
-    key: chatTurnKey(chSessionKey, userMsg.id),
-    sessionKey: chSessionKey,
-    workspaceId: sessionKey.workspaceId,
-    sessionId: sessionKey.sessionId,
-    workspaceRootPath,
-    workflow: promptUpdate.workflow,
-    messages: [...baseMessages, userMsg, assistantMsg],
-    cliRunIds: new Set<string>(),
-    abortController: new AbortController(),
-    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
-    chat: true,
-    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-  };
-
-  const setAssistant = (textValue: string, persist: boolean) => {
-    if (!aiEditRegistered(ch)) return;
-    ch.messages = ch.messages.map((message) =>
-      message.id === assistantId
-        ? {
-            ...message,
-            text: textValue,
-            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-          }
-        : message,
-    );
-    aiEditCommitMessages(ch, persist);
-  };
-
-  addAiEditChannel(ch);
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      sessions: promptUpdate.sessions,
-      sessionTree: promptUpdate.sessionTree,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-  syncAndPersistSessionRunStatus(sessionKey, 'running');
-
-  void (async () => {
-    const startedAt = Date.now();
-    const elapsed = () =>
-      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
-        Date.now() - startedAt,
-      )}`;
-    let pendingAssetId: string | null = null;
-    try {
-      let threeDPrompt = generationPrompt;
-      let refineHeader = '';
-      try {
-        const refined = await refineThreeDPromptViaModel(
-          ch,
-          generationPrompt,
-          codingSelection,
-          codingPermission,
-          (live) => {
-            if (!aiEditRegistered(ch)) return;
-            setAssistant(
-              `${elapsed()}\n① 撰写 3D 提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
-              false,
-            );
-          },
-        );
-        if (refined && refined.prompt) {
-          threeDPrompt = refined.prompt;
-          refineHeader = refined.routeHeader;
-        }
-      } catch {
-        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
-        threeDPrompt = generationPrompt;
-      }
-      if (!aiEditRegistered(ch)) return;
-      const promptModelLine = refineHeader
-        ? `✎ 提示词模型：${refineHeader}\n`
-        : '';
-      pendingAssetId = registerPendingGeneratedAsset({
-        kind: 'mesh',
-        origin: provider?.local ? 'local' : 'remote',
-        provider: providerLabel,
-        model,
-        prompt: threeDPrompt,
-        sessionId: ch.sessionId,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        titlePrefix: '3d-model',
-        meta: { rigging },
-      });
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}② 已生成提示词，正在调用${
-          provider?.local ? '本地 3D 模型' : '3D API'
-        }…\n\n3D 提示词：${threeDPrompt}`,
-        false,
-      );
-      const result = await generateThreeD(
-        {
-          prompt: threeDPrompt,
-          providerId: options.providerId,
-          model: options.model,
-          signal: ch.abortController.signal,
-        },
-        settings,
-      );
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}③ 3D 模型已生成，正在下载到本地缓存…\n\n3D 提示词：${threeDPrompt}`,
-        false,
-      );
-      const downloads = await downloadThreeDAssets(
-        result.assets,
-        state.composer.workspace || undefined,
-        {
-          sessionId: ch.sessionId,
-          workspaceId: ch.workspaceId,
-          messageId: assistantId,
-          pendingAssetId,
-        },
-      );
-      if (pendingAssetId) {
-        if (downloads.downloadErrors.length > 0 && downloads.downloaded.length === 0) {
-          markAssetFailed(pendingAssetId, downloads.downloadErrors[0].error);
-        } else if (downloads.downloaded.length === 0) {
-          markAssetDone(pendingAssetId, {
-            remoteUrl: result.assets[0],
-            title: '3d-model.glb',
-            meta: { rigging },
-          });
-        }
-        pendingAssetId = null;
-      }
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}${threeDResultMarkdown({
-          ...result,
-          ...downloads,
-        })}`,
-        true,
-      );
-      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-      syncAndPersistSessionRunStatus(sessionKey, 'success');
-    } catch (err) {
-      if (!aiEditRegistered(ch)) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
-      setAssistant(
-        `${elapsed()} · 失败\n✗ 3D 模型生成失败: ${msg}\n\n${threeDFailureHint(msg)}`,
-        true,
-      );
-      syncAndPersistSessionRunStatus(sessionKey, 'error');
-    } finally {
-      removeAiEditChannel(ch);
-    }
-  })();
-}
-
-function startVideoGenerationTurn(
-  text: string,
-  options: { providerId?: VideoProviderId; model?: string } = {},
-): void {
-  const prompt = stripVideoCommand(text);
-  if (!prompt) return;
-  const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
-  const generationPrompt = modeContextPrompt(state, 'video', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadVideoGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadyVideoProviderId(settings);
-  const codingSelection = workflowDefaultGatewaySelection(
-    state.workflow,
-    state.composer.model,
-  );
-  const codingPermission = state.composer.permission || 'full';
-
-  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
-
-  const now = Date.now();
-  const providerLabel = providerId
-    ? videoProviderById(providerId).label
-    : 'Video generation';
-  const provider = providerId ? videoProviderById(providerId) : null;
-  const model = providerId
-    ? options.model?.trim() || videoProviderModel(providerId, settings)
-    : options.model?.trim() || '';
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: now,
-  };
-  linkMessageManagedAssets(userMsg, sessionKey);
-  const assistantId = shortId('m');
-  const assistantMsg: Message = {
-    id: assistantId,
-    role: 'assistant',
-    text: `⚙ 生视频：${providerLabel}${model ? ` · 模型：${model}` : ''}\n① 正在让模型撰写视频提示词…`,
-    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-    createdAt: now + 1,
-  };
-  const promptUpdate = applyPromptTitle(state, prompt, now);
-  const activeSession = sessionForKey(state, sessionKey);
-  const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
-  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
-  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-  const ch: AiEditChannel = {
-    key: chatTurnKey(chSessionKey, userMsg.id),
-    sessionKey: chSessionKey,
-    workspaceId: sessionKey.workspaceId,
-    sessionId: sessionKey.sessionId,
-    workspaceRootPath,
-    workflow: promptUpdate.workflow,
-    messages: [...baseMessages, userMsg, assistantMsg],
-    cliRunIds: new Set<string>(),
-    abortController: new AbortController(),
-    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
-    chat: true,
-    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-  };
-
-  const setAssistant = (textValue: string, persist: boolean) => {
-    if (!aiEditRegistered(ch)) return;
-    ch.messages = ch.messages.map((message) =>
-      message.id === assistantId
-        ? {
-            ...message,
-            text: textValue,
-            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-          }
-        : message,
-    );
-    aiEditCommitMessages(ch, persist);
-  };
-
-  addAiEditChannel(ch);
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      sessions: promptUpdate.sessions,
-      sessionTree: promptUpdate.sessionTree,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-  syncAndPersistSessionRunStatus(sessionKey, 'running');
-
-  void (async () => {
-    const startedAt = Date.now();
-    const elapsed = () =>
-      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
-        Date.now() - startedAt,
-      )}`;
-    let pendingAssetId: string | null = null;
-    try {
-      let videoPrompt = generationPrompt;
-      let refineHeader = '';
-      try {
-        const refined = await refineVideoPromptViaModel(
-          ch,
-          generationPrompt,
-          codingSelection,
-          codingPermission,
-          (live) => {
-            if (!aiEditRegistered(ch)) return;
-            setAssistant(
-              `${elapsed()}\n① 撰写视频提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
-              false,
-            );
-          },
-        );
-        if (refined && refined.prompt) {
-          videoPrompt = refined.prompt;
-          refineHeader = refined.routeHeader;
-        }
-      } catch (err) {
-        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
-        videoPrompt = generationPrompt;
-      }
-      if (!aiEditRegistered(ch)) return;
-      const promptModelLine = refineHeader
-        ? `✎ 提示词模型：${refineHeader}\n`
-        : '';
-      pendingAssetId = registerPendingGeneratedAsset({
-        kind: 'video',
-        origin: provider?.local ? 'local' : 'remote',
-        provider: providerLabel,
-        model,
-        prompt: videoPrompt,
-        sessionId: ch.sessionId,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        titlePrefix: 'video',
-      });
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}② 已生成提示词，正在调用${
-          provider?.local ? '本地视频模型' : '视频 API'
-        }（视频生成耗时较长，请耐心等待）…\n\n视频提示词：${videoPrompt}`,
-        false,
-      );
-      const result = await generateVideo(
-        {
-          prompt: videoPrompt,
-          providerId: options.providerId,
-          model: options.model,
-          targetDurationSeconds:
-            videoDurationSecondsFromPrompt(videoPrompt) ?? undefined,
-          signal: ch.abortController.signal,
-        },
-        settings,
-      );
-      setAssistant(`${elapsed()}\n${promptModelLine}${videoResultMarkdown(result)}`, true);
-      const capturePendingAssetId = pendingAssetId;
-      pendingAssetId = null;
-      void captureGeneratedAssets({
-        kind: 'video',
-        sources: result.videos,
-        origin: videoProviderById(result.providerId).local ? 'local' : 'remote',
-        provider: result.providerLabel,
-        model: result.model,
-        prompt: result.prompt,
-        sessionId: ch.sessionId ?? undefined,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        cwd: ch.workspaceRootPath ?? undefined,
-        titlePrefix: 'video',
-        pendingAssetId: capturePendingAssetId ?? undefined,
-      });
-      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-      syncAndPersistSessionRunStatus(sessionKey, 'success');
-    } catch (err) {
-      if (!aiEditRegistered(ch)) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
-      setAssistant(
-        `${elapsed()} · 失败\n✗ 视频生成失败: ${msg}\n\n请在设置 > 视频渠道中配置可用的商用或免费 Provider。`,
-        true,
-      );
-      syncAndPersistSessionRunStatus(sessionKey, 'error');
-    } finally {
-      removeAiEditChannel(ch);
-    }
-  })();
-}
-
-function startSpeechGenerationTurn(
-  text: string,
-  options: { providerId?: SpeechProviderId; model?: string; voice?: string } = {},
-): void {
-  const prompt = stripSpeechCommand(text);
-  if (!prompt) return;
-  const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
-  const generationPrompt = modeContextPrompt(state, 'speech', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadSpeechGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadySpeechProviderId(settings);
-
-  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
-
-  const now = Date.now();
-  const providerLabel = providerId
-    ? speechProviderById(providerId).label
-    : 'Speech generation';
-  const provider = providerId ? speechProviderById(providerId) : null;
-  const model = providerId
-    ? options.model?.trim() || speechProviderModel(providerId, settings)
-    : options.model?.trim() || '';
-  const voice = providerId
-    ? options.voice?.trim() || speechProviderVoice(providerId, settings)
-    : options.voice?.trim() || '';
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: now,
-  };
-  linkMessageManagedAssets(userMsg, sessionKey);
-  const assistantId = shortId('m');
-  const assistantMsg: Message = {
-    id: assistantId,
-    role: 'assistant',
-    text: `⚙ 文本转语音：${providerLabel}${model ? ` · 模型：${model}` : ''}${
-      voice ? ` · 音色：${voice}` : ''
-    }\n① 正在合成语音…`,
-    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-    createdAt: now + 1,
-  };
-  const promptUpdate = applyPromptTitle(state, prompt, now);
-  const activeSession = sessionForKey(state, sessionKey);
-  const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
-  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
-  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-  const ch: AiEditChannel = {
-    key: chatTurnKey(chSessionKey, userMsg.id),
-    sessionKey: chSessionKey,
-    workspaceId: sessionKey.workspaceId,
-    sessionId: sessionKey.sessionId,
-    workspaceRootPath,
-    workflow: promptUpdate.workflow,
-    messages: [...baseMessages, userMsg, assistantMsg],
-    cliRunIds: new Set<string>(),
-    abortController: new AbortController(),
-    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
-    chat: true,
-    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-  };
-
-  const setAssistant = (textValue: string, persist: boolean) => {
-    if (!aiEditRegistered(ch)) return;
-    ch.messages = ch.messages.map((message) =>
-      message.id === assistantId
-        ? {
-            ...message,
-            text: textValue,
-            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-          }
-        : message,
-    );
-    aiEditCommitMessages(ch, persist);
-  };
-
-  addAiEditChannel(ch);
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      sessions: promptUpdate.sessions,
-      sessionTree: promptUpdate.sessionTree,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-  syncAndPersistSessionRunStatus(sessionKey, 'running');
-
-  void (async () => {
-    const startedAt = Date.now();
-    const elapsed = () =>
-      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
-        Date.now() - startedAt,
-      )}`;
-    let pendingAssetId: string | null = registerPendingGeneratedAsset({
-      kind: 'speech',
-      origin: provider?.local ? 'local' : 'remote',
-      provider: providerLabel,
-      model,
-      prompt: generationPrompt,
-      sessionId: ch.sessionId,
-      workspaceId: ch.workspaceId,
-      messageId: assistantId,
-      titlePrefix: 'speech',
-    });
-    try {
-      setAssistant(
-        `${elapsed()}\n② 正在调用${
-          provider?.local ? '本地语音模型' : '语音 API'
-        }合成…\n\n文本：${generationPrompt}`,
-        false,
-      );
-      const result = await generateSpeech(
-        {
-          prompt: generationPrompt,
-          providerId: options.providerId,
-          model: options.model,
-          voice: options.voice,
-          signal: ch.abortController.signal,
-        },
-        settings,
-      );
-      setAssistant(`${elapsed()}\n${speechResultMarkdown(result)}`, true);
-      const capturePendingAssetId = pendingAssetId;
-      pendingAssetId = null;
-      void captureGeneratedAssets({
-        kind: 'speech',
-        sources: result.audios,
-        origin: speechProviderById(result.providerId).local ? 'local' : 'remote',
-        provider: result.providerLabel,
-        model: result.model,
-        prompt: result.prompt,
-        sessionId: ch.sessionId ?? undefined,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        cwd: ch.workspaceRootPath ?? undefined,
-        titlePrefix: 'speech',
-        pendingAssetId: capturePendingAssetId ?? undefined,
-      });
-      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-      syncAndPersistSessionRunStatus(sessionKey, 'success');
-    } catch (err) {
-      if (!aiEditRegistered(ch)) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
-      setAssistant(
-        `${elapsed()} · 失败\n✗ 语音合成失败: ${msg}\n\n请在设置 > 语音渠道中配置可用的商用或免费 Provider。`,
-        true,
-      );
-      syncAndPersistSessionRunStatus(sessionKey, 'error');
-    } finally {
-      removeAiEditChannel(ch);
-    }
-  })();
-}
-
-function startSpriteGenerationTurn(
-  text: string,
-  options: { providerId?: ImageProviderId; model?: string } = {},
-): void {
-  const prompt = stripSpriteCommand(text);
-  if (!prompt) return;
-  const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
-  const generationPrompt = modeContextPrompt(state, 'sprite', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadSpriteGenerationSettings();
-  const imageSettings = loadImageGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? imageSettings.preferredProviderId;
-  if (!imageProviderReady(providerId, imageSettings)) {
-    useStore
-      .getState()
-      .appendChatNote(
-        `✗ ${friendlyImageGenerationError(`IMAGE_PROVIDER_NOT_READY:${providerId}`)}`,
-        'system',
-      );
-    return;
-  }
-  const codingSelection = workflowDefaultGatewaySelection(
-    state.workflow,
-    state.composer.model,
-  );
-  const codingPermission = state.composer.permission || 'full';
-
-  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
-
-  const now = Date.now();
-  const providerLabel = providerId
-    ? imageProviderById(providerId, imageSettings).label
-    : '图片 Provider';
-  const model = providerId
-    ? options.model?.trim() || imageProviderModel(providerId, imageSettings)
-    : options.model?.trim() || '';
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: now,
-  };
-  linkMessageManagedAssets(userMsg, sessionKey);
-  const assistantId = shortId('m');
-  const assistantMsg: Message = {
-    id: assistantId,
-    role: 'assistant',
-    text: `⚙ Sprite 动画：复用生图渠道 ${providerLabel}${model ? ` · 模型：${model}` : ''}\n① 正在让模型撰写 Sprite 提示词…`,
-    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-    createdAt: now + 1,
-  };
-  const promptUpdate = applyPromptTitle(state, prompt, now);
-  const activeSession = sessionForKey(state, sessionKey);
-  const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
-  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
-  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-  const ch: AiEditChannel = {
-    key: chatTurnKey(chSessionKey, userMsg.id),
-    sessionKey: chSessionKey,
-    workspaceId: sessionKey.workspaceId,
-    sessionId: sessionKey.sessionId,
-    workspaceRootPath,
-    workflow: promptUpdate.workflow,
-    messages: [...baseMessages, userMsg, assistantMsg],
-    cliRunIds: new Set<string>(),
-    abortController: new AbortController(),
-    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
-    chat: true,
-    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-  };
-
-  const setAssistant = (textValue: string, persist: boolean) => {
-    if (!aiEditRegistered(ch)) return;
-    ch.messages = ch.messages.map((message) =>
-      message.id === assistantId
-        ? {
-            ...message,
-            text: textValue,
-            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
-          }
-        : message,
-    );
-    aiEditCommitMessages(ch, persist);
-  };
-
-  addAiEditChannel(ch);
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      sessions: promptUpdate.sessions,
-      sessionTree: promptUpdate.sessionTree,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-  syncAndPersistSessionRunStatus(sessionKey, 'running');
-
-  void (async () => {
-    const startedAt = Date.now();
-    const elapsed = () =>
-      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
-        Date.now() - startedAt,
-      )}`;
-    let pendingAssetId: string | null = null;
-    try {
-      let spritePrompt = generationPrompt;
-      let refineHeader = '';
-      try {
-        const refined = await refineSpritePromptViaModel(
-          ch,
-          generationPrompt,
-          codingSelection,
-          codingPermission,
-          (live) => {
-            if (!aiEditRegistered(ch)) return;
-            setAssistant(
-              `${elapsed()}\n① 撰写 Sprite 提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
-              false,
-            );
-          },
-        );
-        if (refined && refined.prompt) {
-          spritePrompt = refined.prompt;
-          refineHeader = refined.routeHeader;
-        }
-      } catch {
-        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
-        spritePrompt = generationPrompt;
-      }
-      if (!aiEditRegistered(ch)) return;
-      const promptModelLine = refineHeader
-        ? `✎ 提示词模型：${refineHeader}\n`
-        : '';
-      pendingAssetId = registerPendingGeneratedAsset({
-        kind: 'sprite',
-        origin:
-          providerId && imageProviderById(providerId, imageSettings).local ? 'local' : 'remote',
-        provider: providerLabel,
-        model,
-        prompt: spritePrompt,
-        sessionId: ch.sessionId,
-        workspaceId: ch.workspaceId,
-        messageId: assistantId,
-        titlePrefix: 'sprite',
-      });
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}② 已生成提示词，正在调用生图渠道生成 raw spritesheet…\n\nSprite 提示词：${spritePrompt}`,
-        false,
-      );
-      const result = await generateSprite(
-        {
-          prompt: spritePrompt,
-          providerId,
-          model: options.model,
-          signal: ch.abortController.signal,
-        },
-        settings,
-        imageSettings,
-      );
-      setAssistant(
-        `${elapsed()}\n${promptModelLine}${spriteResultMarkdown(result)}`,
-        true,
-      );
-      {
-        const spriteOrigin = imageProviderById(result.providerId, imageSettings).local
-          ? 'local'
-          : 'remote';
-        const spriteSources = [
-          ...result.spritesheets,
-          ...result.gifs,
-          ...result.frames,
-        ];
-        const capturePendingAssetId = pendingAssetId;
-        pendingAssetId = null;
-        if (spriteSources.length || !result.videos.length) {
-          void captureGeneratedAssets({
-            kind: 'sprite',
-            sources: spriteSources,
-            origin: spriteOrigin,
-            provider: result.providerLabel,
-            model: result.model,
-            prompt: result.prompt,
-            sessionId: ch.sessionId ?? undefined,
-            workspaceId: ch.workspaceId,
-            messageId: assistantId,
-            cwd: ch.workspaceRootPath ?? undefined,
-            titlePrefix: 'sprite',
-            pendingAssetId: capturePendingAssetId ?? undefined,
-            meta: { mode: result.mode, frameCount: result.frameCount },
-          });
-        }
-        if (result.videos.length) {
-          void captureGeneratedAssets({
-            kind: 'video',
-            sources: result.videos,
-            origin: spriteOrigin,
-            provider: result.providerLabel,
-            model: result.model,
-            prompt: result.prompt,
-            sessionId: ch.sessionId ?? undefined,
-            workspaceId: ch.workspaceId,
-            messageId: assistantId,
-            cwd: ch.workspaceRootPath ?? undefined,
-            titlePrefix: 'sprite-video',
-            pendingAssetId: spriteSources.length
-              ? undefined
-              : (capturePendingAssetId ?? undefined),
-          });
-        }
-      }
-      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-      syncAndPersistSessionRunStatus(sessionKey, 'success');
-    } catch (err) {
-      if (!aiEditRegistered(ch)) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      const friendlyMsg = friendlyImageGenerationError(msg);
-      if (pendingAssetId) markAssetFailed(pendingAssetId, friendlyMsg);
-      setAssistant(
-        `${elapsed()} · 失败\n✗ Sprite 动画生成失败: ${friendlyMsg}\n\nSprite 复用设置 > 生图 的 Provider，请先配置可用生图渠道。`,
-        true,
-      );
-      syncAndPersistSessionRunStatus(sessionKey, 'error');
-    } finally {
-      removeAiEditChannel(ch);
-    }
-  })();
-}
-
-function startMeshSearchTurn(text: string): void {
-  const query = stripMeshSearchCommand(text);
-  const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
-  const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadMeshLibrarySettings();
-
-  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
-
-  const now = Date.now();
-  const enabledLabels = settings.enabledIds
-    .map((id) => meshLibraryById(id, settings)?.label)
-    .filter((label): label is string => !!label);
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: now,
-  };
-  linkMessageManagedAssets(userMsg, sessionKey);
-  const assistantId = shortId('m');
-  const assistantMsg: Message = {
-    id: assistantId,
-    role: 'assistant',
-    text: query
-      ? `🔎 在线模型库搜索：${query}\n库：${
-          enabledLabels.length ? enabledLabels.join('、') : '未启用任何模型库'
-        }\n① ${meshSearchQueryNeedsEnglish(query) ? '正在准备英文搜索词…' : '正在搜索…'}`
-      : '🔎 在线模型库搜索\n请在 /mesh-search 后输入要搜索的关键字。',
-    routeLabel: '在线模型库',
-    createdAt: now + 1,
-  };
-  const promptUpdate = applyPromptTitle(state, query || '在线模型库搜索', now);
-  const activeSession = sessionForKey(state, sessionKey);
-  const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
-  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
-  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-  const ch: AiEditChannel = {
-    key: chatTurnKey(chSessionKey, userMsg.id),
-    sessionKey: chSessionKey,
-    workspaceId: sessionKey.workspaceId,
-    sessionId: sessionKey.sessionId,
-    workspaceRootPath,
-    workflow: promptUpdate.workflow,
-    messages: [...baseMessages, userMsg, assistantMsg],
-    cliRunIds: new Set<string>(),
-    abortController: new AbortController(),
-    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
-    chat: true,
-    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-  };
-
-  const setAssistant = (textValue: string, persist: boolean) => {
-    if (!aiEditRegistered(ch)) return;
-    ch.messages = ch.messages.map((message) =>
-      message.id === assistantId
-        ? { ...message, text: textValue, routeLabel: '在线模型库' }
-        : message,
-    );
-    aiEditCommitMessages(ch, persist);
-  };
-
-  addAiEditChannel(ch);
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      sessions: promptUpdate.sessions,
-      sessionTree: promptUpdate.sessionTree,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-
-  if (!query) {
-    setAssistant(
-      '🔎 在线模型库搜索\n请在 /mesh-search 后输入要搜索的关键字，例如 `/mesh-search 低多边形宝箱`。',
-      true,
-    );
-    commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-    removeAiEditChannel(ch);
-    return;
-  }
-
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-  syncAndPersistSessionRunStatus(sessionKey, 'running');
-
-  void (async () => {
-    const startedAt = Date.now();
-    const elapsed = () =>
-      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
-        Date.now() - startedAt,
-      )}`;
-    try {
-      if (meshSearchQueryNeedsEnglish(query)) {
-        setAssistant(
-          `${elapsed()}\n① 正在整理成更适合模型库搜索的英文词…`,
-          false,
-        );
-      }
-      const queryResolution = await resolveMeshSearchQuery(query, (sourceQuery) =>
-        translatePublicText(sourceQuery, 'en-US'),
-      );
-      if (!aiEditRegistered(ch)) return;
-      const searchQuery = queryResolution.searchQuery || query;
-      if (queryResolution.translated && searchQuery !== query) {
-        setAssistant(
-          `${elapsed()}\n① 已转成英文搜索词：${searchQuery}\n② 正在搜索…`,
-          false,
-        );
-      } else if (queryResolution.translationError) {
-        setAssistant(
-          `${elapsed()}\n① 英文化搜索词失败，已改用原词搜索。\n② 正在搜索…`,
-          false,
-        );
-      }
-      const result = await searchMeshLibraries(
-        searchQuery,
-        settings,
-        ch.abortController.signal,
-      );
-      if (!aiEditRegistered(ch)) return;
-      const downloadable = result.items.filter(
-        (item) => item.downloadUrl && item.libraryId !== 'sketchfab',
-      ).length;
-      setAssistant(
-        `${elapsed()}\n② 找到 ${result.items.length} 个可预览结果${
-          downloadable > 0 && settings.autoDownload
-            ? `，正在下载 ${downloadable} 个可直接下载的模型…`
-            : '…'
-        }`,
-        false,
-      );
-      const downloaded = await downloadMeshSearchAssets(
-        result,
-        settings,
-        state.composer.workspace || undefined,
-        {
-          sessionId: ch.sessionId,
-          workspaceId: ch.workspaceId,
-          messageId: assistantId,
-        },
-      );
-      if (!aiEditRegistered(ch)) return;
-      setAssistant(
-        `${elapsed()}\n${meshSearchResultMarkdown(
-          result,
-          downloaded,
-          settings,
-          queryResolution,
-        )}`,
-        true,
-      );
-      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
-      syncAndPersistSessionRunStatus(sessionKey, 'success');
-    } catch (err) {
-      if (!aiEditRegistered(ch)) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      setAssistant(
-        `${elapsed()} · 失败\n✗ 在线模型库搜索失败: ${msg}\n\n请检查网络，或在项目设置 > 在线模型库中配置账号 API Key 后重试。`,
-        true,
-      );
-      syncAndPersistSessionRunStatus(sessionKey, 'error');
-    } finally {
-      removeAiEditChannel(ch);
-    }
-  })();
 }
 
 /** Is a run alive? (false once the user hits 停止, or the channel is gone.) */
@@ -10250,7 +6400,7 @@ function channelSnapshot(ch: RunChannel, status: IRRunStatus): IRRunSnapshot {
  * Persist the channel's shadow to its OWNING session (not the active view).
  * When the run has no history context (browser/simulator) it falls back to the
  * active-session path only while that run is the visible session. Deliberately
- * skips `.fuc.json` file autosave for backgrounded runs so a background run
+ * skips `.ugs.json` file autosave for backgrounded runs so a background run
  * never overwrites the file bound to the session the user is currently editing.
  */
 async function persistChannelSnapshot(
@@ -10412,16 +6562,35 @@ function aiEditOwnedMessages(ch: AiEditChannel): Message[] {
   return ch.messages.filter((message) => ch.ownedMessageIds?.has(message.id));
 }
 
-function mergeMessagesById(base: Message[], updates: Message[]): Message[] {
+export function mergeMessagesById(base: Message[], updates: Message[]): Message[] {
   if (updates.length === 0) return base;
   const byId = new Map(updates.map((message) => [message.id, message]));
+  // Apply in-place updates first, preserving `base` ordering for messages that
+  // already exist (e.g. live streaming edits to an assistant bubble).
   const merged = base.map((message) => byId.get(message.id) ?? message);
-  const existing = new Set(base.map((message) => message.id));
+  const indexOfId = new Map(merged.map((message, index) => [message.id, index]));
+  // Insert brand-new messages at the position implied by the `updates` order
+  // rather than blindly at the tail. A turn's owned messages are ordered
+  // [userPrompt, assistant…]; the user prompt is already present in `base`, so
+  // its assistant reply must land right after it — even when a later turn's
+  // user message has already been appended to `base` (the "插话" / interjection
+  // case). Tail-appending here is what made an in-flight reply jump below the
+  // next user message, merging the two prompts visually.
+  let anchorIndex = -1;
   for (const message of updates) {
-    if (!existing.has(message.id)) {
-      merged.push(message);
-      existing.add(message.id);
+    const existingIndex = indexOfId.get(message.id);
+    if (existingIndex !== undefined) {
+      anchorIndex = existingIndex;
+      continue;
     }
+    const insertAt = anchorIndex + 1;
+    merged.splice(insertAt, 0, message);
+    // Every entry at/after the insertion shifts right by one.
+    for (const [id, index] of indexOfId) {
+      if (index >= insertAt) indexOfId.set(id, index + 1);
+    }
+    indexOfId.set(message.id, insertAt);
+    anchorIndex = insertAt;
   }
   return merged;
 }
@@ -10461,7 +6630,7 @@ function mergeAiEditChatWorkflow(ch: AiEditChannel, nextIr: IRGraph): IRGraph {
   ]);
 }
 
-function updateAiEditSessionSummary(ch: AiEditChannel): void {
+export function updateAiEditSessionSummary(ch: AiEditChannel): void {
   const last = ch.messages[ch.messages.length - 1]?.text ?? '';
   const updatedAt = Date.now();
   const matchesSession = (session: Session): boolean => {
@@ -10519,7 +6688,7 @@ function persistAiEditWorkflow(ch: AiEditChannel, messages: Message[]): void {
   scheduleAiEditPersist(ch, patch);
 }
 
-function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean): void {
+export function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean): void {
   if (!aiEditRegistered(ch)) return;
   const messages = ch.chat ? mergeAiEditChatMessages(ch) : ch.messages;
   rememberAiEditSnapshot(ch);
@@ -10555,7 +6724,7 @@ function aiEditCommitWorkflow(ch: AiEditChannel | null, persist: boolean): void 
   }
 }
 
-function commitAiChannelBlueprint(ch: AiEditChannel, ir: IRGraph): boolean {
+export function commitAiChannelBlueprint(ch: AiEditChannel, ir: IRGraph): boolean {
   if (!aiEditActive(ch)) return false;
   // [dynamic-only refactor] 非 chat 通道（蓝图编辑）已停用；保留路径只有 chat 模式，
   // 走 mergeAiEditChatWorkflow。原 else 分支用 prepareGraphEdit(含 autoLayout)，已停用，
@@ -10650,7 +6819,7 @@ function compactRoutePart(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function gatewayRouteLine(route: RouteDisplay | null | undefined): string {
+export function gatewayRouteLine(route: RouteDisplay | null | undefined): string {
   if (!route) return '';
   const provider = compactRoutePart(route.providerName);
   const channel = compactRoutePart(route.channelName);
@@ -10666,7 +6835,7 @@ function gatewayRouteLine(route: RouteDisplay | null | undefined): string {
   return model ? `⚙ 模型：${model}` : '';
 }
 
-function gatewayRouteHeader(route: RouteDisplay | null | undefined): string {
+export function gatewayRouteHeader(route: RouteDisplay | null | undefined): string {
   if (!route) return '';
   const provider = compactRoutePart(route.providerName);
   const channel = compactRoutePart(route.channelName);
@@ -10829,7 +6998,7 @@ function toolPatchIdentity(patch: unknown): string {
 
 function transcriptText(message: Message): string {
   let text =
-    message.role === 'assistant' && message.text.includes('<<FUC_TOOL>>')
+    message.role === 'assistant' && message.text.includes('<<UGS_TOOL>>')
       ? extractToolSentinels(message.text).text
       : message.text;
   text = text
@@ -11132,7 +7301,7 @@ function startWorkflowRun(resume: boolean): void {
   // Date.now()/Math.random()/new Date(), which would make hash-checked resume
   // serve stale cache and throw under real Claude Code. See core/determinism.ts.
   // [dynamic-only refactor] 决定性 lint(findDeterminismHazards)已停用（蓝图模块 exclude）。
-  // 该建议性告警仅在蓝图运行路径触发，纯聊天/ultracode 不经过此处。
+  // 该建议性告警仅在蓝图运行路径触发，纯聊天/studio 不经过此处。
   /*
   for (const finding of findDeterminismHazards(workflow)) {
     const node = workflow.nodes.find((n) => n.id === finding.nodeId);
@@ -11204,7 +7373,7 @@ function stopWorkflowRun(): void {
   finishRun(ch);
 }
 
-function makeCliRunId(): string {
+export function makeCliRunId(): string {
   return `cli_${Date.now()}_${shortId('run')}`;
 }
 
@@ -11377,7 +7546,7 @@ function buildGuiGateway(ch: RunChannel): RunGateway {
   };
 }
 
-function freeProxyOptionsForSelection(selection: GatewaySelection): {
+export function freeProxyOptionsForSelection(selection: GatewaySelection): {
   strict: true;
   modelOverrides?: Record<string, string>;
 } {
@@ -11556,14 +7725,17 @@ function buildGuiCallbacks(
 function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContext {
   const state = useStore.getState();
   const { personalInstructions, personalInstructionsByModel } = state;
+  const sessionKey = {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  };
   return {
     selection: runGlobalGatewaySelection(ch, workflow),
     personalInstructions,
     personalInstructionsByModel,
-    globalInstructions: projectMcpGuidanceForState(state, {
-      workspaceId: ch.workspaceId,
-      sessionId: ch.sessionId,
-    }),
+    globalInstructions:
+      projectEngineGuidanceForState(state, sessionKey) +
+      projectMcpGuidanceForState(state, sessionKey),
     cwd: ch.config.cwd,
     extraWorkspacePaths: ch.config.extraWorkspacePaths,
     permission: ch.config.permission,
@@ -11588,11 +7760,11 @@ function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContex
   };
 }
 
-/** Default fan-out samples for a consensus node (localStorage fuc_consensus_default_samples). */
+/** Default fan-out samples for a consensus node (localStorage ugs_consensus_default_samples). */
 function defaultConsensusSamples(): number {
   try {
     if (typeof window !== 'undefined') {
-      const raw = window.localStorage.getItem('fuc_consensus_default_samples');
+      const raw = window.localStorage.getItem('ugs_consensus_default_samples');
       if (raw) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(7, Math.max(2, n));
@@ -11611,16 +7783,16 @@ const DEFAULT_RUN_CONCURRENCY = 10;
  * How many runnable nodes may execute at once. Each node is a heavy `claude -p`
  * process, so this absolute cap is combined with the model-speed tier caps from
  * Settings > Consensus. Tune it per machine via localStorage
- * (`fuc_run_concurrency`, clamped 1–16) or force the old strictly-sequential
- * behaviour with `fuc_sequential=1`. Linear chains stay sequential regardless
+ * (`ugs_run_concurrency`, clamped 1–16) or force the old strictly-sequential
+ * behaviour with `ugs_sequential=1`. Linear chains stay sequential regardless
  * (a node still waits for its predecessors); the cap only bounds how many
  * *independent* nodes run together.
  */
 function runConcurrency(): number {
   try {
     if (typeof window !== 'undefined') {
-      if (window.localStorage.getItem('fuc_sequential') === '1') return 1;
-      const raw = window.localStorage.getItem('fuc_run_concurrency');
+      if (window.localStorage.getItem('ugs_sequential') === '1') return 1;
+      const raw = window.localStorage.getItem('ugs_run_concurrency');
       if (raw) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(16, Math.max(1, n));
@@ -11638,13 +7810,13 @@ const DEFAULT_RUN_MAX_RETRIES = 2;
 /**
  * How many times a failed node is automatically re-run before it is recorded as
  * failed. Only transient failures (see RETRYABLE_FAILURE_CODES) are retried.
- * Tune via localStorage (`fuc_run_max_retries`, clamped 0–10); set 0 to disable
+ * Tune via localStorage (`ugs_run_max_retries`, clamped 0–10); set 0 to disable
  * auto-retry entirely.
  */
 function runMaxRetries(): number {
   try {
     if (typeof window !== 'undefined') {
-      const raw = window.localStorage.getItem('fuc_run_max_retries');
+      const raw = window.localStorage.getItem('ugs_run_max_retries');
       if (raw !== null) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(10, Math.max(0, n));
